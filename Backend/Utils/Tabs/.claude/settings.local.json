@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python genomics_tab.py:*)",
+      "Bash(python3:*)"
+    ]
+  }
+}

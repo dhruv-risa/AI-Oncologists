@@ -1,0 +1,60 @@
+{
+  "success": true,
+  "mrn": "A2451440",
+  "timestamps": {
+    "token_generation_start": "2026-01-08T11:40:07.124980",
+    "token_generation_end": "2026-01-08T11:40:08.774384",
+    "md_note_fetch_start": "2026-01-08T11:40:08.774402",
+    "md_note_fetch_end": "2026-01-08T11:40:14.598859",
+    "pdf_fetch_start": "2026-01-08T11:40:14.598879",
+    "pdf_fetch_end": "2026-01-08T11:40:23.971612",
+    "drive_upload_start": "2026-01-08T11:40:23.971632",
+    "drive_upload_end": "2026-01-08T11:41:23.686054",
+    "extraction_start": "2026-01-08T11:41:23.686098",
+    "extraction_end": "2026-01-08T11:41:59.888173",
+    "validation_start": "2026-01-08T11:41:59.888195",
+    "validation_end": "2026-01-08T11:41:59.888235"
+  },
+  "tokens": {
+    "bearer_token": "eyJhbGciOiJIUzI1NiIs...",
+    "onco_emr_token": "eyJhbGciOiJSUzI1NiIs..."
+  },
+  "md_note_url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06DGWG898Y4V8GQK6M2W.PD--069VRZ8AF76ZPBX1ZKG9",
+  "pdf_size_bytes": 238675,
+  "drive_pdf_url": "https://drive.google.com/file/d/1N021qdNORjG6OnoXhvgO8uU9OfBXtaxF/view?usp=drivesdk",
+  "demographics": {
+    "Patient Name": "Patricia Finneman",
+    "MRN": "A2451440",
+    "Date of Birth": "4/25/1958",
+    "Age": "67",
+    "Gender": "Female",
+    "Height": "65in",
+    "Weight": "96.8lb",
+    "Primary Oncologist": "Blake Blancher, MD",
+    "Last Visit Date": "12/11/2025"
+  },
+  "validation": {
+    "timestamp": "2026-01-08T11:41:59.888199",
+    "is_valid": true,
+    "fields_present": [
+      "Patient Name",
+      "Date of Birth",
+      "Age",
+      "Gender",
+      "Height",
+      "Weight",
+      "Primary Oncologist"
+    ],
+    "fields_missing": [
+      "MRN number",
+      "Last Visit date"
+    ],
+    "fields_null": [],
+    "warnings": [
+      "Missing fields: MRN number, Last Visit date"
+    ],
+    "data_quality_score": 77
+  },
+  "errors": [],
+  "drive_file_id": "1N021qdNORjG6OnoXhvgO8uU9OfBXtaxF"
+}

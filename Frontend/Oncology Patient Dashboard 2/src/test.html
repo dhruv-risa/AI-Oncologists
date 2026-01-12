@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frontend Diagnostic Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-card {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status-ok { color: #22c55e; }
+        .status-error { color: #ef4444; }
+        h1 { color: #1e40af; }
+        code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Frontend Diagnostic Test</h1>
+
+    <div class="test-card">
+        <h3>1. Backend API Connection</h3>
+        <p id="api-test">Testing...</p>
+    </div>
+
+    <div class="test-card">
+        <h3>2. CORS Check</h3>
+        <p id="cors-test">Testing...</p>
+    </div>
+
+    <div class="test-card">
+        <h3>3. Patient Data Fetch</h3>
+        <p id="patient-test">Testing...</p>
+    </div>
+
+    <div class="test-card">
+        <h3>Instructions</h3>
+        <p>If all tests pass, your backend is working correctly. The blank page issue is in the React app.</p>
+        <p><strong>Next step:</strong> Open browser DevTools (F12) → Console tab → Look for red errors</p>
+    </div>
+
+    <script>
+        async function runTests() {
+            // Test 1: Backend availability
+            try {
+                const response = await fetch('http://localhost:8000/docs');
+                if (response.ok) {
+                    document.getElementById('api-test').innerHTML =
+                        '<span class="status-ok">✓ Backend is running on http://localhost:8000</span>';
+                } else {
+                    document.getElementById('api-test').innerHTML =
+                        '<span class="status-error">✗ Backend returned ' + response.status + '</span>';
+                }
+            } catch (error) {
+                document.getElementById('api-test').innerHTML =
+                    '<span class="status-error">✗ Cannot connect to backend: ' + error.message + '</span>';
+            }
+
+            // Test 2: CORS check
+            try {
+                const response = await fetch('http://localhost:8000/api/pool/patients');
+                if (response.ok) {
+                    document.getElementById('cors-test').innerHTML =
+                        '<span class="status-ok">✓ CORS is configured correctly</span>';
+                } else {
+                    document.getElementById('cors-test').innerHTML =
+                        '<span class="status-error">✗ CORS failed with status ' + response.status + '</span>';
+                }
+            } catch (error) {
+                document.getElementById('cors-test').innerHTML =
+                    '<span class="status-error">✗ CORS error: ' + error.message + '</span>';
+            }
+
+            // Test 3: Patient data
+            try {
+                const response = await fetch('http://localhost:8000/api/pool/patients');
+                const data = await response.json();
+                if (data.success && data.patients) {
+                    document.getElementById('patient-test').innerHTML =
+                        '<span class="status-ok">✓ Found ' + data.count + ' patient(s) in database</span><br>' +
+                        '<small>Patients: ' + data.patients.map(p => p.mrn).join(', ') + '</small>';
+                } else {
+                    document.getElementById('patient-test').innerHTML =
+                        '<span class="status-error">✗ Invalid response format</span>';
+                }
+            } catch (error) {
+                document.getElementById('patient-test').innerHTML =
+                    '<span class="status-error">✗ Failed to fetch patients: ' + error.message + '</span>';
+            }
+        }
+
+        runTests();
+    </script>
+</body>
+</html>
