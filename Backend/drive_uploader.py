@@ -6,64 +6,153 @@ and generating shareable links.
 """
 import os
 import pickle
+import base64
+import json
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 from io import BytesIO
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
+# Cache for authenticated service instance to avoid repeated authentication
+_drive_service_cache = None
 
-def authenticate_drive():
+
+def authenticate_drive(force_refresh=False):
     """
     Authenticate with Google Drive API.
+
+    Args:
+        force_refresh (bool): Force re-authentication even if cached service exists
 
     Returns:
         service: Authenticated Google Drive service instance
 
     Notes:
-        - First run will open browser for OAuth authentication
+        - Service instance is cached after first authentication to avoid repeated token refreshes
+        - Supports two authentication modes:
+          1. Environment variables (production): Uses GOOGLE_CREDENTIALS_BASE64 and GOOGLE_TOKEN_BASE64
+          2. File-based (local dev): Uses credentials.json and token.pickle files
+        - First run in file-based mode will open browser for OAuth authentication
         - Credentials are saved in token.pickle for subsequent runs
-        - Requires credentials.json file from Google Cloud Console
+        - In production, credentials should be stored as base64-encoded environment variables
     """
+    global _drive_service_cache
+
+    # Return cached service if available and not forcing refresh
+    if _drive_service_cache is not None and not force_refresh:
+        print("Using cached Google Drive service")
+        return _drive_service_cache
+
     creds = None
     # Get project root directory (1 level up from Backend folder)
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     token_path = os.path.join(project_root, 'token.pickle')
     credentials_path = os.path.join(project_root, 'credentials.json')
 
-    # Load existing credentials if available
-    if os.path.exists(token_path):
-        with open(token_path, 'rb') as token:
-            creds = pickle.load(token)
+    # Check if environment variables are set (production mode)
+    env_credentials_b64 = os.getenv('GOOGLE_CREDENTIALS_BASE64')
+    env_token_b64 = os.getenv('GOOGLE_TOKEN_BASE64')
+
+    # PRODUCTION MODE: Use base64-encoded credentials from environment variables
+    if env_token_b64:
+        print("Using base64-encoded token from environment variable")
+        try:
+            # Decode base64 token and load credentials
+            token_bytes = base64.b64decode(env_token_b64)
+            creds = pickle.loads(token_bytes)
+            print("Successfully loaded credentials from environment variable")
+        except Exception as e:
+            print(f"Error decoding token from environment variable: {e}")
+            creds = None
+
+    # LOCAL DEV MODE: Use file-based credentials
+    else:
+        print("Using file-based authentication (local development mode)")
+        # Load existing credentials if available
+        if os.path.exists(token_path):
+            with open(token_path, 'rb') as token:
+                creds = pickle.load(token)
+                print("Loaded existing token.pickle")
 
     # If credentials don't exist or are invalid, authenticate
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
+            print("Token expired, refreshing...")
             creds.refresh(Request())
+            print("Token refreshed successfully")
+
+            # Save refreshed token back to file (only in local dev mode)
+            if not env_token_b64 and os.path.exists(token_path):
+                with open(token_path, 'wb') as token:
+                    pickle.dump(creds, token)
+                    print("Saved refreshed token to token.pickle")
         else:
-            if not os.path.exists(credentials_path):
+            # Need to authenticate from scratch
+            print("No valid credentials found, starting OAuth flow...")
+
+            # Try to load credentials.json from environment variable first
+            if env_credentials_b64:
+                print("Using credentials from GOOGLE_CREDENTIALS_BASE64 environment variable")
+                try:
+                    credentials_json = base64.b64decode(env_credentials_b64).decode('utf-8')
+                    credentials_data = json.loads(credentials_json)
+
+                    # Create a temporary file for the OAuth flow
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+                        json.dump(credentials_data, temp_file)
+                        temp_credentials_path = temp_file.name
+
+                    flow = InstalledAppFlow.from_client_secrets_file(temp_credentials_path, SCOPES)
+                    creds = flow.run_local_server(port=0)
+
+                    # Clean up temp file
+                    os.unlink(temp_credentials_path)
+                except Exception as e:
+                    raise Exception(f"Error loading credentials from environment variable: {e}")
+
+            # Fall back to file-based credentials.json
+            elif os.path.exists(credentials_path):
+                print(f"Using credentials from {credentials_path}")
+                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+                creds = flow.run_local_server(port=0)
+            else:
                 raise FileNotFoundError(
-                    "credentials.json not found. Please download it from Google Cloud Console.\n"
-                    "Steps:\n"
+                    "credentials.json not found and GOOGLE_CREDENTIALS_BASE64 not set.\n"
+                    "For local development:\n"
                     "1. Go to https://console.cloud.google.com/\n"
                     "2. Create a project or select existing one\n"
                     "3. Enable Google Drive API\n"
                     "4. Create OAuth 2.0 credentials (Desktop app)\n"
-                    "5. Download credentials.json and place it in the project root"
+                    "5. Download credentials.json and place it in the project root\n\n"
+                    "For production:\n"
+                    "1. Encode credentials.json: base64 credentials.json\n"
+                    "2. Set GOOGLE_CREDENTIALS_BASE64 environment variable\n"
+                    "3. Encode token.pickle: base64 token.pickle\n"
+                    "4. Set GOOGLE_TOKEN_BASE64 environment variable"
                 )
 
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        # Save credentials for next run
-        with open(token_path, 'wb') as token:
-            pickle.dump(creds, token)
+            # Save credentials for next run (only in local dev mode)
+            if not env_token_b64:
+                with open(token_path, 'wb') as token:
+                    pickle.dump(creds, token)
+                    print("Saved new token to token.pickle")
 
     service = build('drive', 'v3', credentials=creds)
+    print("Google Drive service authenticated successfully")
+
+    # Cache the service for future calls
+    _drive_service_cache = service
+
     return service
 
 

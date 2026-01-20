@@ -1,52 +1,78 @@
 import { FileText, ExternalLink, Download, Eye } from 'lucide-react';
 import { SectionCard } from './SectionCard';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { PatientData } from '../services/api';
+import { formatDate } from '../utils/dateFormatter';
 
-export function DocumentsSection() {
+interface DocumentsSectionProps {
+  patientData?: PatientData | null;
+}
+
+export function DocumentsSection({ patientData }: DocumentsSectionProps) {
   const [selectedCategory, setSelectedCategory] = useState('Pathology Reports');
 
-  const documents = [
-    {
-      category: 'Pathology Reports',
-      items: [
-        { name: 'Initial Biopsy - Right Upper Lobe', date: '03/18/2023', code: 'PATH-1001' },
-        { name: 'Surgical Pathology - Lobectomy Specimen', date: '04/28/2023', code: 'PATH-1002' },
-        { name: 'IHC Panel Results', date: '03/22/2023', code: 'PATH-1003' },
-        { name: 'Molecular Pathology Addendum', date: '04/02/2023', code: 'PATH-1004' },
-      ],
-    },
-    {
-      category: 'Genomic Reports',
-      items: [
-        { name: 'FoundationOne CDx - Comprehensive Genomic Profile', date: '04/05/2023', code: 'GEN-2001' },
-        { name: 'Guardant360 CDx - Liquid Biopsy ctDNA', date: '11/28/2024', code: 'GEN-2002' },
-        { name: 'PD-L1 Testing Report (22C3 pharmDx)', date: '04/05/2023', code: 'GEN-2003' },
-        { name: 'TMB and MSI Analysis Report', date: '04/10/2023', code: 'GEN-2004' },
-      ],
-    },
-    {
-      category: 'Radiology Reports',
-      items: [
-        { name: 'CT Chest with Contrast - Baseline', date: '03/10/2023', code: 'RAD-3001' },
-        { name: 'PET/CT Whole Body', date: '11/15/2024', code: 'RAD-3002' },
-        { name: 'CT Chest with Contrast - Latest', date: '12/08/2024', code: 'RAD-3003' },
-        { name: 'Brain MRI with Contrast', date: '10/22/2024', code: 'RAD-3004' },
-        { name: 'CT Abdomen/Pelvis with Contrast', date: '09/15/2024', code: 'RAD-3005' },
-      ],
-    },
-    {
-      category: 'Clinical Reports',
-      items: [
-        { name: 'Medical Oncology Initial Consult', date: '03/20/2023', code: 'CLIN-4001' },
-        { name: 'Medical Oncology Follow-up', date: '12/10/2024', code: 'CLIN-4002' },
-        { name: 'Surgical Oncology Consultation', date: '04/15/2023', code: 'CLIN-4003' },
-        { name: 'Multidisciplinary Tumor Board Discussion', date: '03/25/2023', code: 'CLIN-4004' },
-        { name: 'Radiation Oncology Consultation', date: '05/10/2023', code: 'CLIN-4005' },
-      ],
-    },
-  ];
+  // Build documents from actual patient data
+  const documents = useMemo(() => {
+    const categories = [];
+
+    // Pathology Reports
+    if (patientData?.pathology_reports && patientData.pathology_reports.length > 0) {
+      categories.push({
+        category: 'Pathology Reports',
+        items: patientData.pathology_reports.map((report) => ({
+          name: report.description || report.document_type || 'Pathology Report',
+          date: formatDate(report.date),
+          code: report.document_id || 'N/A',
+          url: report.drive_url,
+          file_id: report.drive_file_id,
+        })),
+      });
+    }
+
+    // Genomic Reports
+    if (patientData?.genomics_reports && patientData.genomics_reports.length > 0) {
+      categories.push({
+        category: 'Genomic Reports',
+        items: patientData.genomics_reports.map((report, idx) => ({
+          name: report.type || 'Genomic Report',
+          date: formatDate(report.date),
+          code: `GEN-${idx + 1}`,
+          url: report.url,
+          file_id: report.file_id,
+        })),
+      });
+    }
+
+    // Radiology Reports
+    if (patientData?.radiology_reports && patientData.radiology_reports.length > 0) {
+      categories.push({
+        category: 'Radiology Reports',
+        items: patientData.radiology_reports.map((report) => ({
+          name: report.description || report.document_type || 'Radiology Report',
+          date: formatDate(report.date),
+          code: report.document_id || 'N/A',
+          url: report.drive_url,
+          file_id: report.drive_file_id,
+        })),
+      });
+    }
+
+    return categories;
+  }, [patientData]);
 
   const selectedDocuments = documents.find(doc => doc.category === selectedCategory);
+
+  // If no documents, show a message
+  if (!documents || documents.length === 0) {
+    return (
+      <SectionCard title="Source Documents" icon={FileText}>
+        <div className="text-center py-12 text-gray-500">
+          <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+          <p>No documents available</p>
+        </div>
+      </SectionCard>
+    );
+  }
 
   return (
     <SectionCard title="Source Documents" icon={FileText}>
@@ -104,20 +130,26 @@ export function DocumentsSection() {
               </div>
               <div className="flex items-center gap-1">
                 <button
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  onClick={() => doc.url && window.open(doc.url, '_blank')}
+                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="View document"
+                  disabled={!doc.url}
                 >
                   <Eye className="w-4 h-4" />
                 </button>
                 <button
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  onClick={() => doc.url && window.open(doc.url, '_blank')}
+                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Download document"
+                  disabled={!doc.url}
                 >
                   <Download className="w-4 h-4" />
                 </button>
                 <button
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  onClick={() => doc.url && window.open(doc.url, '_blank')}
+                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Open in new tab"
+                  disabled={!doc.url}
                 >
                   <ExternalLink className="w-4 h-4" />
                 </button>

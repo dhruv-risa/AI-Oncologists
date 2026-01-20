@@ -8,15 +8,35 @@ interface PatientHeaderProps {
 
 export function PatientHeader({ patient }: PatientHeaderProps) {
   // Extract data using exact backend keys with optional chaining
-  const name = patient.demographics?.["Patient Name"] || "Unknown";
-  const mrn = patient.demographics?.["MRN"] || "Unknown";
-  const dob = patient.demographics?.["Date of Birth"] || "Unknown";
-  const age = patient.demographics?.["Age"] || "Unknown";
-  const gender = patient.demographics?.["Gender"] || "Unknown";
-  const height = patient.demographics?.["Height"] || "Unknown";
-  const weight = patient.demographics?.["Weight"] || "Unknown";
-  const oncologist = patient.demographics?.["Primary Oncologist"] || "Unknown";
-  const lastVisit = patient.demographics?.["Last Visit"] || "Unknown";
+  const name = patient.demographics?.["Patient Name"] || "Unknown Patient";
+  const mrn = patient.demographics?.["MRN"];
+  const dob = patient.demographics?.["Date of Birth"];
+  const age = patient.demographics?.["Age"];
+  const gender = patient.demographics?.["Gender"];
+  const height = patient.demographics?.["Height"];
+  const weight = patient.demographics?.["Weight"];
+  const oncologist = patient.demographics?.["Primary Oncologist"];
+  const lastVisit = patient.demographics?.["Last Visit"];
+
+  // Build demographics info line with only available fields
+  const demographicsParts: string[] = [];
+  if (mrn) demographicsParts.push(`MRN: ${mrn}`);
+  if (dob) {
+    if (age) {
+      demographicsParts.push(`DOB: ${dob} (${age} years)`);
+    } else {
+      demographicsParts.push(`DOB: ${dob}`);
+    }
+  } else if (age) {
+    demographicsParts.push(`${age} years`);
+  }
+  if (gender) demographicsParts.push(gender);
+  if (height) demographicsParts.push(`Height: ${height}`);
+  if (weight) demographicsParts.push(`Weight: ${weight}`);
+
+  const demographicsText = demographicsParts.length > 0
+    ? demographicsParts.join(' • ')
+    : 'No demographic information available';
 
   return (
     <header className="bg-white">
@@ -36,20 +56,26 @@ export function PatientHeader({ patient }: PatientHeaderProps) {
               <div>
                 <h1 className="text-white text-xl mb-0.5">{name}</h1>
                 <p className="text-slate-300 text-sm">
-                  MRN: {mrn} • DOB: {dob} ({age} years) • {gender} • Height: {height} • Weight: {weight}
+                  {demographicsText}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-slate-400 text-xs">Primary Oncologist</p>
-                <p className="text-white text-sm">{oncologist}</p>
+            {(oncologist || lastVisit) && (
+              <div className="flex items-center gap-4">
+                {oncologist && (
+                  <div className="text-right">
+                    <p className="text-slate-400 text-xs">Primary Oncologist</p>
+                    <p className="text-white text-sm">{oncologist}</p>
+                  </div>
+                )}
+                {lastVisit && (
+                  <div className="text-right">
+                    <p className="text-slate-400 text-xs">Last Visit</p>
+                    <p className="text-white text-sm">{lastVisit}</p>
+                  </div>
+                )}
               </div>
-              <div className="text-right">
-                <p className="text-slate-400 text-xs">Last Visit</p>
-                <p className="text-white text-sm">{lastVisit}</p>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

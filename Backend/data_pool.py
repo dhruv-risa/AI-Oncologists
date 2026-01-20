@@ -51,6 +51,25 @@ class DataPool:
         conn.commit()
         conn.close()
 
+    def _ensure_table_exists(self, conn):
+        """
+        Ensure the table exists for the current connection.
+        This is called before each database operation to handle cases
+        where the table was deleted after the app started.
+
+        Args:
+            conn: SQLite connection object
+        """
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS patient_data_pool (
+                mrn TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
     def store_patient_data(self, mrn: str, data: dict) -> bool:
         """
         Store patient data in the pool.
@@ -74,6 +93,10 @@ class DataPool:
                 return False
 
             conn = sqlite3.connect(self.db_path)
+
+            # Ensure table exists before operation
+            self._ensure_table_exists(conn)
+
             cursor = conn.cursor()
 
             # Convert data to JSON string
@@ -105,6 +128,10 @@ class DataPool:
         """
         try:
             conn = sqlite3.connect(self.db_path)
+
+            # Ensure table exists before operation
+            self._ensure_table_exists(conn)
+
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -134,6 +161,10 @@ class DataPool:
         """
         try:
             conn = sqlite3.connect(self.db_path)
+
+            # Ensure table exists before operation
+            self._ensure_table_exists(conn)
+
             cursor = conn.cursor()
 
             # Fetch basic info and parse JSON in Python for better error handling
@@ -195,6 +226,10 @@ class DataPool:
         """
         try:
             conn = sqlite3.connect(self.db_path)
+
+            # Ensure table exists before operation
+            self._ensure_table_exists(conn)
+
             cursor = conn.cursor()
 
             cursor.execute("DELETE FROM patient_data_pool WHERE mrn = ?", (mrn,))
@@ -215,6 +250,10 @@ class DataPool:
         """
         try:
             conn = sqlite3.connect(self.db_path)
+
+            # Ensure table exists before operation
+            self._ensure_table_exists(conn)
+
             cursor = conn.cursor()
 
             cursor.execute("DELETE FROM patient_data_pool")
@@ -238,6 +277,10 @@ class DataPool:
         """
         try:
             conn = sqlite3.connect(self.db_path)
+
+            # Ensure table exists before operation
+            self._ensure_table_exists(conn)
+
             cursor = conn.cursor()
 
             cursor.execute("SELECT 1 FROM patient_data_pool WHERE mrn = ?", (mrn,))

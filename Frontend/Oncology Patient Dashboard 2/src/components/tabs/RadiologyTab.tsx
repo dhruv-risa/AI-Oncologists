@@ -295,106 +295,132 @@ export function RadiologyTab() {
                 </div>
               )}
 
-              {/* RECIST Measurements */}
-              {selectedReport.radiology_imp_RECIST?.recist_measurements && (
-                <div className="pt-4 border-t border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm text-gray-700">RECIST Measurements</h4>
-                  </div>
-                  <div className="overflow-hidden rounded-lg border border-gray-200">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-3 py-2 text-left text-xs text-gray-600">Lesion</th>
-                          <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={2}>
-                            <div className="flex flex-col">
-                              <span className="font-semibold text-blue-700">
-                                {selectedReport.radiology_imp_RECIST.recist_measurements.column_headers.initial_diagnosis_label?.split(' ').slice(0, 2).join(' ') || 'Initial Diagnosis'}
-                              </span>
-                              <span className="text-xs text-gray-500 font-normal">
-                                {selectedReport.radiology_imp_RECIST.recist_measurements.column_headers.initial_diagnosis_label?.split(' ').slice(-2).join(' ') || ''}
-                              </span>
-                            </div>
-                          </th>
-                          <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={2}>
-                            <div className="flex flex-col">
-                              <span className="font-semibold text-purple-700">
-                                {selectedReport.radiology_imp_RECIST.recist_measurements.column_headers.current_treatment_label?.split(' ').slice(0, 2).join(' ') || 'Current Treatment'}
-                              </span>
-                              <span className="text-xs text-gray-500 font-normal">
-                                {selectedReport.radiology_imp_RECIST.recist_measurements.column_headers.current_treatment_label?.split(' ').slice(-2).join(' ') || ''}
-                              </span>
-                            </div>
-                          </th>
-                        </tr>
-                        <tr className="border-t border-gray-300">
-                          <th className="px-3 py-2 text-left text-xs text-gray-600"></th>
-                          <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">Baseline</th>
-                          <th className="px-3 py-2 text-left text-xs text-gray-600">Change</th>
-                          <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">Baseline</th>
-                          <th className="px-3 py-2 text-left text-xs text-gray-600">Change</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {/* Lesion rows */}
-                        {selectedReport.radiology_imp_RECIST.recist_measurements.lesions.map((lesion, idx) => (
-                          <tr key={idx}>
-                            <td className="px-3 py-2 text-gray-900">{lesion.lesion_name}</td>
-                            <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
-                              {formatValue(lesion.initial_diagnosis_data.baseline_val)}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span className={getChangeColor(lesion.initial_diagnosis_data.change_percentage)}>
-                                {formatValue(lesion.initial_diagnosis_data.change_percentage)}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
-                              {formatValue(lesion.current_treatment_data.baseline_val)}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span className={getChangeColor(lesion.current_treatment_data.change_percentage)}>
-                                {formatValue(lesion.current_treatment_data.change_percentage)}
-                              </span>
-                            </td>
+              {/* RECIST Measurements - Only show if there are lesions */}
+              {(() => {
+                const recistData = selectedReport.radiology_imp_RECIST?.recist_measurements;
+                const hasLesions = recistData && recistData.lesions && recistData.lesions.length > 0;
+
+                // Don't render section if no lesions data
+                if (!hasLesions) {
+                  return null;
+                }
+
+                return (
+                  <div className="pt-4 border-t border-gray-200">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm text-gray-700">RECIST Measurements</h4>
+                    </div>
+                    <div className="overflow-hidden rounded-lg border border-gray-200">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-xs text-gray-600">Lesion</th>
+                            <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={2}>
+                              <div className="flex flex-col">
+                                <span className="font-semibold text-blue-700">
+                                  {recistData.column_headers.initial_diagnosis_label?.split(' ').slice(0, 2).join(' ') || 'Initial Diagnosis'}
+                                </span>
+                                <span className="text-xs text-gray-500 font-normal">
+                                  {recistData.column_headers.initial_diagnosis_label?.split(' ').slice(-2).join(' ') || ''}
+                                </span>
+                              </div>
+                            </th>
+                            <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={2}>
+                              <div className="flex flex-col">
+                                <span className="font-semibold text-purple-700">
+                                  {recistData.column_headers.current_treatment_label?.split(' ').slice(0, 2).join(' ') || 'Current Treatment'}
+                                </span>
+                                <span className="text-xs text-gray-500 font-normal">
+                                  {recistData.column_headers.current_treatment_label?.split(' ').slice(-2).join(' ') || ''}
+                                </span>
+                              </div>
+                            </th>
                           </tr>
-                        ))}
+                          <tr className="border-t border-gray-300">
+                            <th className="px-3 py-2 text-left text-xs text-gray-600"></th>
+                            <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">Baseline</th>
+                            <th className="px-3 py-2 text-left text-xs text-gray-600">Change</th>
+                            <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">Baseline</th>
+                            <th className="px-3 py-2 text-left text-xs text-gray-600">Change</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {/* Lesion rows */}
+                          {recistData.lesions.map((lesion, idx) => (
+                            <tr key={idx}>
+                              <td className="px-3 py-2 text-gray-900">{lesion.lesion_name}</td>
+                              <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
+                                {formatValue(lesion.initial_diagnosis_data.baseline_val)}
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={getChangeColor(lesion.initial_diagnosis_data.change_percentage)}>
+                                  {formatValue(lesion.initial_diagnosis_data.change_percentage)}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
+                                {formatValue(lesion.current_treatment_data.baseline_val)}
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={getChangeColor(lesion.current_treatment_data.change_percentage)}>
+                                  {formatValue(lesion.current_treatment_data.change_percentage)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
 
-                        {/* Sum row */}
-                        <tr className="bg-gray-50 font-semibold">
-                          <td className="px-3 py-2 text-gray-900">
-                            {selectedReport.radiology_imp_RECIST.recist_measurements.sum_row.lesion_name}
-                          </td>
-                          <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
-                            {formatValue(selectedReport.radiology_imp_RECIST.recist_measurements.sum_row.initial_diagnosis_data.baseline_val)}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className={getChangeColor(selectedReport.radiology_imp_RECIST.recist_measurements.sum_row.initial_diagnosis_data.change_percentage)}>
-                              {formatValue(selectedReport.radiology_imp_RECIST.recist_measurements.sum_row.initial_diagnosis_data.change_percentage)}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
-                            {formatValue(selectedReport.radiology_imp_RECIST.recist_measurements.sum_row.current_treatment_data.baseline_val)}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className={getChangeColor(selectedReport.radiology_imp_RECIST.recist_measurements.sum_row.current_treatment_data.change_percentage)}>
-                              {formatValue(selectedReport.radiology_imp_RECIST.recist_measurements.sum_row.current_treatment_data.change_percentage)}
-                            </span>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
+                          {/* Sum row */}
+                          {recistData.sum_row && (
+                            <tr className="bg-gray-50 font-semibold">
+                              <td className="px-3 py-2 text-gray-900">
+                                {recistData.sum_row.lesion_name}
+                              </td>
+                              <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
+                                {formatValue(recistData.sum_row.initial_diagnosis_data.baseline_val)}
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={getChangeColor(recistData.sum_row.initial_diagnosis_data.change_percentage)}>
+                                  {formatValue(recistData.sum_row.initial_diagnosis_data.change_percentage)}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
+                                {formatValue(recistData.sum_row.current_treatment_data.baseline_val)}
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={getChangeColor(recistData.sum_row.current_treatment_data.change_percentage)}>
+                                  {formatValue(recistData.sum_row.current_treatment_data.change_percentage)}
+                                </span>
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Legend */}
+                    <div className="mt-3 flex items-center gap-4 text-xs text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 bg-blue-50 border border-blue-300 rounded"></div>
+                        <span>Initial diagnosis baseline</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 bg-purple-50 border border-purple-300 rounded"></div>
+                        <span>Current treatment baseline</span>
+                      </div>
+                    </div>
                   </div>
+                );
+              })()}
 
-                  {/* Legend */}
-                  <div className="mt-3 flex items-center gap-4 text-xs text-gray-600">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-blue-50 border border-blue-300 rounded"></div>
-                      <span>Initial diagnosis baseline</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-purple-50 border border-purple-300 rounded"></div>
-                      <span>Current treatment baseline</span>
-                    </div>
+              {/* Additional Findings Section */}
+              {selectedReport.radiology_imp_RECIST?.additional_findings && (
+                <div className="pt-4 border-t border-gray-200">
+                  <h4 className="text-sm text-gray-700 mb-2">Additional Findings</h4>
+                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                    <ul className="text-sm text-gray-600 space-y-1 pl-4">
+                      {parseImpression(selectedReport.radiology_imp_RECIST.additional_findings).map((finding, idx) => (
+                        <li key={idx} className="list-disc ml-1 leading-relaxed">{finding}</li>
+                      ))}
+                    </ul>
                   </div>
                 </div>
               )}

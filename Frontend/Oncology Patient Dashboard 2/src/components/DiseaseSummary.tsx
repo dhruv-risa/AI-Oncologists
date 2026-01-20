@@ -5,14 +5,34 @@ interface DiseaseSummaryProps {
 }
 
 export function DiseaseSummary({ patient }: DiseaseSummaryProps) {
-  // Extract data using exact backend keys
-  const cancerType = patient.diagnosis?.cancer_type || 'Not specified';
-  const histology = patient.diagnosis?.histology || 'Not specified';
-  const diagnosisDate = patient.diagnosis?.diagnosis_date || 'Unknown';
-  const ajccStage = patient.diagnosis?.ajcc_stage || 'N/A';
-  const lineOfTherapy = patient.diagnosis?.line_of_therapy || 'N/A';
-  const tnmClassification = patient.diagnosis?.tnm_classification || 'N/A';
-  const metastaticSites = patient.diagnosis?.metastatic_sites || [];
+  // Use diagnosis_header for consistency with DiagnosisTab
+  const cancerType = patient.diagnosis_header?.primary_diagnosis || 'Not specified';
+  const histology = patient.diagnosis_header?.histologic_type || 'Not specified';
+  const diagnosisDate = patient.diagnosis_header?.diagnosis_date || 'Unknown';
+
+  // Derive current TNM and Stage from timeline (most recent entry) or fall back to header
+  const timeline = patient.diagnosis_evolution_timeline?.timeline || [];
+  const currentStaging = timeline.length > 0
+    ? {
+        tnm: timeline[0]?.tnm_status || 'N/A',
+        ajcc_stage: timeline[0]?.stage_header || 'N/A'
+      }
+    : {
+        tnm: patient.diagnosis_header?.current_staging?.tnm || 'N/A',
+        ajcc_stage: patient.diagnosis_header?.current_staging?.ajcc_stage || 'N/A'
+      };
+
+  const tnmClassification = currentStaging.tnm;
+  const ajccStage = currentStaging.ajcc_stage;
+
+  // Line of therapy comes from treatment tab (current line)
+  const currentTreatmentLine = patient.treatment_tab_info_LOT?.treatment_history?.find(
+    (treatment: any) => treatment.header?.status_badge === 'Current'
+  );
+  const lineOfTherapy = currentTreatmentLine?.header?.line_number || 'N/A';
+
+  // Use metastatic sites from diagnosis_header to match the diagnosis header display
+  const metastaticSites = patient.diagnosis_header?.metastatic_sites || [];
   const ecogStatus = patient.diagnosis?.ecog_status || 'N/A';
   const diseaseStatus = patient.diagnosis?.disease_status || 'N/A';
 

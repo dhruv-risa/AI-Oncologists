@@ -1,6 +1,7 @@
 import { DataField } from '../DataField';
 import { TrendingUp, Calendar, ArrowDown, Eye, Download, ExternalLink } from 'lucide-react';
 import { PatientData } from '../../services/api';
+import { formatDate } from '../../utils/dateFormatter';
 
 interface DiagnosisTabProps {
   patientData: PatientData | null;
@@ -16,17 +17,17 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
   }
 
   const diagnosisHeader = patientData.diagnosis_header;
-  const rawDiagnosisTimeline = patientData.diagnosis_evolution_timeline?.stage_evolution_timeline || [];
+  const rawDiagnosisTimeline = patientData.diagnosis_evolution_timeline?.timeline || [];
   const diagnosisFooter = patientData.diagnosis_footer;
 
-  // Sort timeline by date (most recent first)
+  // Sort timeline by date (most recent first) and limit to 5 most recent
   const diagnosisTimeline = [...rawDiagnosisTimeline].sort((a, b) => {
-    // Try to parse dates from timeline_event_date
+    // Try to parse dates from date_label
     const parseDate = (dateStr: string) => {
       if (!dateStr) return new Date(0);
 
       // Handle "Current Status" or similar labels - should be most recent
-      if (dateStr.toLowerCase().includes('current')) {
+      if (dateStr && dateStr.toLowerCase().includes('current')) {
         return new Date(); // Current date (highest priority)
       }
 
@@ -56,10 +57,25 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
       return new Date(0);
     };
 
-    const aDate = parseDate(a.timeline_event_date);
-    const bDate = parseDate(b.timeline_event_date);
+    const aDate = parseDate(a.date_label);
+    const bDate = parseDate(b.date_label);
     return bDate.getTime() - aDate.getTime(); // Most recent first
-  });
+  }).slice(0, 5); // Limit to 5 most recent stages
+
+  // Derive initial and current staging from timeline (timeline is sorted most recent first)
+  const initialStaging = diagnosisTimeline.length > 0
+    ? {
+        tnm: diagnosisTimeline[diagnosisTimeline.length - 1]?.tnm_status || 'NA',
+        ajcc_stage: diagnosisTimeline[diagnosisTimeline.length - 1]?.stage_header || 'N/A'
+      }
+    : diagnosisHeader?.initial_staging || { tnm: 'NA', ajcc_stage: 'N/A' };
+
+  const currentStaging = diagnosisTimeline.length > 0
+    ? {
+        tnm: diagnosisTimeline[0]?.tnm_status || 'NA',
+        ajcc_stage: diagnosisTimeline[0]?.stage_header || 'N/A'
+      }
+    : diagnosisHeader?.current_staging || { tnm: 'NA', ajcc_stage: 'N/A' };
 
   // Format metastatic sites for display
   const metastaticSitesDisplay = diagnosisHeader?.metastatic_sites?.length > 0
@@ -81,34 +97,10 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
     return `${tnm} (${stage})`;
   };
 
-  // Parse disease findings into bullet points
-  const parseDiseaseFindings = (findings: string | string[]) => {
-    if (!findings) return [];
-
-    // If it's already an array, return it
-    if (Array.isArray(findings)) {
-      return findings.filter(item => item && item.trim().length > 0);
-    }
-
-    // If it's a string, try to split it intelligently
-    // First check if it contains bullet points or list markers
-    if (findings.includes('•') || findings.includes('-') || findings.includes('*')) {
-      return findings
-        .split(/[•\-*]/)
-        .map(item => item.trim())
-        .filter(item => item.length > 0);
-    }
-
-    // Check for newlines (multiline text)
-    if (findings.includes('\n')) {
-      return findings
-        .split(/\n/)
-        .map(item => item.trim())
-        .filter(item => item.length > 0);
-    }
-
-    // If it's a single item or already formatted, return as is
-    return [findings.trim()];
+  // Parse key findings into bullet points
+  const parseKeyFindings = (findings: string[]) => {
+    if (!findings || !Array.isArray(findings)) return [];
+    return findings.filter(item => item && item.trim().length > 0);
   };
 
   return (
@@ -129,15 +121,15 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
         <DataField
           label="Initial TNM stage"
           value={formatTNMStage(
-            diagnosisHeader?.initial_staging?.tnm || 'NA',
-            diagnosisHeader?.initial_staging?.ajcc_stage || 'N/A'
+            initialStaging.tnm,
+            initialStaging.ajcc_stage
           )}
         />
         <DataField
           label="Current TNM stage"
           value={formatTNMStage(
-            diagnosisHeader?.current_staging?.tnm || 'NA',
-            diagnosisHeader?.current_staging?.ajcc_stage || 'N/A'
+            currentStaging.tnm,
+            currentStaging.ajcc_stage
           )}
         />
         <DataField
@@ -179,10 +171,11 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
               const isFirst = index === 0;
               const borderColor = isFirst ? 'border-red-500' : index === 1 ? 'border-orange-500' : 'border-blue-500';
               const bgColor = isFirst ? 'bg-red-500' : index === 1 ? 'bg-orange-500' : 'bg-blue-500';
-              const statusLabel = isFirst ? 'Current Status' : event.timeline_event_date;
+              const statusLabel = isFirst ? 'Current Status' : formatDate(event.date_label);
 
               // Helper function to get toxicity color
               const getToxicityColor = (grade: string) => {
+                if (!grade) return 'bg-gray-100 text-gray-800';
                 if (grade.includes('3') || grade.includes('4')) return 'bg-red-100 text-red-800';
                 if (grade.includes('2')) return 'bg-amber-100 text-amber-800';
                 return 'bg-yellow-100 text-yellow-800';
@@ -192,25 +185,25 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
                 <div key={index} className="relative">
                   <div className={`bg-white rounded-lg p-5 shadow-md border-2 ${borderColor}`}>
                     <div className={`absolute -left-3 top-1/2 -translate-y-1/2 ${isFirst ? 'w-5 h-5' : 'w-4 h-4'} ${bgColor} rounded-full border-4 border-white shadow-lg ${isFirst ? 'animate-pulse' : ''} z-10`}></div>
-                    <div className="flex items-start gap-6">
+                    <div className="flex items-stretch gap-6">
                       {/* Stage Info */}
                       <div className="flex-shrink-0 w-48">
                         <div className={`inline-block ${bgColor} text-white px-2 py-0.5 rounded-full text-xs mb-2`}>
                           {statusLabel}
                         </div>
                         <h4 className="text-sm font-semibold text-gray-900 mb-1">
-                          {event.timeline_stage_group || 'N/A'}
+                          {event.stage_header || 'N/A'}
                         </h4>
                         <p className="text-xs text-gray-700 mb-1">
-                          {event.timeline_tnm_status !== 'NA' ? event.timeline_tnm_status : ''}
+                          {event.tnm_status !== 'NA' ? event.tnm_status : ''}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {event.timeline_description || ''}
+                          {event.disease_status || ''}
                         </p>
                       </div>
 
                       {/* Treatment Details */}
-                      <div className="flex-1 space-y-3 border-r border-gray-200 pr-6">
+                      <div className="flex-1 space-y-3 border-r border-gray-200 pr-6 self-stretch">
                         <div>
                           <p className="text-xs text-gray-500 mb-1">Regimen</p>
                           <p className="text-sm text-gray-900">
@@ -226,7 +219,7 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
                                   key={idx}
                                   className={`px-2 py-1 rounded text-xs ${getToxicityColor(toxicity.grade)}`}
                                 >
-                                  {toxicity.grade}: {toxicity.effect}
+                                  {toxicity.effect}
                                 </span>
                               ))}
                             </div>
@@ -235,17 +228,17 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
                       </div>
 
                       {/* Disease Findings */}
-                      <div className="flex-1 space-y-2">
+                      <div className="flex-1 space-y-2 self-stretch">
                         <div>
-                          <p className="text-xs text-gray-500 mb-1">Disease Findings</p>
-                          {event.disease_findings ? (
+                          <p className="text-xs text-gray-500 mb-1">Key Findings</p>
+                          {event.key_findings && event.key_findings.length > 0 ? (
                             <ul className="text-xs text-gray-900 space-y-1 pl-4">
-                              {parseDiseaseFindings(event.disease_findings).map((finding, idx) => (
+                              {parseKeyFindings(event.key_findings).map((finding, idx) => (
                                 <li key={idx} className="list-disc ml-1">{finding}</li>
                               ))}
                             </ul>
                           ) : (
-                            <p className="text-xs text-gray-900">No disease findings recorded</p>
+                            <p className="text-xs text-gray-900">No key findings recorded</p>
                           )}
                         </div>
                       </div>

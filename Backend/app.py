@@ -23,7 +23,8 @@ sys.path.append(PROJECT_ROOT)
 from Backend.main import (
     extract_patient_data,
     lab_tab_info,
-    genomics_tab_pathology_tab_info
+    genomics_tab_info,
+    pathology_tab_info_pipeline
 )
 
 from Backend.bytes_extractor import (
@@ -102,12 +103,12 @@ class PatientDataResponse(BaseModel):
 class LabDataResponse(BaseModel):
     success: bool
     mrn: str
-    lab_results_count: Optional[int]
-    pdf_url: Optional[str]
-    file_id: Optional[str]
-    lab_documents: Optional[list]
-    lab_info: Optional[dict]
-    error: Optional[str]
+    lab_results_count: Optional[int] = None
+    processed_documents: Optional[int] = None
+    lab_info: Optional[dict] = None
+    metadata: Optional[dict] = None
+    validation_summary: Optional[dict] = None
+    error: Optional[str] = None
 
 
 class GenomicsPathologyResponse(BaseModel):
@@ -228,8 +229,8 @@ async def get_patient_data(request: MRNRequest):
 
         # Create a thread pool executor for running sync functions in parallel
         loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            # Run all three extraction functions in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Run all four extraction functions in parallel
             patient_data_future = loop.run_in_executor(
                 executor, extract_patient_data, request.mrn, False
             )
@@ -237,14 +238,18 @@ async def get_patient_data(request: MRNRequest):
                 executor, lab_tab_info, request.mrn, False
             )
             genomics_data_future = loop.run_in_executor(
-                executor, genomics_tab_pathology_tab_info, request.mrn, False
+                executor, genomics_tab_info, request.mrn, False
+            )
+            pathology_data_future = loop.run_in_executor(
+                executor, pathology_tab_info_pipeline, request.mrn, False, True  # use_gemini_api=True
             )
 
-            # Wait for all three to complete
-            result, lab_result, genomics_tab_result = await asyncio.gather(
+            # Wait for all four to complete
+            result, lab_result, genomics_result, pathology_result = await asyncio.gather(
                 patient_data_future,
                 lab_data_future,
-                genomics_data_future
+                genomics_data_future,
+                pathology_data_future
             )
 
         logger.info("="*80)
@@ -252,56 +257,55 @@ async def get_patient_data(request: MRNRequest):
         logger.info("="*80)
 
         result['lab_info'] = lab_result.get('lab_info')
-        result['genomic_info'] = genomics_tab_result.get('genomic_info')
-        result['pathology_summary'] = genomics_tab_result.get('pathology_summary')
-        result['pathology_markers'] = genomics_tab_result.get('pathology_markers')
+        result['genomic_info'] = genomics_result.get('genomic_info')
+        result['pathology_summary'] = pathology_result.get('pathology_summary')
+        result['pathology_markers'] = pathology_result.get('pathology_markers')
 
-        # Extract individual pathology reports with details (during initial load)
-        print(f"Extracting individual pathology reports for MRN: {request.mrn}")
-        try:
-            pathology_reports = upload_individual_reports_to_drive(
-                mrn=request.mrn,
-                report_type='pathology'
-            )
+        # Use pathology data already extracted by pathology_tab_info_pipeline (no duplicate extraction)
+        print(f"Using pathology reports already extracted by pathology_tab_info_pipeline for MRN: {request.mrn}")
 
-            if pathology_reports:
-                # Extract pathology details for each report
-                detailed_pathology_reports = []
-                for report in pathology_reports:
-                    try:
-                        pathology_summary, pathology_markers = pathology_info(pdf_url=report['drive_url'])
-                        detailed_pathology_reports.append({
-                            "drive_url": report['drive_url'],
-                            "drive_file_id": report['drive_file_id'],
-                            "date": report['date'],
-                            "document_type": report['document_type'],
-                            "description": report['description'],
-                            "document_id": report['document_id'],
-                            "pathology_summary": pathology_summary,
-                            "pathology_markers": pathology_markers
-                        })
-                    except Exception as e:
-                        # If extraction fails for a report, include error but continue
-                        print(f"Warning: Failed to extract pathology details for {report['document_id']}: {str(e)}")
-                        detailed_pathology_reports.append({
-                            "drive_url": report['drive_url'],
-                            "drive_file_id": report['drive_file_id'],
-                            "date": report['date'],
-                            "document_type": report['document_type'],
-                            "description": report['description'],
-                            "document_id": report['document_id'],
-                            "pathology_summary": None,
-                            "pathology_markers": None,
-                            "extraction_error": str(e)
-                        })
+        # Transform the pathology pipeline results into the format expected by the frontend
+        detailed_pathology_reports = []
+        genomic_alterations_reports = []
+        no_test_performed_reports = []
 
-                result['pathology_reports'] = detailed_pathology_reports
-            else:
-                result['pathology_reports'] = []
-        except Exception as e:
-            # If pathology extraction completely fails, continue with other data
-            print(f"Warning: Failed to extract pathology reports: {str(e)}")
-            result['pathology_reports'] = []
+        # Get the typical pathology reports from the pipeline result
+        typical_reports = pathology_result.get('typical_pathology_reports', [])
+        for report in typical_reports:
+            detailed_pathology_reports.append({
+                "drive_url": report.get('drive_url'),
+                "drive_file_id": report.get('file_id'),
+                "date": report.get('date'),
+                "document_type": report.get('document_type'),
+                "description": report.get('description', 'Pathology Report'),
+                "document_id": report.get('document_id', report.get('date')),
+                "pathology_summary": report.get('pathology_summary'),
+                "pathology_markers": report.get('pathology_markers')
+            })
+
+        # Get genomic pathology reports from pipeline result
+        genomic_reports = pathology_result.get('genomic_pathology_reports', [])
+        for report in genomic_reports:
+            genomic_alterations_reports.append({
+                "drive_url": report.get('drive_url', ''),
+                "drive_file_id": report.get('file_id', ''),
+                "date": report.get('date'),
+                "document_type": report.get('document_type'),
+                "description": report.get('description', 'Genomic Alterations Report'),
+                "document_id": report.get('document_id', report.get('date')),
+                "classification": report.get('classification'),
+                "report_type": "GENOMIC_ALTERATIONS"
+            })
+
+        result['pathology_reports'] = detailed_pathology_reports
+        result['genomic_alterations_reports'] = genomic_alterations_reports
+        result['no_test_performed_reports'] = no_test_performed_reports
+
+        # Log summary
+        print(f"📊 Classification Summary:")
+        print(f"   - Typical Pathology Reports: {len(detailed_pathology_reports)}")
+        print(f"   - Genomic Alterations Reports: {len(genomic_alterations_reports)}")
+        print(f"   - No Test Performed Reports: {len(no_test_performed_reports)}")
 
         # Extract individual radiology reports with details (during initial load)
         print(f"Extracting individual radiology reports for MRN: {request.mrn}")
@@ -316,11 +320,14 @@ async def get_patient_data(request: MRNRequest):
                 for report in radiology_reports:
                     try:
                         radiology_summary, radiology_imp_RECIST = extract_radiology_details_from_report(
-                            radiology_url=report['drive_url']
+                            radiology_url=report['drive_url_with_MD'],
+                            use_gemini_api=True
                         )
                         detailed_radiology_reports.append({
                             "drive_url": report['drive_url'],
+                            "drive_url_with_MD": report['drive_url_with_MD'],
                             "drive_file_id": report['drive_file_id'],
+                            "drive_file_id_with_MD": report['drive_file_id_with_MD'],
                             "date": report['date'],
                             "document_type": report['document_type'],
                             "description": report['description'],
@@ -333,7 +340,9 @@ async def get_patient_data(request: MRNRequest):
                         print(f"Warning: Failed to extract radiology details for {report['document_id']}: {str(e)}")
                         detailed_radiology_reports.append({
                             "drive_url": report['drive_url'],
+                            "drive_url_with_MD": report['drive_url_with_MD'],
                             "drive_file_id": report['drive_file_id'],
+                            "drive_file_id_with_MD": report['drive_file_id_with_MD'],
                             "date": report['date'],
                             "document_type": report['document_type'],
                             "description": report['description'],
@@ -376,7 +385,7 @@ async def get_demographics(request: MRNRequest):
 
     Returns:
     - Patient Name
-    - MRN number
+    - MRN
     - Date of Birth
     - Age
     - Gender
@@ -551,47 +560,26 @@ async def get_diagnosis_tab(request: MRNRequest):
 @app.post("/api/tabs/lab", response_model=LabDataResponse, tags=["Tabs"])
 async def get_lab_tab(request: MRNRequest):
     """
-    Get lab tab information.
+    Get lab tab information using Gemini individual processing.
 
-    This endpoint:
-    1. Fetches all lab result documents from the last 6 months
-    2. Combines them into a single PDF
-    3. Uploads to Google Drive and returns a shareable link
-    4. Extracts lab information
+    This endpoint implements the following workflow:
+    1. Fetches all lab result documents from the last 6 months from FHIR
+    2. For each report, extracts data using Gemini API (REST):
+       - Passes PDF bytes directly to Gemini (no file downloads)
+       - Extracts current values (most recent measurement with unit, date, status, reference range)
+       - Extracts trends (historical data points from each report)
+    3. Consolidates all individual results into final UI-ready format
+    4. Merges trend data from all reports for each biomarker
+
+    Returns:
+        LabDataResponse with consolidated lab data including:
+        - Tumor markers (CEA, NSE, proGRP, CYFRA 21-1)
+        - Complete blood count (WBC, Hemoglobin, Platelets, ANC)
+        - Metabolic panel (Creatinine, ALT, AST, Total Bilirubin)
     """
     try:
         result = lab_tab_info(mrn=request.mrn, verbose=False)
         return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-@app.post("/api/tabs/genomics", tags=["Tabs"])
-async def get_genomics_tab(request: MRNRequest):
-    """
-    Get genomics tab information.
-
-    Returns genomic information extracted from pathology reports.
-    """
-    try:
-        result = genomics_tab_pathology_tab_info(mrn=request.mrn, verbose=False)
-
-        if not result['success']:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get('error', 'Failed to extract genomics information')
-            )
-
-        return {
-            "success": True,
-            "mrn": request.mrn,
-            "genomic_info": result['genomic_info']
-        }
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -787,22 +775,68 @@ async def get_pathology_details(request: MRNRequest):
 
         # Step 3: Extract pathology details for each report
         detailed_reports = []
+        genomic_alterations_reports = []  # Store genomic reports separately
+        no_test_performed_reports = []  # Store no test performed reports
 
         for report in reports:
             try:
                 # Extract pathology information from the Drive URL
-                pathology_summary, pathology_markers = pathology_info(pdf_url=report['drive_url'])
+                pathology_summary, pathology_markers = pathology_info(pdf_url=report['drive_url'], use_gemini_api=True)
 
-                detailed_reports.append({
-                    "drive_url": report['drive_url'],
-                    "drive_file_id": report['drive_file_id'],
-                    "date": report['date'],
-                    "document_type": report['document_type'],
-                    "description": report['description'],
-                    "document_id": report['document_id'],
-                    "pathology_summary": pathology_summary,
-                    "pathology_markers": pathology_markers
-                })
+                # Check report type and classify accordingly
+                if isinstance(pathology_summary, dict):
+                    report_type = pathology_summary.get('report_type')
+
+                    if report_type == 'GENOMIC_ALTERATIONS':
+                        # Store in genomic alterations list
+                        genomic_alterations_reports.append({
+                            "drive_url": report['drive_url'],
+                            "drive_file_id": report['drive_file_id'],
+                            "date": report['date'],
+                            "document_type": report['document_type'],
+                            "description": report['description'],
+                            "document_id": report['document_id'],
+                            "classification": pathology_summary.get('classification'),
+                            "report_type": "GENOMIC_ALTERATIONS"
+                        })
+
+                    elif report_type == 'NO_TEST_PERFORMED':
+                        # Store in no test performed list
+                        no_test_performed_reports.append({
+                            "drive_url": report['drive_url'],
+                            "drive_file_id": report['drive_file_id'],
+                            "date": report['date'],
+                            "document_type": report['document_type'],
+                            "description": report['description'],
+                            "document_id": report['document_id'],
+                            "classification": pathology_summary.get('classification'),
+                            "report_type": "NO_TEST_PERFORMED"
+                        })
+
+                    else:
+                        # Store as typical pathology report
+                        detailed_reports.append({
+                            "drive_url": report['drive_url'],
+                            "drive_file_id": report['drive_file_id'],
+                            "date": report['date'],
+                            "document_type": report['document_type'],
+                            "description": report['description'],
+                            "document_id": report['document_id'],
+                            "pathology_summary": pathology_summary,
+                            "pathology_markers": pathology_markers
+                        })
+                else:
+                    # Fallback: if pathology_summary is not a dict, treat as typical pathology
+                    detailed_reports.append({
+                        "drive_url": report['drive_url'],
+                        "drive_file_id": report['drive_file_id'],
+                        "date": report['date'],
+                        "document_type": report['document_type'],
+                        "description": report['description'],
+                        "document_id": report['document_id'],
+                        "pathology_summary": pathology_summary,
+                        "pathology_markers": pathology_markers
+                    })
             except Exception as e:
                 # If extraction fails for a report, include error but continue with others
                 detailed_reports.append({
@@ -820,13 +854,19 @@ async def get_pathology_details(request: MRNRequest):
         # Step 4: Cache the extracted pathology reports in the data pool
         if cached_patient_data:
             cached_patient_data['pathology_reports'] = detailed_reports
+            cached_patient_data['genomic_alterations_reports'] = genomic_alterations_reports
+            cached_patient_data['no_test_performed_reports'] = no_test_performed_reports
             data_pool.store_patient_data(mrn=request.mrn, data=cached_patient_data)
 
         return {
             "success": True,
             "mrn": request.mrn,
-            "reports_count": len(detailed_reports),
-            "reports": detailed_reports
+            "pathology_reports_count": len(detailed_reports),
+            "genomic_alterations_count": len(genomic_alterations_reports),
+            "no_test_performed_count": len(no_test_performed_reports),
+            "pathology_reports": detailed_reports,
+            "genomic_alterations_reports": genomic_alterations_reports,
+            "no_test_performed_reports": no_test_performed_reports
         }
     except Exception as e:
         raise HTTPException(
@@ -835,32 +875,22 @@ async def get_pathology_details(request: MRNRequest):
         )
     
 
-@app.post("/api/tabs/pathology", tags=["Tabs"])
-async def get_pathology_tab(request: MRNRequest):
+@app.post("/api/tabs/genomics", tags=["Tabs"])
+async def get_genomics_tab(request: MRNRequest):
     """
-    Get pathology tab information.
+    Get genomics tab information.
 
-    Returns:
-    - pathology_summary: Summary of pathology findings
-    - pathology_markers: Biomarker information
+    This endpoint:
+    1. Fetches all pathology report documents
+    2. Classifies each report to identify genomic alterations
+    3. Filters to keep only genomic pathology reports + MD notes
+    4. Combines filtered documents into a single PDF
+    5. Uploads to Google Drive
+    6. Extracts genomic information
     """
     try:
-        result = genomics_tab_pathology_tab_info(mrn=request.mrn, verbose=False)
-
-        if not result['success']:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get('error', 'Failed to extract pathology information')
-            )
-
-        return {
-            "success": True,
-            "mrn": request.mrn,
-            "pathology_summary": result['pathology_summary'],
-            "pathology_markers": result['pathology_markers']
-        }
-    except HTTPException:
-        raise
+        result = genomics_tab_info(mrn=request.mrn, verbose=False)
+        return result
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -868,19 +898,21 @@ async def get_pathology_tab(request: MRNRequest):
         )
 
 
-@app.post("/api/tabs/genomics-pathology", response_model=GenomicsPathologyResponse, tags=["Tabs"])
-async def get_genomics_pathology_tab(request: MRNRequest):
+@app.post("/api/tabs/pathology", tags=["Tabs"])
+async def get_pathology_tab(request: MRNRequest):
     """
-    Get combined genomics and pathology tab information.
+    Get pathology tab information.
 
     This endpoint:
     1. Fetches all pathology report documents
-    2. Combines them into a single PDF
-    3. Uploads to Google Drive and returns a shareable link
-    4. Extracts both genomic and pathology information
+    2. Classifies each report to identify typical pathology
+    3. Filters to keep only typical pathology reports
+    4. Processes each typical pathology report individually
+    5. Uploads to Google Drive
+    6. Extracts pathology summary and markers
     """
     try:
-        result = genomics_tab_pathology_tab_info(mrn=request.mrn, verbose=False)
+        result = pathology_tab_info_pipeline(mrn=request.mrn, verbose=False, use_gemini_api=True)
         return result
     except Exception as e:
         raise HTTPException(
@@ -1208,7 +1240,7 @@ async def test_diagnosis_tab_full(request: MRNRequest):
         pdf_url = _test_get_md_note_url(request.mrn)
 
         # Extract diagnosis tab info (returns 3 parts)
-        diagnosis_header, diagnosis_evolution_timeline, diagnosis_footer = diagnosis_extraction(pdf_url=pdf_url)
+        diagnosis_header, diagnosis_evolution_timeline, diagnosis_footer = diagnosis_extraction(pdf_input=pdf_url)
 
         return {
             "success": True,
@@ -1277,16 +1309,18 @@ async def test_genomics_tab(request: MRNRequest):
     Test end-to-end workflow for Genomics tab.
 
     Workflow:
-    1. Fetch pathology reports + molecular reports + MD notes
-    2. Combine all into single PDF
-    3. Upload to Google Drive
-    4. Extract genomic information
+    1. Fetch pathology reports + MD notes
+    2. Classify reports to identify genomic alterations
+    3. Filter to keep only genomic pathology reports + MD notes
+    4. Combine filtered documents into single PDF
+    5. Upload to Google Drive
+    6. Extract genomic information
 
     Note: This endpoint ALWAYS bypasses cache for testing purposes.
     """
     try:
-        # Run the genomics/pathology pipeline
-        result = genomics_tab_pathology_tab_info(mrn=request.mrn, verbose=False)
+        # Run the genomics pipeline
+        result = genomics_tab_info(mrn=request.mrn, verbose=False)
 
         if not result['success']:
             raise ValueError(result.get('error', 'Genomics extraction failed'))
@@ -1299,7 +1333,7 @@ async def test_genomics_tab(request: MRNRequest):
                 "document_count": result['total_documents_count'],
                 "pdf_url": result['pdf_url'],
                 "file_id": result['file_id'],
-                "pipeline_stages": ["fetch_pathology_and_md_notes", "combine_pdfs", "upload_to_drive", "extract_genomics"]
+                "pipeline_stages": ["fetch_pathology_and_md_notes", "classify_reports", "filter_genomic_reports", "combine_pdfs", "upload_to_drive", "extract_genomics"]
             },
             "extracted_data": result['genomic_info']
         }
@@ -1316,34 +1350,141 @@ async def test_pathology_tab(request: MRNRequest):
     Test end-to-end workflow for Pathology tab.
 
     Workflow:
-    1. Fetch pathology reports + molecular reports + MD notes
-    2. Combine all into single PDF
-    3. Upload to Google Drive
-    4. Extract pathology information
+    1. Fetch individual pathology reports from FHIR (NOT combined with MD notes)
+    2. Upload each report to Google Drive
+    3. Extract pathology information from most recent typical pathology report
 
     Note: This endpoint ALWAYS bypasses cache for testing purposes.
-    Note: This uses the same pipeline as genomics tab.
+    Note: Now processes INDIVIDUAL reports consistently with production /api/tabs/pathology
     """
     try:
-        # Run the genomics/pathology pipeline (shared)
-        result = genomics_tab_pathology_tab_info(mrn=request.mrn, verbose=False)
+        # Fetch individual pathology reports
+        print(f"Fetching individual pathology reports for MRN: {request.mrn}")
+        pathology_reports = upload_individual_reports_to_drive(
+            mrn=request.mrn,
+            report_type='pathology'
+        )
 
-        if not result['success']:
-            raise ValueError(result.get('error', 'Pathology extraction failed'))
+        if not pathology_reports:
+            return {
+                "success": True,
+                "mrn": request.mrn,
+                "tab_name": "pathology",
+                "workflow_metadata": {
+                    "document_count": 0,
+                    "pipeline_stages": ["fetch_individual_pathology_reports"]
+                },
+                "extracted_data": {
+                    "message": "No pathology reports found",
+                    "pathology_summary": None,
+                    "pathology_markers": None
+                }
+            }
+
+        # Process ALL reports and collect all typical pathology reports
+        typical_pathology_reports = []
+        genomic_reports = []
+        no_test_performed_reports = []
+        processing_errors = []
+
+        for report in pathology_reports:
+            try:
+                # Extract pathology information
+                pathology_summary, pathology_markers = pathology_info(
+                    pdf_url=report['drive_url'],
+                    use_gemini_api=True
+                )
+
+                # Check report type and classify accordingly
+                if isinstance(pathology_summary, dict):
+                    report_type = pathology_summary.get('report_type')
+
+                    if report_type == 'GENOMIC_ALTERATIONS':
+                        genomic_reports.append({
+                            "document_id": report['document_id'],
+                            "date": report['date'],
+                            "drive_url": report['drive_url'],
+                            "classification": pathology_summary.get('classification'),
+                            "report_type": "GENOMIC_ALTERATIONS"
+                        })
+
+                    elif report_type == 'NO_TEST_PERFORMED':
+                        no_test_performed_reports.append({
+                            "document_id": report['document_id'],
+                            "date": report['date'],
+                            "drive_url": report['drive_url'],
+                            "classification": pathology_summary.get('classification'),
+                            "report_type": "NO_TEST_PERFORMED"
+                        })
+
+                    else:
+                        # This is a typical pathology report - store ALL of them
+                        typical_pathology_reports.append({
+                            "document_id": report['document_id'],
+                            "date": report['date'],
+                            "drive_url": report['drive_url'],
+                            "pathology_summary": pathology_summary,
+                            "pathology_markers": pathology_markers
+                        })
+                else:
+                    # Fallback: if pathology_summary is not a dict, treat as typical pathology
+                    typical_pathology_reports.append({
+                        "document_id": report['document_id'],
+                        "date": report['date'],
+                        "drive_url": report['drive_url'],
+                        "pathology_summary": pathology_summary,
+                        "pathology_markers": pathology_markers
+                    })
+
+            except Exception as e:
+                print(f"Warning: Failed to extract pathology details for {report['document_id']}: {str(e)}")
+                processing_errors.append({
+                    "document_id": report['document_id'],
+                    "date": report['date'],
+                    "drive_url": report['drive_url'],
+                    "error": str(e)
+                })
+                continue
+
+        if not typical_pathology_reports:
+            return {
+                "success": True,
+                "mrn": request.mrn,
+                "tab_name": "pathology",
+                "workflow_metadata": {
+                    "document_count": len(pathology_reports),
+                    "typical_pathology_count": 0,
+                    "genomic_alterations_count": len(genomic_reports),
+                    "no_test_performed_count": len(no_test_performed_reports),
+                    "errors_count": len(processing_errors),
+                    "pipeline_stages": ["fetch_individual_pathology_reports", "upload_to_drive", "extract_pathology"]
+                },
+                "extracted_data": {
+                    "message": "No typical pathology reports found",
+                    "typical_pathology_reports": [],
+                    "genomic_alterations_reports": genomic_reports,
+                    "no_test_performed_reports": no_test_performed_reports,
+                    "processing_errors": processing_errors
+                }
+            }
 
         return {
             "success": True,
             "mrn": request.mrn,
             "tab_name": "pathology",
             "workflow_metadata": {
-                "document_count": result['total_documents_count'],
-                "pdf_url": result['pdf_url'],
-                "file_id": result['file_id'],
-                "pipeline_stages": ["fetch_pathology_and_md_notes", "combine_pdfs", "upload_to_drive", "extract_pathology"]
+                "document_count": len(pathology_reports),
+                "typical_pathology_count": len(typical_pathology_reports),
+                "genomic_alterations_count": len(genomic_reports),
+                "no_test_performed_count": len(no_test_performed_reports),
+                "errors_count": len(processing_errors),
+                "pipeline_stages": ["fetch_individual_pathology_reports", "upload_to_drive", "extract_pathology"]
             },
             "extracted_data": {
-                "pathology_summary": result['pathology_summary'],
-                "pathology_markers": result['pathology_markers']
+                "typical_pathology_reports": typical_pathology_reports,
+                "genomic_alterations_reports": genomic_reports,
+                "no_test_performed_reports": no_test_performed_reports,
+                "processing_errors": processing_errors
             }
         }
     except Exception as e:
@@ -1451,7 +1592,7 @@ async def test_patient_all_tabs(request: MRNRequest):
 
         # Run the same parallel extraction as production, but skip cache check
         loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             patient_data_future = loop.run_in_executor(
                 executor, extract_patient_data, request.mrn, False
             )
@@ -1459,63 +1600,70 @@ async def test_patient_all_tabs(request: MRNRequest):
                 executor, lab_tab_info, request.mrn, False
             )
             genomics_data_future = loop.run_in_executor(
-                executor, genomics_tab_pathology_tab_info, request.mrn, False
+                executor, genomics_tab_info, request.mrn, False
+            )
+            pathology_data_future = loop.run_in_executor(
+                executor, pathology_tab_info_pipeline, request.mrn, False, True  # use_gemini_api=True
             )
 
-            result, lab_result, genomics_tab_result = await asyncio.gather(
+            result, lab_result, genomics_result, pathology_result = await asyncio.gather(
                 patient_data_future,
                 lab_data_future,
-                genomics_data_future
+                genomics_data_future,
+                pathology_data_future
             )
 
         # Combine results
         result['lab_info'] = lab_result.get('lab_info')
-        result['genomic_info'] = genomics_tab_result.get('genomic_info')
-        result['pathology_summary'] = genomics_tab_result.get('pathology_summary')
-        result['pathology_markers'] = genomics_tab_result.get('pathology_markers')
+        result['genomic_info'] = genomics_result.get('genomic_info')
+        result['pathology_summary'] = pathology_result.get('pathology_summary')
+        result['pathology_markers'] = pathology_result.get('pathology_markers')
 
-        # Extract individual pathology reports
-        logger.info(f"🧪 Extracting individual pathology reports for MRN: {request.mrn}")
-        try:
-            pathology_reports = upload_individual_reports_to_drive(
-                mrn=request.mrn,
-                report_type='pathology'
-            )
+        # Use pathology data already extracted by pathology_tab_info_pipeline (no duplicate extraction)
+        logger.info(f"🧪 Using pathology reports already extracted by pathology_tab_info_pipeline for MRN: {request.mrn}")
 
-            if pathology_reports:
-                detailed_pathology_reports = []
-                for report in pathology_reports:
-                    try:
-                        pathology_summary, pathology_markers = pathology_info(pdf_url=report['drive_url'])
-                        detailed_pathology_reports.append({
-                            "drive_url": report['drive_url'],
-                            "drive_file_id": report['drive_file_id'],
-                            "date": report['date'],
-                            "document_type": report['document_type'],
-                            "description": report['description'],
-                            "document_id": report['document_id'],
-                            "pathology_summary": pathology_summary,
-                            "pathology_markers": pathology_markers
-                        })
-                    except Exception as e:
-                        detailed_pathology_reports.append({
-                            "drive_url": report['drive_url'],
-                            "drive_file_id": report['drive_file_id'],
-                            "date": report['date'],
-                            "document_type": report['document_type'],
-                            "description": report['description'],
-                            "document_id": report['document_id'],
-                            "pathology_summary": None,
-                            "pathology_markers": None,
-                            "extraction_error": str(e)
-                        })
+        # Transform the pathology pipeline results into the format expected by the frontend
+        detailed_pathology_reports = []
+        genomic_alterations_reports = []
+        no_test_performed_reports = []
 
-                result['pathology_reports'] = detailed_pathology_reports
-            else:
-                result['pathology_reports'] = []
-        except Exception as e:
-            logger.warning(f"Warning: Failed to extract pathology reports: {str(e)}")
-            result['pathology_reports'] = []
+        # Get the typical pathology reports from the pipeline result
+        typical_reports = pathology_result.get('typical_pathology_reports', [])
+        for report in typical_reports:
+            detailed_pathology_reports.append({
+                "drive_url": report.get('drive_url'),
+                "drive_file_id": report.get('file_id'),
+                "date": report.get('date'),
+                "document_type": report.get('document_type'),
+                "description": report.get('description', 'Pathology Report'),
+                "document_id": report.get('document_id', report.get('date')),
+                "pathology_summary": report.get('pathology_summary'),
+                "pathology_markers": report.get('pathology_markers')
+            })
+
+        # Get genomic pathology reports from pipeline result
+        genomic_reports = pathology_result.get('genomic_pathology_reports', [])
+        for report in genomic_reports:
+            genomic_alterations_reports.append({
+                "drive_url": report.get('drive_url', ''),
+                "drive_file_id": report.get('file_id', ''),
+                "date": report.get('date'),
+                "document_type": report.get('document_type'),
+                "description": report.get('description', 'Genomic Alterations Report'),
+                "document_id": report.get('document_id', report.get('date')),
+                "classification": report.get('classification'),
+                "report_type": "GENOMIC_ALTERATIONS"
+            })
+
+        result['pathology_reports'] = detailed_pathology_reports
+        result['genomic_alterations_reports'] = genomic_alterations_reports
+        result['no_test_performed_reports'] = no_test_performed_reports
+
+        # Log summary
+        logger.info(f"📊 Classification Summary:")
+        logger.info(f"   - Typical Pathology Reports: {len(detailed_pathology_reports)}")
+        logger.info(f"   - Genomic Alterations Reports: {len(genomic_alterations_reports)}")
+        logger.info(f"   - No Test Performed Reports: {len(no_test_performed_reports)}")
 
         # Extract individual radiology reports
         logger.info(f"🧪 Extracting individual radiology reports for MRN: {request.mrn}")
@@ -1529,11 +1677,14 @@ async def test_patient_all_tabs(request: MRNRequest):
                 for report in radiology_reports:
                     try:
                         radiology_summary, radiology_imp_RECIST = extract_radiology_details_from_report(
-                            radiology_url=report['drive_url']
+                            radiology_url=report['drive_url_with_MD'],
+                            use_gemini_api=True
                         )
                         detailed_radiology_reports.append({
                             "drive_url": report['drive_url'],
+                            "drive_url_with_MD": report['drive_url_with_MD'],
                             "drive_file_id": report['drive_file_id'],
+                            "drive_file_id_with_MD": report['drive_file_id_with_MD'],
                             "date": report['date'],
                             "document_type": report['document_type'],
                             "description": report['description'],
@@ -1544,7 +1695,9 @@ async def test_patient_all_tabs(request: MRNRequest):
                     except Exception as e:
                         detailed_radiology_reports.append({
                             "drive_url": report['drive_url'],
+                            "drive_url_with_MD": report['drive_url_with_MD'],
                             "drive_file_id": report['drive_file_id'],
+                            "drive_file_id_with_MD": report['drive_file_id_with_MD'],
                             "date": report['date'],
                             "document_type": report['document_type'],
                             "description": report['description'],

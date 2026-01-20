@@ -1,81 +1,116 @@
 """
 Postprocessing module for lab data extraction.
-Cleans, deduplicates, and formats lab data for UI consumption.
+Aggregates individual document extractions into trends and formats for UI consumption.
+
+NEW ARCHITECTURE (Post-Refactor):
+- Gemini extracts current values from ONE document at a time
+- Post-processor builds trends by aggregating these single-document extractions
+- This improves accuracy by giving Gemini simpler tasks
 """
 
 from typing import Dict, List, Any
 from datetime import datetime
+import json
+import vertexai
+from vertexai.generative_models import GenerativeModel
+
+# Initialize Vertex AI
+vertexai.init(project="prior-auth-portal-dev", location="us-central1")
 
 
 def is_empty_biomarker(biomarker_data: Dict) -> bool:
-    """Check if a biomarker entry contains only NA/empty values."""
-    current = biomarker_data.get("current", {})
-    trend = biomarker_data.get("trend", [])
-
-    # Check if current value is NA or empty
-    value = current.get("value")
-    is_current_empty = value == "NA" or value is None or value == ""
-
-    # Check if trend is empty
-    is_trend_empty = len(trend) == 0
-
-    return is_current_empty and is_trend_empty
-
-
-def merge_trends(trends_list: List[List[Dict]]) -> List[Dict]:
     """
-    Merge multiple trend arrays, removing duplicates and sorting by date.
+    Check if a biomarker entry contains only NA/empty values.
+    Updated to work with new flat schema (no nested 'current' object).
+    """
+    # Handle both old nested format and new flat format for backward compatibility
+    if "current" in biomarker_data:
+        # Old format: {"current": {...}, "trend": [...]}
+        value = biomarker_data.get("current", {}).get("value")
+    else:
+        # New format: {"value": ..., "unit": ..., "date": ...}
+        value = biomarker_data.get("value")
+
+    is_value_empty = value == "NA" or value is None or value == ""
+    return is_value_empty
+
+
+def build_trend_from_values(biomarker_entries: List[Dict]) -> List[Dict]:
+    """
+    Build trend array from multiple single-document extractions.
+
+    NEW APPROACH: Each entry represents one document's extraction.
+    We aggregate them into a chronological trend.
 
     Args:
-        trends_list: List of trend arrays from different batches
+        biomarker_entries: List of biomarker dictionaries from different documents
+                          Each is a flat dict: {value, unit, date, status, reference_range, source_context}
 
     Returns:
-        Consolidated, deduplicated, and sorted trend array
+        Sorted trend array with deduplicated entries
     """
-    # Flatten all trends into a single list
-    all_trends = []
-    for trends in trends_list:
-        all_trends.extend(trends)
+    trend = []
+    seen = {}  # Track (date, value) combinations to avoid duplicates
 
-    # Remove duplicates using a set of tuples (date, value)
-    # Keep the entry with the most information
-    seen = {}
-    for trend in all_trends:
-        date = trend.get("date")
-        value = trend.get("value")
+    for entry in biomarker_entries:
+        # Handle both old nested format and new flat format
+        if "current" in entry:
+            # Old format: {"current": {...}, "trend": [...]}
+            data = entry.get("current", {})
+        else:
+            # New format: {"value": ..., "unit": ..., "date": ...}
+            data = entry
+
+        date = data.get("date")
+        value = data.get("value")
 
         # Skip entries with NA or missing date/value
-        if date == "NA" or value == "NA" or date is None or value is None:
+        if date == "NA" or value == "NA" or date is None or value is None or value == "":
             continue
 
         key = (date, value)
 
         # If we haven't seen this combination, or this entry has more info, keep it
-        if key not in seen or len(str(trend.get("source_context", ""))) > len(str(seen[key].get("source_context", ""))):
-            seen[key] = trend
+        if key not in seen or len(str(data.get("source_context", ""))) > len(str(seen[key].get("source_context", ""))):
+            seen[key] = {
+                "date": date,
+                "value": value,
+                "status": data.get("status"),
+                "source_context": data.get("source_context", "")
+            }
 
-    # Convert back to list and sort by date
-    unique_trends = list(seen.values())
-    unique_trends.sort(key=lambda x: x.get("date", ""))
+    # Convert to list and sort by date (oldest to newest)
+    trend = list(seen.values())
+    trend.sort(key=lambda x: x.get("date", ""))
 
-    return unique_trends
+    return trend
 
 
 def merge_biomarker_data(biomarker_list: List[Dict]) -> Dict:
     """
-    Merge multiple biomarker entries from different batches.
+    Aggregate biomarker entries from multiple documents into current + trend structure.
+
+    NEW APPROACH: Each entry in biomarker_list is from a different document.
+    We build the trend from all these single-document extractions.
 
     Args:
-        biomarker_list: List of biomarker dictionaries from different batches
+        biomarker_list: List of biomarker dictionaries from different documents
+                       Each is either:
+                       - New format: {value, unit, date, status, reference_range, source_context}
+                       - Old format: {"current": {...}, "trend": [...]}
 
     Returns:
-        Consolidated biomarker dictionary with merged trends
+        Consolidated biomarker with structure:
+        {
+            "current": {most recent value data},
+            "trend": [{historical values sorted by date}]
+        }
     """
-    # Find the entry with the most recent current value
+    # Filter out empty entries
     valid_entries = [b for b in biomarker_list if not is_empty_biomarker(b)]
 
     if not valid_entries:
-        # Return a clean NA structure if all entries are empty
+        # Return clean empty structure
         return {
             "current": {
                 "value": None,
@@ -87,18 +122,36 @@ def merge_biomarker_data(biomarker_list: List[Dict]) -> Dict:
             "trend": []
         }
 
-    # Sort by date to get the most recent
-    valid_entries.sort(key=lambda x: x.get("current", {}).get("date", ""), reverse=True)
-    most_recent = valid_entries[0]
+    # Build trend from all entries
+    trend = build_trend_from_values(valid_entries)
 
-    # Collect all trends
-    all_trends = [entry.get("trend", []) for entry in biomarker_list]
-    merged_trends = merge_trends(all_trends)
+    # Find most recent entry for "current"
+    # Handle both old and new formats
+    sorted_entries = []
+    for entry in valid_entries:
+        if "current" in entry:
+            # Old format
+            date = entry.get("current", {}).get("date", "")
+            sorted_entries.append((date, entry.get("current", {})))
+        else:
+            # New format
+            date = entry.get("date", "")
+            sorted_entries.append((date, entry))
 
-    # Return merged result
+    # Sort by date descending to get most recent
+    sorted_entries.sort(key=lambda x: x[0], reverse=True)
+    most_recent_data = sorted_entries[0][1] if sorted_entries else {}
+
+    # Return unified structure
     return {
-        "current": most_recent.get("current", {}),
-        "trend": merged_trends
+        "current": {
+            "value": most_recent_data.get("value"),
+            "unit": most_recent_data.get("unit"),
+            "date": most_recent_data.get("date"),
+            "status": most_recent_data.get("status"),
+            "reference_range": most_recent_data.get("reference_range")
+        },
+        "trend": trend
     }
 
 
@@ -161,12 +214,129 @@ def consolidate_clinical_interpretations(interpretations_list: List[List[str]]) 
     return unique_interpretations
 
 
-def postprocess_lab_data(raw_lab_data: List[Dict]) -> Dict:
+def refine_clinical_interpretations_with_ai(
+    raw_interpretations: List[str],
+    consolidated_data: Dict
+) -> List[str]:
+    """
+    Use Gemini to refine and enhance clinical interpretations based on lab data.
+
+    Args:
+        raw_interpretations: List of raw interpretation strings
+        consolidated_data: Consolidated lab data with current values and trends
+
+    Returns:
+        Refined list of clinical interpretations
+    """
+    if not raw_interpretations:
+        return []
+
+    # Extract current lab values for context
+    lab_summary = {}
+
+    for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]:
+        panel_data = consolidated_data.get(panel_name, {})
+        lab_summary[panel_name] = {}
+
+        for biomarker_name, biomarker_data in panel_data.items():
+            current = biomarker_data.get("current", {})
+            trend = biomarker_data.get("trend", [])
+
+            lab_summary[panel_name][biomarker_name] = {
+                "current_value": current.get("value"),
+                "current_unit": current.get("unit"),
+                "current_date": current.get("date"),
+                "current_status": current.get("status"),
+                "reference_range": current.get("reference_range"),
+                "trend_count": len(trend),
+                "has_data": current.get("value") not in [None, "NA", ""]
+            }
+
+    # Build prompt for Gemini
+    prompt = f"""You are a clinical oncology expert reviewing laboratory results for a cancer patient.
+
+I have extracted raw clinical interpretations from multiple lab reports. Your task is to refine these into a concise, well-organized clinical summary.
+
+RAW INTERPRETATIONS:
+{chr(10).join(f"- {interp}" for interp in raw_interpretations)}
+
+CURRENT LAB VALUES SUMMARY:
+{json.dumps(lab_summary, indent=2)}
+
+INSTRUCTIONS:
+1. Synthesize the raw interpretations into a coherent clinical summary
+2. Organize by clinical significance (most important findings first)
+3. Remove redundancies and contradictions
+4. Use precise medical terminology
+5. Focus on actionable findings relevant to cancer treatment
+6. Include trend information where relevant
+7. Keep each point concise (1-2 sentences maximum)
+8. Return EXACTLY 4-6 most important clinical points (prioritize critical findings)
+
+PRIORITIZATION RULES:
+- Critical abnormalities (e.g., severe anemia, neutropenia requiring intervention) = Highest priority
+- Treatment-limiting toxicities (e.g., hepatotoxicity, renal dysfunction) = High priority
+- Tumor markers and disease monitoring = Medium-high priority
+- Stable or normal findings with clinical context = Include only if space permits
+
+OUTPUT FORMAT:
+Return a JSON array of exactly 4-6 strings, each string being one refined clinical interpretation.
+Example:
+["Mild anemia (Hgb 10.2 g/dL) with stable trend over 3 measurements, consider transfusion if symptomatic", "Hepatic transaminases mildly elevated (ALT 58 U/L, AST 52 U/L) consistent with drug-induced liver injury, recommend monitoring", "Preserved bone marrow function (WBC 6.8 K/uL, ANC 3.8 K/uL, Platelets 185 K/uL) - safe to continue chemotherapy", "Renal function normal (Creatinine 0.9 mg/dL) - no dose adjustments required"]
+
+Return ONLY the JSON array, no other text."""
+
+    try:
+        model = GenerativeModel("gemini-2.0-flash-exp")
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.3,
+                "top_p": 0.95,
+                "max_output_tokens": 1024
+            }
+        )
+
+        response_text = response.text.strip()
+
+        # Extract JSON from potential markdown code blocks
+        import re
+        json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+        match = re.search(json_pattern, response_text)
+
+        if match:
+            response_text = match.group(1).strip()
+
+        # Parse the JSON response
+        refined_interpretations = json.loads(response_text)
+
+        if isinstance(refined_interpretations, list) and all(isinstance(item, str) for item in refined_interpretations):
+            # Validate count (should be 4-6 points)
+            count = len(refined_interpretations)
+            if count < 4 or count > 6:
+                print(f"⚠️ AI returned {count} points (expected 4-6), trimming/keeping as is")
+                if count > 6:
+                    refined_interpretations = refined_interpretations[:6]  # Keep top 6
+                # If less than 4, keep what we have
+
+            print(f"✅ AI refinement successful: {len(refined_interpretations)} interpretations")
+            return refined_interpretations
+        else:
+            print(f"⚠️ AI refinement returned invalid format, using raw interpretations")
+            return raw_interpretations
+
+    except Exception as e:
+        print(f"❌ AI refinement failed: {str(e)}, using raw interpretations")
+        return raw_interpretations
+
+
+def postprocess_lab_data(raw_lab_data: List[Dict], use_ai_refinement: bool = True) -> Dict:
     """
     Main postprocessing function to consolidate and clean lab data.
 
     Args:
         raw_lab_data: Raw output from llmresponsedetailed (list of batch results)
+        use_ai_refinement: Whether to use AI to refine clinical interpretations (default: True)
 
     Returns:
         Clean, consolidated lab data ready for UI
@@ -226,12 +396,32 @@ def postprocess_lab_data(raw_lab_data: List[Dict]) -> Dict:
     # Consolidate clinical interpretations
     consolidated_interpretations = consolidate_clinical_interpretations(clinical_interp_list)
 
+    # Optionally refine clinical interpretations with AI
+    if use_ai_refinement and consolidated_interpretations:
+        # Prepare consolidated data structure for AI refinement
+        consolidated_data_for_ai = {
+            "tumor_markers": consolidated_tumor_markers,
+            "complete_blood_count": consolidated_cbc,
+            "metabolic_panel": consolidated_metabolic
+        }
+
+        # Refine clinical interpretations with AI
+        print(f"🤖 Refining {len(consolidated_interpretations)} clinical interpretations with AI...")
+        refined_interpretations = refine_clinical_interpretations_with_ai(
+            raw_interpretations=consolidated_interpretations,
+            consolidated_data=consolidated_data_for_ai
+        )
+    else:
+        refined_interpretations = consolidated_interpretations
+        if not use_ai_refinement:
+            print("ℹ️  AI refinement disabled, using raw interpretations")
+
     # Return clean structure
     return {
         "tumor_markers": consolidated_tumor_markers,
         "complete_blood_count": consolidated_cbc,
         "metabolic_panel": consolidated_metabolic,
-        "clinical_interpretation": consolidated_interpretations
+        "clinical_interpretation": refined_interpretations
     }
 
 
@@ -358,18 +548,19 @@ def get_most_recent_date(data: Dict) -> str:
 
 
 # Convenience function that does both consolidation and formatting
-def process_lab_data_for_ui(raw_lab_data: List[Dict]) -> Dict:
+def process_lab_data_for_ui(raw_lab_data: List[Dict], use_ai_refinement: bool = True) -> Dict:
     """
     Complete pipeline: consolidate raw data and format for UI.
 
     Args:
         raw_lab_data: Raw output from llmresponsedetailed
+        use_ai_refinement: Whether to use AI to refine clinical interpretations (default: True)
 
     Returns:
         Clean, formatted data ready for UI rendering
     """
     try:
-        consolidated = postprocess_lab_data(raw_lab_data)
+        consolidated = postprocess_lab_data(raw_lab_data, use_ai_refinement=use_ai_refinement)
         formatted = format_for_ui(consolidated)
         return formatted
     except Exception as e:

@@ -47,7 +47,7 @@ export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps)
       case 'comorbidities':
         return <ComorbiditiesTab patientData={currentPatient} />;
       case 'documents':
-        return <DocumentsSection />;
+        return <DocumentsSection patientData={currentPatient} />;
       default:
         return <DiagnosisTab patientData={currentPatient} />;
     }
@@ -122,7 +122,7 @@ export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps)
               </div>
 
               {/* Right Sidebar */}
-              <RightSidebar />
+              <RightSidebar patientData={currentPatient} />
             </div>
           </main>
           <VoiceAssistant onNavigate={setActiveTab} />

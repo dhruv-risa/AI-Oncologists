@@ -232,68 +232,95 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-gray-200">
-                <h4 className="text-sm text-gray-700 mb-3">
-                  {currentReport.pathology_markers.pathology_combined?.morphology_column?.title} &
-                  Immunohistochemistry
-                </h4>
-                <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                  {/* Left Column - Morphology */}
-                  <div className="space-y-2">
-                    <p className="text-xs text-gray-500 mb-2">
-                      {currentReport.pathology_markers.pathology_combined?.morphology_column?.title}
-                    </p>
-                    {currentReport.pathology_markers.pathology_combined?.morphology_column?.items?.map(
-                      (item: string, idx: number) => (
-                        <div key={idx} className="flex items-start gap-2">
-                          <div className="w-1.5 h-1.5 bg-gray-400 rounded-full mt-1.5 flex-shrink-0"></div>
-                          <p className="text-sm text-gray-600">{item}</p>
-                        </div>
-                      )
-                    )}
-                  </div>
+              {(() => {
+                const hasMorphology = currentReport.pathology_markers.pathology_combined?.morphology_column?.items?.length > 0;
+                const hasIHC = currentReport.pathology_markers.pathology_combined?.ihc_column?.markers?.length > 0;
 
-                  {/* Right Column - IHC Markers */}
-                  <div className="space-y-2">
-                    <p className="text-xs text-gray-500 mb-2">
-                      {currentReport.pathology_markers.pathology_combined?.ihc_column?.title}
-                    </p>
-                    {currentReport.pathology_markers.pathology_combined?.ihc_column?.markers?.map(
-                      (marker: any, idx: number) => (
-                        <div key={idx} className="flex items-start gap-2">
-                          <div
-                            className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
-                              marker.status_label?.toLowerCase().includes('positive')
-                                ? 'bg-green-500'
-                                : 'bg-red-500'
-                            }`}
-                          ></div>
-                          <p className="text-sm text-gray-600">
-                            <span className="font-medium text-gray-900">{marker.name}:</span>{' '}
-                            {marker.status_label} {marker.details && `(${marker.details})`}
-                          </p>
+                // Don't render section if both are empty
+                if (!hasMorphology && !hasIHC) {
+                  return null;
+                }
+
+                return (
+                  <div className="pt-4 border-t border-gray-200">
+                    {hasMorphology && hasIHC ? (
+                      <div className="grid grid-cols-2 gap-x-8 mb-3">
+                        <h4 className="text-sm text-gray-700">
+                          {currentReport.pathology_markers.pathology_combined?.morphology_column?.title}
+                        </h4>
+                        <h4 className="text-sm text-gray-700">
+                          Immunohistochemistry
+                        </h4>
+                      </div>
+                    ) : (
+                      <h4 className="text-sm text-gray-700 mb-3">
+                        {hasMorphology
+                          ? currentReport.pathology_markers.pathology_combined?.morphology_column?.title
+                          : 'Immunohistochemistry'}
+                      </h4>
+                    )}
+                    <div className={hasMorphology && hasIHC ? 'grid grid-cols-2 gap-x-8 gap-y-2' : 'space-y-2'}>
+                      {/* Morphology Column - Only show if data exists */}
+                      {hasMorphology && (
+                        <div className="space-y-2">
+                          {currentReport.pathology_markers.pathology_combined?.morphology_column?.items?.map(
+                            (item: string, idx: number) => (
+                              <div key={idx} className="flex items-start gap-2">
+                                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full mt-1.5 flex-shrink-0"></div>
+                                <p className="text-sm text-gray-600">{item}</p>
+                              </div>
+                            )
+                          )}
                         </div>
+                      )}
+
+                      {/* IHC Markers Column - Only show if data exists */}
+                      {hasIHC && (
+                        <div className="space-y-2">
+                          {currentReport.pathology_markers.pathology_combined?.ihc_column?.markers?.map(
+                            (marker: any, idx: number) => (
+                              <div key={idx} className="flex items-start gap-2">
+                                <div
+                                  className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
+                                    marker.status_label?.toLowerCase().includes('positive')
+                                      ? 'bg-green-500'
+                                      : 'bg-red-500'
+                                  }`}
+                                ></div>
+                                <p className="text-sm text-gray-600">
+                                  <span className="font-medium text-gray-900">{marker.name}:</span>{' '}
+                                  {marker.status_label}{' '}
+                                  {marker.details &&
+                                   /\d/.test(marker.details) &&
+                                   `(${marker.details})`}
+                                </p>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {currentReport.pathology_markers.pathology_combined?.keywords?.length > 0 && (
+                <div className="pt-4 border-t border-gray-200">
+                  <h4 className="text-sm text-gray-700 mb-3">Pathology interpretation keywords</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {currentReport.pathology_markers.pathology_combined?.keywords?.map(
+                      (keyword: string, idx: number) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs border border-blue-200"
+                        >
+                          {keyword}
+                        </span>
                       )
                     )}
                   </div>
                 </div>
-              </div>
-
-              <div className="pt-4 border-t border-gray-200">
-                <h4 className="text-sm text-gray-700 mb-3">Pathology interpretation keywords</h4>
-                <div className="flex flex-wrap gap-2">
-                  {currentReport.pathology_markers.pathology_combined?.keywords?.map(
-                    (keyword: string, idx: number) => (
-                      <span
-                        key={idx}
-                        className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs border border-blue-200"
-                      >
-                        {keyword}
-                      </span>
-                    )
-                  )}
-                </div>
-              </div>
+              )}
             </div>
           </div>
         )}

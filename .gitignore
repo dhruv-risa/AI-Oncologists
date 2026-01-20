@@ -44,6 +44,20 @@ ENV/
 patient_extraction_results_*.json
 *.log
 
+# Lab test result files (should not be committed)
+individual_result_*.json
+chunking_result_*.json
+comparison_report_*.json
+gemini_test_report_*.json
+gemini_error_response_*.txt
+lab_downloads/
+
+# Database files (should not be committed)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # OS
 .DS_Store
 Thumbs.db

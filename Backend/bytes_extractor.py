@@ -9,6 +9,7 @@ Supports filtering by:
 - Content type (default: application/pdf)
 """
 import re
+import time
 from typing import List, Dict, Optional, Any, Union
 from datetime import datetime, timedelta
 try:
@@ -249,6 +250,9 @@ def get_document_bytes(
     response = requests.get(document_url, headers=headers)
     response.raise_for_status()
 
+    # Add rate limiting delay to avoid 429 errors
+    time.sleep(1.5)
+
     document_data = response.json()
 
     # Extract PDF from content
@@ -431,10 +435,10 @@ def extract_report_with_MD(
     include_md_notes: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Extract pathology reports documents with date-based filtering.
+    Extract pathology/radiology reports documents with date-based filtering.
 
-    Gets the most recent pathology report document (where type.text contains "Pathology"
-    and contentType="application/pdf"), then fetches all pathology reports
+    Gets the most recent report document (where type.text contains the report_type
+    and contentType="application/pdf"), then fetches all reports
     within 6 months before that most recent date.
 
     Args:
@@ -445,9 +449,9 @@ def extract_report_with_MD(
         include_md_notes (bool): Whether to include MD notes with the reports (default: True)
 
     Returns:
-        List[Dict]: List of pathology report documents with metadata, sorted by date (most recent first)
+        List[Dict]: List of report documents with metadata, sorted by date (most recent first)
                    Each dict contains: url, date, document_type, description, document_id
-                   Returns empty list if no pathology reports found
+                   Returns empty list if no reports found
 
     """
     # Step 1: Authenticate
@@ -563,6 +567,68 @@ def extract_report_with_MD(
     return filtered_results
 
 
+def fetch_pdf_bytes_from_fhir_url(fhir_url: str, bearer_token: Optional[str] = None, onco_emr_token: Optional[str] = None) -> Optional[bytes]:
+    """
+    Fetch PDF bytes from a single FHIR DocumentReference URL.
+
+    Args:
+        fhir_url (str): FHIR DocumentReference URL
+        bearer_token (str, optional): Pre-generated bearer token (will generate if not provided)
+        onco_emr_token (str, optional): Pre-generated onco EMR token (will generate if not provided)
+
+    Returns:
+        bytes: PDF content as bytes, or None if no PDF found
+
+    Raises:
+        Exception: If fetching fails
+
+    Example:
+        >>> pdf_bytes = fetch_pdf_bytes_from_fhir_url("https://fhir-api.com/DocumentReference/12345")
+        >>> print(f"Fetched {len(pdf_bytes)} bytes")
+    """
+    # Authenticate if tokens not provided
+    if not bearer_token:
+        bearer_token = generate_bearer_token()
+    if not onco_emr_token:
+        onco_emr_token = generate_onco_emr_token(bearer_token)
+
+    headers = {
+        "Authorization": f"Bearer {onco_emr_token}",
+        "Accept": "application/fhir+json"
+    }
+
+    # Add rate limiting delay to avoid 429 errors
+    time.sleep(1.5)
+
+    # Get document data from FHIR URL
+    response = requests.get(fhir_url, headers=headers)
+    response.raise_for_status()
+    document_data = response.json()
+
+    # Extract PDF from content
+    pdf_url = None
+    pdf_data = None
+
+    for content in document_data.get("content", []):
+        attachment = content.get("attachment", {})
+        if attachment.get("contentType") == "application/pdf":
+            pdf_url = attachment.get("url")
+            pdf_data = attachment.get("data")
+            break
+
+    # Download PDF from URL or decode base64
+    if pdf_url:
+        pdf_response = requests.get(pdf_url, headers=headers)
+        pdf_response.raise_for_status()
+        pdf_bytes = pdf_response.content
+    elif pdf_data:
+        pdf_bytes = base64.b64decode(pdf_data)
+    else:
+        return None
+
+    return pdf_bytes
+
+
 def fetch_and_combine_pdfs_from_urls(
     fhir_urls: List[str],
     output_file_name: str = "combined_documents.pdf",
@@ -623,6 +689,9 @@ def fetch_and_combine_pdfs_from_urls(
         print(f"  Fetching document {idx}/{len(fhir_urls)}: {url}")
 
         try:
+            # Add rate limiting delay to avoid 429 errors
+            time.sleep(1.5)
+
             # Get document data from FHIR URL
             response = requests.get(url, headers=headers)
             response.raise_for_status()
@@ -696,6 +765,89 @@ def fetch_and_combine_pdfs_from_urls(
     print(f"Shareable URL: {result['shareable_url']}")
 
     return result
+
+
+def combine_pdf_bytes_and_upload(
+    pdf_bytes_list: List[bytes],
+    output_file_name: str = "combined_documents.pdf",
+    folder_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Combine multiple PDF bytes and upload to Google Drive, returning both URL and bytes.
+
+    This function is optimized for scenarios where PDF bytes are already in memory
+    (e.g., from classification pipeline) to avoid redundant downloads.
+
+    Args:
+        pdf_bytes_list (List[bytes]): List of PDF content as bytes
+        output_file_name (str): Name for the combined PDF file (default: "combined_documents.pdf")
+        folder_id (str, optional): Google Drive folder ID to upload to
+
+    Returns:
+        dict: Contains file_id, shareable_url, and combined_pdf_bytes
+              Example: {
+                  'file_id': '1abc...xyz',
+                  'shareable_url': 'https://drive.google.com/...',
+                  'combined_pdf_bytes': b'...'  # The combined PDF as bytes
+              }
+
+    Raises:
+        ValueError: If pdf_bytes_list is empty
+        Exception: If combining or uploading fails
+
+    Example:
+        >>> pdf_bytes_list = [pdf1_bytes, pdf2_bytes, pdf3_bytes]
+        >>> result = combine_pdf_bytes_and_upload(pdf_bytes_list, "patient_reports.pdf")
+        >>> print(f"Combined PDF URL: {result['shareable_url']}")
+        >>> # Use bytes directly without downloading
+        >>> extract_data(result['combined_pdf_bytes'])
+    """
+    if not pdf_bytes_list:
+        raise ValueError("pdf_bytes_list cannot be empty")
+
+    if not output_file_name.lower().endswith('.pdf'):
+        output_file_name += '.pdf'
+
+    # Step 1: Combine all PDFs
+    print(f"\nCombining {len(pdf_bytes_list)} PDFs from cached bytes...")
+    merger = PdfMerger()
+
+    for idx, pdf_bytes in enumerate(pdf_bytes_list, 1):
+        try:
+            pdf_stream = BytesIO(pdf_bytes)
+            merger.append(pdf_stream)
+            print(f"  Added PDF {idx} to merger ({len(pdf_bytes)} bytes)")
+        except Exception as e:
+            print(f"  Warning: Failed to add PDF {idx} to merger: {str(e)}")
+            continue
+
+    # Write combined PDF to bytes
+    combined_pdf_stream = BytesIO()
+    merger.write(combined_pdf_stream)
+    merger.close()
+    combined_pdf_bytes = combined_pdf_stream.getvalue()
+    combined_pdf_stream.close()
+
+    print(f"Successfully combined PDFs (total size: {len(combined_pdf_bytes)} bytes)")
+
+    # Step 2: Upload to Google Drive
+    print(f"\nUploading combined PDF to Google Drive...")
+    upload_result = upload_and_share_pdf_bytes(
+        pdf_bytes=combined_pdf_bytes,
+        file_name=output_file_name,
+        folder_id=folder_id
+    )
+
+    print(f"\nUpload complete!")
+    print(f"File ID: {upload_result['file_id']}")
+    print(f"Shareable URL: {upload_result['shareable_url']}")
+
+    # Return both URL info AND the bytes for direct use
+    return {
+        'file_id': upload_result['file_id'],
+        'shareable_url': upload_result['shareable_url'],
+        'combined_pdf_bytes': combined_pdf_bytes  # Include bytes for direct extraction
+    }
 
 
 def get_md_notes(
@@ -867,6 +1019,9 @@ def upload_individual_reports_to_drive(
         print(f"\nProcessing report {idx}/{len(report_docs)}: {doc['document_type']}")
 
         try:
+            # Add rate limiting delay to avoid 429 errors
+            time.sleep(1.5)
+
             # Fetch PDF from FHIR URL
             print(f"  Fetching from FHIR...")
             response = requests.get(fhir_url, headers=headers)
@@ -1027,6 +1182,9 @@ def upload_individual_radiology_reports_with_MD_notes_to_drive(
         print(f"\nProcessing report {idx}/{len(radiology_docs)}: {doc['document_type']}")
 
         try:
+            # Add rate limiting delay to avoid 429 errors
+            time.sleep(1.5)
+
             # Fetch radiology report PDF
             print(f"  Fetching radiology report from FHIR...")
             response = requests.get(fhir_url, headers=headers)
@@ -1076,6 +1234,9 @@ def upload_individual_radiology_reports_with_MD_notes_to_drive(
             if latest_md_note:
                 print(f"  Fetching latest MD note...")
                 try:
+                    # Add rate limiting delay to avoid 429 errors
+                    time.sleep(1.5)
+
                     md_response = requests.get(latest_md_note['url'], headers=headers)
                     md_response.raise_for_status()
                     md_document_data = md_response.json()
@@ -1108,6 +1269,9 @@ def upload_individual_radiology_reports_with_MD_notes_to_drive(
             if initial_md_note:
                 print(f"  Fetching initial MD note...")
                 try:
+                    # Add rate limiting delay to avoid 429 errors
+                    time.sleep(1.5)
+
                     md_response = requests.get(initial_md_note['url'], headers=headers)
                     md_response.raise_for_status()
                     md_document_data = md_response.json()

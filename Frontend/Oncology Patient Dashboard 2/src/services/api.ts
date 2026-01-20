@@ -8,15 +8,15 @@ const API_BASE_URL = 'http://localhost:8000';
 
 // Type definitions based on backend response structures
 export interface PatientDemographics {
-  "Patient Name": string;
-  "MRN": string;
-  "Date of Birth": string;
-  "Age": string;
-  "Gender": string;
-  "Height": string;
-  "Weight": string;
-  "Primary Oncologist": string;
-  "Last Visit": string;
+  "Patient Name": string | null;
+  "MRN": string | null;
+  "Date of Birth": string | null;
+  "Age": string | null;
+  "Gender": string | null;
+  "Height": string | null;
+  "Weight": string | null;
+  "Primary Oncologist": string | null;
+  "Last Visit": string | null;
 }
 
 export interface DiagnosisStatus {
@@ -25,7 +25,7 @@ export interface DiagnosisStatus {
   diagnosis_date: string;
   tnm_classification: string;
   ajcc_stage: string;
-  line_of_therapy: string;
+  line_of_therapy?: string;
   metastatic_sites: string[];
   ecog_status: string;
   disease_status: string;
@@ -70,16 +70,16 @@ export interface TimelineEvent {
 }
 
 export interface DiagnosisTimelineItem {
-  timeline_event_date: string;
-  timeline_stage_group: string;
-  timeline_tnm_status: string;
-  timeline_description: string;
+  date_label: string;
+  stage_header: string;
+  tnm_status: string;
+  disease_status: string;
   regimen: string;
   toxicities: Array<{
     effect: string;
     grade: string;
   }>;
-  disease_findings: string | string[];
+  key_findings: string[];
 }
 
 export interface ComorbidityItem {
@@ -109,6 +109,47 @@ export interface GenomicMutation {
   mutation: string;
   variant: string;
   clinical_significance?: string;
+}
+
+export interface DetectedDriverMutation {
+  gene: string;
+  status: string;
+  details: string | null;
+  is_target: boolean;
+}
+
+export interface ImmunotherapyMarker {
+  pd_l1?: {
+    value: string;
+    metric: string;
+    interpretation: string;
+  };
+  tmb?: {
+    value: string;
+    interpretation: string;
+  };
+  msi_status?: {
+    status: string;
+    interpretation: string;
+  };
+}
+
+export interface AdditionalGenomicAlteration {
+  gene: string;
+  alteration: string;
+  type: string;
+  significance: string;
+}
+
+export interface GenomicInfo {
+  detected_driver_mutations: DetectedDriverMutation[];
+  immunotherapy_markers: ImmunotherapyMarker;
+  additional_genomic_alterations: AdditionalGenomicAlteration[];
+}
+
+export interface LabInfo {
+  clinical_interpretation?: string[];
+  // Other lab-related fields can be added as needed
 }
 
 export interface Document {
@@ -221,8 +262,9 @@ export interface RecistMeasurements {
 }
 
 export interface RadiologyImpRECIST {
-  impression: string;
+  impression: string | string[];
   recist_measurements: RecistMeasurements;
+  additional_findings?: string | string[];
 }
 
 export interface RadiologyReportDetail {
@@ -253,15 +295,15 @@ export interface PatientData {
   mrn: string;
   pdf_url?: string;
   demographics: {
-    "Patient Name": string;
-    "MRN": string;
-    "Date of Birth": string;
-    "Age": string;
-    "Gender": string;
-    "Height": string;
-    "Weight": string;
-    "Primary Oncologist": string;
-    "Last Visit": string;
+    "Patient Name": string | null;
+    "MRN": string | null;
+    "Date of Birth": string | null;
+    "Age": string | null;
+    "Gender": string | null;
+    "Height": string | null;
+    "Weight": string | null;
+    "Primary Oncologist": string | null;
+    "Last Visit": string | null;
   };
   diagnosis: {
     cancer_type: string;
@@ -269,6 +311,7 @@ export interface PatientData {
     diagnosis_date: string;
     tnm_classification: string;
     ajcc_stage: string;
+    line_of_therapy?: string;
     metastatic_sites: string[];
     ecog_status: string;
     disease_status: string;
@@ -298,7 +341,7 @@ export interface PatientData {
     recurrence_status: string;
   };
   diagnosis_evolution_timeline: {
-    stage_evolution_timeline: DiagnosisTimelineItem[];
+    timeline: DiagnosisTimelineItem[];
   };
   diagnosis_footer: {
     duration_since_diagnosis: string;
@@ -309,12 +352,12 @@ export interface PatientData {
     }
   };
   lab_results?: LabResult[];
-  lab_info?: any;
+  lab_info?: LabInfo;
   pathology_summary?: any;
   pathology_markers?: any;
   pathology_reports?: PathologyReportDetail[]; // Individual pathology reports with extracted details
   genomics_data?: GenomicMutation[];
-  genomic_info?: any; // Genomic data from backend (driver_mutations, immunotherapy_markers, etc.)
+  genomic_info?: GenomicInfo; // Genomic data from backend (detected_driver_mutations, immunotherapy_markers, additional_genomic_alterations)
   radiology_reports?: RadiologyReportDetail[]; // Individual radiology reports with extracted details
   genomics_reports?: Document[];
 }
@@ -440,13 +483,6 @@ class ApiService {
 
   async getGenomicsTab(mrn: string): Promise<any> {
     return this.request<any>('/api/tabs/genomics', {
-      method: 'POST',
-      body: JSON.stringify({ mrn }),
-    });
-  }
-
-  async getPathologyTab(mrn: string): Promise<any> {
-    return this.request<any>('/api/tabs/pathology', {
       method: 'POST',
       body: JSON.stringify({ mrn }),
     });

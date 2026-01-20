@@ -9,8 +9,8 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from Utils.Tabs.llmparser import llmresponsedetailed
-from Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
+from Backend.Utils.Tabs.llmparser import llmresponsedetailed
+from Backend.Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -19,7 +19,8 @@ extracted_instructions_lot = (
     "Extract structured treatment data for a 'Lines of Therapy' timeline UI from the provided clinical notes. "
     "Scope: Include Systemic Therapy (Chemo, Immunotherapy, Targeted), Radiation Therapy, and major Surgeries. "
     "For each entry, extract:"
-    "1. Line Title: The sequence number and main modality (e.g., 'Line 1 - Carboplatin' or 'Adjuvant - Radiation'). "
+    "1. Line Title: The sequence number MUST be an integer (1, 2, 3, etc.) - NOT text like 'first', '1st', 'Line 1'. Extract only the numeric value. "
+    "   For the main modality, use the primary drug name (e.g., 'Carboplatin', 'Osimertinib'). "
     "2. Status: 'Current', 'Past', or 'Planned'. "
     "3. Dates: Exact start and end dates. For Radiation, look for 'completed' dates. "
     "4. Regimen Display: The full string showing drug names with dosage, OR the radiation type/site (e.g., '70Gy to lung'). "
@@ -27,13 +28,16 @@ extracted_instructions_lot = (
     "6. Toxicities: Specific side effects, including Grade if mentioned. "
     "7. Outcome Tag: Short clinical response code (e.g., 'Remission', 'Completed'). "
     "8. Discontinuation Reason: Why it stopped (e.g., 'Completed Course')."
+    ""
+    "CRITICAL FORMATTING RULES:"
+    "- line_number MUST be an integer (1, 2, 3) NOT a string ('Line 1', 'first line', '1st')"
 )
 
 description_lot = {
     "treatment_history": [
         {
             "header": {
-                "line_number": "Integer (e.g., 1, 2) or 'Adjuvant'",
+                "line_number": "MUST be an integer (e.g., 1, 2, 3). Extract the numeric line number only. For adjuvant therapy, use 1 if it's the first systemic treatment.",
                 "primary_drug_name": "Short name for the header title (e.g., 'Osimertinib')",
                 "status_badge": "Current, Past, or Planned"
             },

@@ -64,17 +64,24 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
       const patientPromises = cachedPatients.map(async (cached) => {
         try {
           const fullData = await apiService.getCachedPatient(cached.mrn);
+
+          // Derive current staging from timeline (most recent entry) or fall back to header
+          const timeline = fullData.diagnosis_evolution_timeline?.timeline || [];
+          const currentStage = timeline.length > 0
+            ? timeline[0]?.stage_header || timeline[0]?.tnm_status || '-'
+            : fullData.diagnosis_header?.current_staging?.ajcc_stage || fullData.diagnosis_header?.current_staging?.tnm || '-';
+
           return {
             id: cached.mrn,
             mrn: cached.mrn,
-            name: fullData.demographics["Patient Name"] || 'Unknown',
-            age: parseInt(fullData.demographics["Age"]) || 0,
-            gender: fullData.demographics["Gender"] || 'Unknown',
-            diagnosis: fullData.diagnosis.cancer_type || 'Not specified',
-            stage: fullData.diagnosis.ajcc_stage || fullData.diagnosis.tnm_classification || 'N/A',
+            name: fullData.demographics["Patient Name"] || `Patient ${cached.mrn}`,
+            age: fullData.demographics["Age"] ? parseInt(fullData.demographics["Age"]) : 0,
+            gender: fullData.demographics["Gender"] || '-',
+            diagnosis: fullData.diagnosis_header?.primary_diagnosis || 'Not available',
+            stage: currentStage,
             currentTreatment: fullData.treatment_tab_info_LOT?.treatment_history && fullData.treatment_tab_info_LOT.treatment_history.length > 0
               ? fullData.treatment_tab_info_LOT.treatment_history[fullData.treatment_tab_info_LOT.treatment_history.length - 1].regimen_details.display_name
-              : 'N/A',
+              : 'Not available',
             nextAppt: fullData.demographics["Last Visit"] || new Date(cached.updated_at).toLocaleDateString(),
             status: 'active' as const,
             lastVisit: fullData.demographics["Last Visit"] || new Date(cached.updated_at).toLocaleDateString()
@@ -391,10 +398,10 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
             </p>
             <button
               onClick={() => setShowAddPatient(true)}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors mx-auto"
             >
               <Plus className="w-5 h-5" />
-              <span>Add Your First Patient</span>
+              Add Your First Patient
             </button>
           </div>
         )}
@@ -425,29 +432,45 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
                       </span>
                     </div>
                     <p className="text-xs text-gray-500 mb-1">MRN: {patient.mrn}</p>
-                    <p className="text-xs text-gray-500">{patient.age} years • {patient.gender}</p>
+                    {(patient.age > 0 || patient.gender !== '-') && (
+                      <p className="text-xs text-gray-500">
+                        {patient.age > 0 && patient.gender !== '-'
+                          ? `${patient.age} years • ${patient.gender}`
+                          : patient.age > 0
+                            ? `${patient.age} years`
+                            : patient.gender}
+                      </p>
+                    )}
                   </div>
                   <ArrowRight className="w-5 h-5 text-gray-400 group-hover:text-blue-600 group-hover:translate-x-1 transition-all flex-shrink-0 mt-1" />
                 </div>
 
               {/* Diagnosis Info */}
-              <div className="space-y-3 mb-4 pb-4 border-b border-gray-200">
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
-                  <p className="text-sm text-gray-900">{patient.diagnosis}</p>
+              {(patient.diagnosis !== 'Not available' || patient.stage !== '-') && (
+                <div className="space-y-3 mb-4 pb-4 border-b border-gray-200">
+                  {patient.diagnosis !== 'Not available' && (
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
+                      <p className="text-sm text-gray-900">{patient.diagnosis}</p>
+                    </div>
+                  )}
+                  {patient.stage !== '-' && (
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1">Stage</p>
+                      <p className="text-sm text-gray-900">{patient.stage}</p>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Stage</p>
-                  <p className="text-sm text-gray-900">{patient.stage}</p>
-                </div>
-              </div>
+              )}
 
               {/* Treatment & Appointment */}
               <div className="space-y-2">
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Current Treatment</p>
-                  <p className="text-sm text-gray-900">{patient.currentTreatment}</p>
-                </div>
+                {patient.currentTreatment !== 'Not available' && (
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Current Treatment</p>
+                    <p className="text-sm text-gray-900">{patient.currentTreatment}</p>
+                  </div>
+                )}
                 <div className="flex items-center justify-between bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
                   <p className="text-xs text-blue-700">Last Visit</p>
                   <p className="text-sm text-blue-900">{patient.nextAppt}</p>

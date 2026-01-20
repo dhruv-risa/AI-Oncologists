@@ -17,6 +17,7 @@ Usage:
 
 import requests
 import base64
+import time
 from typing import Optional, List, Dict, Any # For data validation
 
 
@@ -134,7 +135,7 @@ def get_patient_id_from_mrn(
 def get_document_references(
     patient_id: str,
     onco_emr_token: str,
-    loinc_type: str = "",
+    loinc_type: str = "UNK",
     url: str = "https://fhir.prod.flatiron.io/fhir/DocumentReference"
 ) -> Dict[str, Any]:
     """
@@ -171,8 +172,7 @@ def get_document_references(
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
 
+    # Add rate limiting delay to avoid 429 errors (1.5 seconds between API calls)
+    time.sleep(1.5)
+
     return response.json()
-
-
-
-

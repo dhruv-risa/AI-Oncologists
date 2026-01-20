@@ -1,6 +1,6 @@
 import { TestTube, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import { LabTrendChart } from '../LabTrendChart';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { usePatient } from '../../contexts/PatientContext';
 
 export function LabsTab() {
@@ -24,6 +24,41 @@ export function LabsTab() {
 
   // Get lab data from patient context
   const labData = currentPatient?.lab_info || null;
+
+  // Extract treatment stages from treatment history for chart overlays
+  const treatmentStages = useMemo(() => {
+    const treatmentHistory = currentPatient?.treatment_tab_info_LOT?.treatment_history || [];
+    if (treatmentHistory.length === 0) {
+      console.log('No treatment history found');
+      return [];
+    }
+
+    const stageColors = [
+      { color: 'bg-purple-200', borderColor: 'border-purple-400', textColor: 'text-purple-700' },
+      { color: 'bg-blue-200', borderColor: 'border-blue-400', textColor: 'text-blue-700' },
+      { color: 'bg-emerald-200', borderColor: 'border-emerald-400', textColor: 'text-emerald-700' },
+      { color: 'bg-amber-200', borderColor: 'border-amber-400', textColor: 'text-amber-700' },
+      { color: 'bg-rose-200', borderColor: 'border-rose-400', textColor: 'text-rose-700' },
+    ];
+
+    const stages = treatmentHistory.map((treatment: any, idx: number) => {
+      const colorScheme = stageColors[idx % stageColors.length];
+      const lineLabel = treatment.header?.line_number || `Line ${idx + 1}`;
+      const drugName = treatment.header?.primary_drug_name || 'Treatment';
+      const startDate = treatment.dates?.start_date || '';
+      const endDate = treatment.dates?.end_date === 'Ongoing' ? new Date().toISOString().split('T')[0] : treatment.dates?.end_date || '';
+
+      return {
+        start_date: startDate,
+        end_date: endDate,
+        label: `${lineLabel} - ${drugName}`,
+        ...colorScheme
+      };
+    }).filter((stage: any) => stage.start_date && stage.end_date);
+
+    console.log('Treatment stages:', stages);
+    return stages;
+  }, [currentPatient]);
 
   // Show message if no patient data
   if (!currentPatient) {
@@ -137,9 +172,13 @@ export function LabsTab() {
       </div>
 
       <div className="mb-8 pb-8 border-b border-gray-200">
-        <h3 className="text-gray-900 mb-4">{selectedLab} Trend (12 months)</h3>
+        <h3 className="text-gray-900 mb-4">{selectedLab} Trend</h3>
         <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-lg p-5 border border-slate-200">
-          <LabTrendChart labName={selectedLab} />
+          <LabTrendChart
+            labName={selectedLab}
+            biomarkerData={getBiomarker(tumorMarkers, selectedLab)}
+            treatmentStages={treatmentStages}
+          />
         </div>
       </div>
 
@@ -154,9 +193,13 @@ export function LabsTab() {
       </div>
 
       <div className="mb-8 pb-8 border-b border-gray-200">
-        <h3 className="text-gray-900 mb-4">{selectedCBCLab} Trend (12 months)</h3>
+        <h3 className="text-gray-900 mb-4">{selectedCBCLab} Trend</h3>
         <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-lg p-5 border border-slate-200">
-          <LabTrendChart labName={selectedCBCLab} />
+          <LabTrendChart
+            labName={selectedCBCLab}
+            biomarkerData={getBiomarker(cbc, selectedCBCLab)}
+            treatmentStages={treatmentStages}
+          />
         </div>
       </div>
 
@@ -171,9 +214,13 @@ export function LabsTab() {
       </div>
 
       <div className="mb-8 pb-8 border-b border-gray-200">
-        <h3 className="text-gray-900 mb-4">{selectedMetabolicLab} Trend (12 months)</h3>
+        <h3 className="text-gray-900 mb-4">{selectedMetabolicLab} Trend</h3>
         <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-lg p-5 border border-slate-200">
-          <LabTrendChart labName={selectedMetabolicLab} />
+          <LabTrendChart
+            labName={selectedMetabolicLab}
+            biomarkerData={getBiomarker(metabolicPanel, selectedMetabolicLab)}
+            treatmentStages={treatmentStages}
+          />
         </div>
       </div>
 

@@ -212,7 +212,9 @@ This will run the complete extraction pipeline for the demo patient (MRN: A24514
 The system fetches documents from the FHIR API based on:
 - **Patient MRN**: Medical Record Number
 - **Document Type**: MD notes, lab results, pathology reports, etc.
-- **Date Range**: Last 6 months from the most recent document
+- **Date Range**:
+  - Lab Results: Last 6 months from the most recent document
+  - Pathology Reports: Last 1 year from the most recent document
 
 ### 2. Document Processing
 
@@ -737,7 +739,7 @@ Subsequent loads are instant (< 1 second) thanks to caching.
 1. Verify MRN is correct
 2. Check FHIR API credentials
 3. Try demo patient (A2451440)
-4. Check date range - system looks for documents from last 6 months
+4. Check date range - system looks for lab results from last 6 months and pathology reports from last 1 year
 
 ### Cache Issues
 
