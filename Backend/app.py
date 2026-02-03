@@ -41,6 +41,7 @@ from Backend.Utils.components.patient_diagnosis_status import extract_diagnosis_
 from Backend.Utils.Tabs.comorbidities import extract_comorbidities_status
 from Backend.Utils.Tabs.treatment_tab import extract_treatment_tab_info
 from Backend.Utils.Tabs.diagnosis_tab import diagnosis_extraction
+from Backend.Utils.Tabs.clinical_trials_tab import extract_clinical_trials
 from Backend.Utils.logger_config import setup_logger
 
 # Setup logger
@@ -918,6 +919,43 @@ async def get_patient_data(request: MRNRequest):
         # Auto-store in data pool
         data_pool.store_patient_data(mrn=request.mrn, data=result)
 
+        # Auto-compute eligibility for this patient against all cached trials (background)
+        try:
+            trials_count = data_pool.get_trials_count()
+            if trials_count > 0:
+                print(f"\n{'='*60}")
+                print(f"AUTO-COMPUTING ELIGIBILITY for new patient {request.mrn}")
+                print(f"Matching against {trials_count} cached trials...")
+                print(f"{'='*60}")
+
+                # Run in background thread so it doesn't block the response
+                def compute_eligibility_background(mrn: str, patient_data: dict):
+                    try:
+                        from Utils.batch_eligibility_engine import get_batch_engine
+                        engine = get_batch_engine()
+                        engine.compute_eligibility_matrix(
+                            patient_mrns=[mrn],
+                            limit_trials=100  # Limit for performance
+                        )
+                        print(f"Eligibility computation complete for patient {mrn}")
+                    except Exception as e:
+                        print(f"Background eligibility computation failed: {e}")
+
+                import threading
+                thread = threading.Thread(
+                    target=compute_eligibility_background,
+                    args=(request.mrn, result)
+                )
+                thread.daemon = True
+                thread.start()
+
+                result['eligibility_computation'] = "started_in_background"
+            else:
+                result['eligibility_computation'] = "skipped_no_trials_cached"
+        except Exception as e:
+            print(f"Warning: Could not start eligibility computation: {e}")
+            result['eligibility_computation'] = "failed"
+
         return result
     except Exception as e:
         import traceback
@@ -1476,6 +1514,63 @@ async def get_pathology_tab(request: MRNRequest):
         )
 
 
+@app.post("/api/tabs/clinical-trials", tags=["Tabs"])
+async def get_clinical_trials(request: MRNRequest):
+    """
+    Get matched clinical trials for a patient using smart multi-query search.
+
+    NEW STRATEGY:
+    1. Gets patient data from the data pool (must be loaded first via /api/patient/all)
+    2. Builds targeted search queries from patient data (cancer type, biomarkers, genomics, etc.)
+    3. Searches ClinicalTrials.gov API with multiple queries (250+ trials per query, 2 pages)
+    4. Deduplicates and analyzes ALL eligibility criteria against patient data with LLM
+    5. Returns trials sorted by eligibility percentage
+
+    Expected to fetch 500-1000 unique trials for comprehensive matching.
+
+    Returns:
+    - List of matched trials with full eligibility criteria breakdown
+    - Each criterion shows: what the trial requires, patient's value, and match status
+    - Summary statistics (likely_eligible, potentially_eligible, not_eligible counts)
+    """
+    try:
+        # Get patient data from pool
+        patient_data = data_pool.get_patient_data(request.mrn)
+
+        if not patient_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Patient with MRN {request.mrn} not found. Please load patient data first using /api/patient/all"
+            )
+
+        # Extract clinical trials matches using smart multi-query strategy
+        # max_trials_per_query=250, max_pages=2 -> ~500 trials per query
+        result = extract_clinical_trials(patient_data, max_trials_per_query=50, max_pages=1)
+
+        return {
+            "success": result.get("success", False),
+            "mrn": request.mrn,
+            "search_queries": result.get("search_queries", []),
+            "total_queries": result.get("total_queries", 0),
+            "patient_cancer_type": result.get("patient_cancer_type", ""),
+            "total_trials_fetched": result.get("total_trials_fetched", 0),
+            "total_trials_analyzed": result.get("total_trials_analyzed", 0),
+            "summary": result.get("summary", {}),
+            "trials": result.get("trials", []),
+            "message": result.get("message"),
+            "error": result.get("error")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
 # ============================================================================
 # Helper Functions for Testing
 # ============================================================================
@@ -1621,6 +1716,389 @@ async def clear_data_pool():
         "success": True,
         "message": "Data pool cleared successfully"
     }
+
+
+# ============================================================================
+# Trial-Centric Routes (Trials → Patients)
+# ============================================================================
+
+@app.get("/api/trials", tags=["Clinical Trials"])
+async def list_trials(
+    status: str = None,
+    page: int = 1,
+    limit: int = 50
+):
+    """
+    List all cached clinical trials with pagination.
+
+    This endpoint returns trials that have been pre-fetched and cached.
+    Use the /api/admin/sync-trials endpoint to populate the cache.
+
+    Query parameters:
+    - status: Filter by trial status (e.g., "RECRUITING")
+    - page: Page number (default: 1)
+    - limit: Items per page (default: 50, max: 100)
+    """
+    try:
+        limit = min(limit, 100)
+        offset = (page - 1) * limit
+
+        trials = data_pool.list_all_trials(
+            status=status,
+            limit=limit,
+            offset=offset
+        )
+
+        total = data_pool.get_trials_count(status=status)
+
+        return {
+            "success": True,
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit,
+            "trials": trials
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.get("/api/trials/{nct_id}", tags=["Clinical Trials"])
+async def get_trial_details(nct_id: str):
+    """
+    Get detailed information about a specific clinical trial.
+
+    Returns the cached trial data including eligibility criteria,
+    locations, contacts, and eligibility statistics.
+    """
+    try:
+        trial = data_pool.get_trial(nct_id)
+
+        if not trial:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Trial {nct_id} not found in cache. Run sync-trials first."
+            )
+
+        # Get eligibility stats for this trial
+        stats = data_pool.get_eligibility_stats_for_trial(nct_id)
+
+        return {
+            "success": True,
+            "trial": trial,
+            "eligibility_stats": stats
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.get("/api/trials/{nct_id}/patients", tags=["Clinical Trials"])
+async def get_eligible_patients_for_trial(
+    nct_id: str,
+    eligibility_status: str = None,
+    page: int = 1,
+    limit: int = 50
+):
+    """
+    Get all patients eligible for a specific clinical trial.
+
+    This endpoint returns pre-computed eligibility results from the matrix.
+    Use /api/admin/compute-eligibility to populate the matrix.
+
+    Query parameters:
+    - eligibility_status: Filter by status ("Likely Eligible", "Potentially Eligible", "Not Eligible")
+    - page: Page number (default: 1)
+    - limit: Items per page (default: 50, max: 100)
+    """
+    try:
+        limit = min(limit, 100)
+        offset = (page - 1) * limit
+
+        # Get eligible patients
+        patients = data_pool.get_eligible_patients_for_trial(
+            nct_id=nct_id,
+            status_filter=eligibility_status,
+            limit=limit,
+            offset=offset
+        )
+
+        # Get stats
+        stats = data_pool.get_eligibility_stats_for_trial(nct_id)
+
+        return {
+            "success": True,
+            "nct_id": nct_id,
+            "page": page,
+            "limit": limit,
+            "eligibility_stats": stats,
+            "patients": patients
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.get("/api/patients/{mrn}/eligible-trials", tags=["Clinical Trials"])
+async def get_eligible_trials_for_patient_cached(
+    mrn: str,
+    eligibility_status: str = None
+):
+    """
+    Get all trials a patient is eligible for from the pre-computed cache.
+
+    This is faster than /api/tabs/clinical-trials as it uses pre-computed results.
+    Use /api/admin/compute-eligibility to populate the matrix.
+
+    Query parameters:
+    - eligibility_status: Filter by status ("Likely Eligible", "Potentially Eligible", "Not Eligible")
+    """
+    try:
+        # Check if patient exists
+        if not data_pool.patient_exists(mrn):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Patient {mrn} not found in data pool"
+            )
+
+        trials = data_pool.get_eligible_trials_for_patient(
+            mrn=mrn,
+            status_filter=eligibility_status
+        )
+
+        return {
+            "success": True,
+            "mrn": mrn,
+            "total": len(trials),
+            "trials": trials
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+# ============================================================================
+# Admin Routes for Batch Operations
+# ============================================================================
+
+@app.post("/api/admin/sync-trials", tags=["Admin"])
+async def sync_trials_batch(
+    max_per_query: int = 50,
+    background: bool = False,
+    auto_compute_eligibility: bool = True
+):
+    """
+    Sync clinical trials from ClinicalTrials.gov API to local cache.
+
+    This fetches trials for multiple cancer types and stores them in the database.
+    Can run in foreground (blocking) or background (async).
+    After syncing, automatically computes eligibility for all existing patients.
+
+    Query parameters:
+    - max_per_query: Maximum trials to fetch per search query (default: 50)
+    - background: Run in background (default: False)
+    - auto_compute_eligibility: Auto-compute eligibility for all patients after sync (default: True)
+    """
+    try:
+        from Utils.batch_eligibility_engine import get_batch_engine
+
+        engine = get_batch_engine()
+
+        def sync_and_compute():
+            # First sync trials
+            sync_result = engine.sync_trials(max_per_query=max_per_query)
+
+            # Then auto-compute eligibility for all existing patients
+            if auto_compute_eligibility:
+                patients = data_pool.list_all_patients()
+                if patients:
+                    print(f"\n{'='*60}")
+                    print(f"AUTO-COMPUTING ELIGIBILITY for {len(patients)} existing patients")
+                    print(f"{'='*60}")
+                    engine.compute_eligibility_matrix(limit_trials=100)
+
+            return sync_result
+
+        if background:
+            # Run in background using thread pool
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                loop.run_in_executor(executor, sync_and_compute)
+
+            return {
+                "success": True,
+                "message": "Trial sync started in background (will auto-compute eligibility)",
+                "max_per_query": max_per_query
+            }
+        else:
+            result = sync_and_compute()
+            return {
+                "success": True,
+                "result": result
+            }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.post("/api/admin/compute-eligibility", tags=["Admin"])
+async def compute_eligibility_batch(
+    limit_trials: int = 100,
+    patient_mrn: str = None,
+    background: bool = False
+):
+    """
+    Compute eligibility matrix for all patient×trial combinations.
+
+    This pre-computes eligibility for all patients against all cached trials.
+    Results are stored in the eligibility_matrix table for instant queries.
+
+    Query parameters:
+    - limit_trials: Maximum number of trials to process (default: 100)
+    - patient_mrn: Compute only for specific patient (optional)
+    - background: Run in background (default: False)
+    """
+    try:
+        from Utils.batch_eligibility_engine import get_batch_engine
+
+        engine = get_batch_engine()
+
+        patient_mrns = [patient_mrn] if patient_mrn else None
+
+        if background:
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                loop.run_in_executor(
+                    executor,
+                    engine.compute_eligibility_matrix,
+                    patient_mrns,
+                    None,  # trial_nct_ids
+                    limit_trials
+                )
+
+            return {
+                "success": True,
+                "message": "Eligibility computation started in background",
+                "limit_trials": limit_trials,
+                "patient_mrn": patient_mrn
+            }
+        else:
+            result = engine.compute_eligibility_matrix(
+                patient_mrns=patient_mrns,
+                limit_trials=limit_trials
+            )
+            return {
+                "success": True,
+                "result": result
+            }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.post("/api/admin/full-sync", tags=["Admin"])
+async def full_sync_batch(
+    max_trials_per_query: int = 50,
+    limit_trials: int = 100,
+    background: bool = True
+):
+    """
+    Perform a full sync: fetch trials and compute all eligibility.
+
+    This is a convenience endpoint that runs both sync-trials and compute-eligibility.
+    Recommended to run in background for large datasets.
+
+    Query parameters:
+    - max_trials_per_query: Max trials to fetch per search query (default: 50)
+    - limit_trials: Total limit on trials to process for eligibility (default: 100)
+    - background: Run in background (default: True)
+    """
+    try:
+        from Utils.batch_eligibility_engine import get_batch_engine
+
+        engine = get_batch_engine()
+
+        if background:
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                loop.run_in_executor(
+                    executor,
+                    engine.full_sync,
+                    max_trials_per_query,
+                    limit_trials
+                )
+
+            return {
+                "success": True,
+                "message": "Full sync started in background",
+                "max_trials_per_query": max_trials_per_query,
+                "limit_trials": limit_trials
+            }
+        else:
+            result = engine.full_sync(
+                max_trials_per_query=max_trials_per_query,
+                limit_trials=limit_trials
+            )
+            return {
+                "success": True,
+                "result": result
+            }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.get("/api/admin/sync-status", tags=["Admin"])
+async def get_sync_status():
+    """
+    Get the status of the last sync operations.
+
+    Returns information about the most recent trials sync and eligibility computation.
+    """
+    try:
+        last_trials_sync = data_pool.get_last_sync("trials_fetch")
+        last_eligibility_sync = data_pool.get_last_sync("eligibility_compute")
+        last_full_sync = data_pool.get_last_sync("full_sync")
+
+        trials_count = data_pool.get_trials_count()
+
+        return {
+            "success": True,
+            "trials_in_cache": trials_count,
+            "last_trials_sync": last_trials_sync,
+            "last_eligibility_computation": last_eligibility_sync,
+            "last_full_sync": last_full_sync
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
 
 # ============================================================================

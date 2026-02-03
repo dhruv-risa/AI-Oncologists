@@ -7,6 +7,7 @@ A comprehensive system for extracting and managing oncology patient data from El
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Features](#features)
+- [Clinical Trials Matching](#clinical-trials-matching)
 - [Prerequisites](#prerequisites)
 - [Setup Instructions](#setup-instructions)
 - [Running the Application](#running-the-application)
@@ -65,10 +66,88 @@ The AI Oncologist system automates the extraction and processing of patient data
 
 - **Automated Data Extraction**: Extract patient information from unstructured medical documents
 - **Multi-Tab Dashboard**: Comprehensive view across diagnosis, treatment, labs, genomics, pathology, and radiology
+- **Clinical Trials Matching**: Intelligent matching of patients to eligible clinical trials from ClinicalTrials.gov
 - **Parallel Processing**: Three extraction pipelines run simultaneously for optimal performance
 - **Intelligent Caching**: SQLite-based data pool for instant subsequent loads
 - **Test Endpoints**: Isolated test APIs for validating individual workflows
 - **Real-time Updates**: RESTful API with CORS support for frontend integration
+
+## Clinical Trials Matching
+
+The system includes intelligent clinical trial matching that automatically identifies eligible trials for each patient.
+
+### How It Works
+
+1. **Trial Synchronization**: Fetch recruiting trials from ClinicalTrials.gov for major cancer types
+2. **Pre-filtering**: Quick programmatic checks eliminate obviously ineligible trials:
+   - Age requirements (patient age vs trial min/max age)
+   - Gender requirements (trial sex restrictions)
+   - ECOG performance status (patient functional status vs trial requirements)
+   - Disease matching (filters non-oncology trials)
+3. **AI Eligibility Analysis**: For trials that pass pre-filtering, AI analyzes detailed eligibility criteria against patient medical records
+4. **Results Storage**: Eligibility results are stored for instant retrieval
+
+### Eligibility Categories
+
+- **Likely Eligible** (70-100%): Patient meets most inclusion criteria with no exclusion flags
+- **Potentially Eligible** (40-69%): Patient may qualify but has some unknown or uncertain criteria
+- **Not Eligible** (0-39%): Patient fails critical criteria or triggers exclusion criteria
+
+### Automatic Patient Matching
+
+When a new patient is added to the system, the Clinical Trials feature automatically:
+1. Retrieves all available trials from the database
+2. Runs pre-filtering to eliminate obviously ineligible trials
+3. Performs AI-based eligibility analysis on remaining trials
+4. Stores results for instant access in the Clinical Trials tab
+
+### Using the Clinical Trials Feature
+
+**From the Patient Dashboard:**
+1. Search for a patient by MRN
+2. Navigate to the "Clinical Trials" tab
+3. View pre-analyzed eligibility for all available trials
+4. Click on any trial to see detailed eligibility breakdown
+
+**From the Clinical Trials Home:**
+1. Click "Clinical Trials" in the navigation
+2. Browse all available trials with eligible patient counts
+3. Click on a trial to see which patients are eligible
+4. Use "Sync Trials" to fetch latest trials from ClinicalTrials.gov
+
+### Administrative Criteria Handling
+
+Some trial criteria cannot be verified from medical records (e.g., ability to sign consent, willingness to travel). The system handles these based on patient functional status:
+
+- **ECOG 0-2 (Active/Stable)**: Administrative criteria assumed met (patient is ambulatory and functional)
+- **ECOG 3-4 (Critical)**: Administrative criteria marked as unknown
+
+### Clinical Trials API Endpoints
+
+```bash
+# Sync trials from ClinicalTrials.gov
+POST /api/trials/sync
+{
+  "background": false,
+  "max_trials_per_query": 50,
+  "limit_trials": 200
+}
+
+# List all available trials
+GET /api/trials/list?status=RECRUITING&page=1&limit=20
+
+# Get trial details
+GET /api/trials/{nct_id}
+
+# Get eligibility for a patient
+GET /api/eligibility/patient/{mrn}
+
+# Get eligible patients for a trial
+GET /api/eligibility/trial/{nct_id}
+
+# Check sync status
+GET /api/trials/sync/status
+```
 
 ## Prerequisites
 
@@ -569,9 +648,12 @@ AI Oncologist/
 │           ├── genomics_tab.py       # Genomics extraction
 │           ├── pathology_tab.py      # Pathology extraction
 │           ├── radiology_tab.py      # Radiology extraction
+│           ├── clinical_trials_tab.py # Clinical trials eligibility matching
 │           ├── llmparser.py          # LLM parsing utilities
 │           ├── lab_postprocessor.py  # Lab data post-processing
 │           └── lab_chart_helper.py   # Lab chart generation
+│
+│   └── batch_eligibility_engine.py   # Batch trial eligibility computation
 │
 ├── Frontend/
 │   └── Oncology Patient Dashboard 2/
@@ -584,13 +666,15 @@ AI Oncologist/
 │       │   │   ├── MRNInput.tsx          # MRN input screen
 │       │   │   ├── PatientHeader.tsx     # Patient header component
 │       │   │   ├── DiseaseSummary.tsx    # Disease summary component
+│       │   │   ├── TrialsListView.tsx    # Clinical trials browse view
 │       │   │   └── tabs/
 │       │   │       ├── DiagnosisTab.tsx
 │       │   │       ├── TreatmentTab.tsx
 │       │   │       ├── LabsTab.tsx
 │       │   │       ├── GenomicsTab.tsx
 │       │   │       ├── PathologyTab.tsx
-│       │   │       └── RadiologyTab.tsx
+│       │   │       ├── RadiologyTab.tsx
+│       │   │       └── ClinicalTrialsTab.tsx
 │       │   └── App.tsx
 │       ├── .env                    # Frontend configuration
 │       ├── package.json
@@ -770,5 +854,13 @@ For more detailed information, refer to:
 Copyright © 2024. All rights reserved.
 
 ## Version
+
+**Version 1.1** - Clinical Trials Matching
+- Added clinical trials synchronization from ClinicalTrials.gov
+- Intelligent eligibility matching with pre-filtering (age, gender, ECOG, disease type)
+- AI-powered detailed eligibility analysis
+- Automatic eligibility computation for new patients
+- Clinical Trials tab in patient dashboard
+- Clinical Trials browse view with patient counts
 
 **Version 1.0** - Initial Release
