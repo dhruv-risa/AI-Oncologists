@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, Search, Filter, ArrowRight, AlertCircle, Activity, Plus, Loader2, Trash2 } from 'lucide-react';
+import { Users, Search, Filter, ArrowRight, AlertCircle, Activity, Plus, Loader2, Trash2, Beaker } from 'lucide-react';
 import { usePatient } from '../contexts/PatientContext';
 import { apiService } from '../services/api';
 import { PatientListSkeleton } from './PatientCardSkeleton';
@@ -28,13 +28,19 @@ interface Patient {
   nextAppt: string;
   status: 'active' | 'critical' | 'stable';
   lastVisit: string;
+  // Trial match counts
+  trialsAnalyzed?: number;
+  likelyEligible?: number;
+  potentiallyEligible?: number;
+  matchedTrials?: number;
 }
 
 interface PatientListViewProps {
   onSelectPatient: (patientId: string) => void;
+  onGoToTrials?: () => void;
 }
 
-export function PatientListView({ onSelectPatient }: PatientListViewProps) {
+export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListViewProps) {
   const { cachedPatients, loadCachedPatients, fetchPatientData, deletePatient, loading, error, clearError } = usePatient();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchMRN, setSearchMRN] = useState('');
@@ -84,7 +90,12 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
               : 'Not available',
             nextAppt: fullData.demographics["Last Visit"] || new Date(cached.updated_at).toLocaleDateString(),
             status: 'active' as const,
-            lastVisit: fullData.demographics["Last Visit"] || new Date(cached.updated_at).toLocaleDateString()
+            lastVisit: fullData.demographics["Last Visit"] || new Date(cached.updated_at).toLocaleDateString(),
+            // Trial match counts from cached data
+            trialsAnalyzed: (cached as any).trialsAnalyzed || 0,
+            likelyEligible: (cached as any).likelyEligible || 0,
+            potentiallyEligible: (cached as any).potentiallyEligible || 0,
+            matchedTrials: (cached as any).matchedTrials || 0
           };
         } catch (err) {
           console.error(`Error loading patient ${cached.mrn}:`, err);
@@ -99,7 +110,12 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
             currentTreatment: 'N/A',
             nextAppt: 'N/A',
             status: 'active' as const,
-            lastVisit: new Date(cached.updated_at).toLocaleDateString()
+            lastVisit: new Date(cached.updated_at).toLocaleDateString(),
+            // Trial match counts from cached data
+            trialsAnalyzed: (cached as any).trialsAnalyzed || 0,
+            likelyEligible: (cached as any).likelyEligible || 0,
+            potentiallyEligible: (cached as any).potentiallyEligible || 0,
+            matchedTrials: (cached as any).matchedTrials || 0
           };
         }
       });
@@ -297,6 +313,16 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
               <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm border border-blue-200">
                 {displayPatients.length} Active Patients
               </span>
+              {onGoToTrials && (
+                <button
+                  onClick={onGoToTrials}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors border-2 border-green-600 bg-green-600 text-white hover:bg-green-700"
+                  style={{ backgroundColor: '#059669', color: 'white', borderColor: '#047857' }}
+                >
+                  <Beaker className="w-4 h-4" />
+                  <span>Clinical Trials</span>
+                </button>
+              )}
               <button
                 onClick={() => setShowAddPatient(!showAddPatient)}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -476,6 +502,30 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
                   <p className="text-sm text-blue-900">{patient.nextAppt}</p>
                 </div>
               </div>
+
+              {/* Clinical Trials Match Badge - only show when eligibility has been computed */}
+              {patient.trialsAnalyzed !== undefined && patient.trialsAnalyzed > 0 && (patient.likelyEligible > 0 || patient.potentiallyEligible > 0) && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Beaker className="w-4 h-4 text-green-600" />
+                      <span className="text-sm font-medium text-gray-700">Clinical Trials</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {patient.likelyEligible !== undefined && patient.likelyEligible > 0 && (
+                        <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+                          {patient.likelyEligible} Likely
+                        </span>
+                      )}
+                      {patient.potentiallyEligible !== undefined && patient.potentiallyEligible > 0 && (
+                        <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full text-xs font-medium">
+                          {patient.potentiallyEligible} Potential
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               </button>
 
               {/* Delete Button */}
@@ -504,7 +554,7 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
                     <AlertDialogHeader>
                       <AlertDialogTitle>Delete Patient Record</AlertDialogTitle>
                       <AlertDialogDescription>
-                        Are you sure you want to delete the record for <strong>{patient.name}</strong> (MRN: {patient.mrn})? This action cannot be undone and will remove all cached patient data.
+                        Are you sure you want to delete the record for <strong>{patient.name}</strong> (MRN: {patient.mrn})? This action cannot be undone and will remove all patient data from the system.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

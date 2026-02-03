@@ -13,6 +13,7 @@ import { RadiologyTab } from './tabs/RadiologyTab';
 import { LabsTab } from './tabs/LabsTab';
 import { TreatmentTab } from './tabs/TreatmentTab';
 import { ComorbiditiesTab } from './tabs/ComorbiditiesTab';
+import { ClinicalTrialsTab } from './tabs/ClinicalTrialsTab';
 import { usePatient } from '../contexts/PatientContext';
 
 interface PatientDetailViewProps {
@@ -46,6 +47,8 @@ export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps)
         return <TreatmentTab patientData={currentPatient} />;
       case 'comorbidities':
         return <ComorbiditiesTab patientData={currentPatient} />;
+      case 'clinical-trials':
+        return <ClinicalTrialsTab />;
       case 'documents':
         return <DocumentsSection patientData={currentPatient} />;
       default:
