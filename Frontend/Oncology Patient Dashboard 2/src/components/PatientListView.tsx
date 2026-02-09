@@ -1,20 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Users, Search, Filter, ArrowRight, AlertCircle, Activity, Plus, Loader2, Trash2 } from 'lucide-react';
+import { Users, Search, Filter, ArrowRight, Plus, Loader2 } from 'lucide-react';
 import { usePatient } from '../contexts/PatientContext';
 import { apiService } from '../services/api';
 import { PatientListSkeleton } from './PatientCardSkeleton';
 import { LoadingModal } from './LoadingModal';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from './ui/alert-dialog';
 
 interface Patient {
   id: string;
@@ -26,7 +15,7 @@ interface Patient {
   stage: string;
   currentTreatment: string;
   nextAppt: string;
-  status: 'active' | 'critical' | 'stable';
+  diseaseStatus: string | null;
   lastVisit: string;
 }
 
@@ -35,12 +24,12 @@ interface PatientListViewProps {
 }
 
 export function PatientListView({ onSelectPatient }: PatientListViewProps) {
-  const { cachedPatients, loadCachedPatients, fetchPatientData, deletePatient, loading, error, clearError } = usePatient();
+  const { cachedPatients, loadCachedPatients, fetchPatientData, fetchDemoPatientData, loading, error, clearError } = usePatient();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchMRN, setSearchMRN] = useState('');
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [loadingPatients, setLoadingPatients] = useState(false);
-  const [deletingMRN, setDeletingMRN] = useState<string | null>(null);
+  const demoMode = true; // Always use demo mode
 
   // Load cached patients on mount
   useEffect(() => {
@@ -67,9 +56,59 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
 
           // Derive current staging from timeline (most recent entry) or fall back to header
           const timeline = fullData.diagnosis_evolution_timeline?.timeline || [];
-          const currentStage = timeline.length > 0
-            ? timeline[0]?.stage_header || timeline[0]?.tnm_status || '-'
-            : fullData.diagnosis_header?.current_staging?.ajcc_stage || fullData.diagnosis_header?.current_staging?.tnm || '-';
+
+          // Sort timeline by date (most recent first) and find first entry with valid staging data
+          const sortedTimeline = [...timeline].sort((a, b) => {
+            const parseDate = (dateStr: string) => {
+              if (!dateStr) return new Date(0);
+              if (dateStr.toLowerCase().includes('current')) return new Date();
+
+              const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',
+                                  'july', 'august', 'september', 'october', 'november', 'december'];
+              const lowerStr = dateStr.toLowerCase().trim();
+
+              for (let i = 0; i < monthNames.length; i++) {
+                if (lowerStr.startsWith(monthNames[i])) {
+                  const yearMatch = dateStr.match(/\d{4}/);
+                  if (yearMatch) return new Date(parseInt(yearMatch[0]), i, 1);
+                }
+              }
+
+              const date = new Date(dateStr);
+              return !isNaN(date.getTime()) ? date : new Date(0);
+            };
+
+            return parseDate(b.date_label).getTime() - parseDate(a.date_label).getTime();
+          });
+
+          // Find first timeline entry with valid staging data (excluding special values)
+          const currentTimelineEntry = sortedTimeline.find(entry => {
+            const hasValidStage = entry.stage_header &&
+              entry.stage_header !== 'N/A' &&
+              entry.stage_header !== 'Pre-diagnosis finding' &&
+              entry.stage_header !== 'Staging not performed';
+            const hasValidTNM = entry.tnm_status &&
+              entry.tnm_status !== 'NA' &&
+              entry.tnm_status !== 'N/A';
+            return hasValidStage || hasValidTNM;
+          });
+
+          const currentStage = currentTimelineEntry
+            ? currentTimelineEntry.stage_header || currentTimelineEntry.tnm_status || 'Not staged'
+            : fullData.diagnosis_header?.current_staging?.ajcc_stage || fullData.diagnosis_header?.current_staging?.tnm || 'Not staged';
+
+          // Get current treatment - check multiple possible fields
+          let currentTreatment = 'Not available';
+          if (fullData.treatment_tab_info_LOT?.treatment_history && fullData.treatment_tab_info_LOT.treatment_history.length > 0) {
+            const latestTreatment = fullData.treatment_tab_info_LOT.treatment_history[fullData.treatment_tab_info_LOT.treatment_history.length - 1];
+            currentTreatment = latestTreatment.systemic_regimen ||
+                              latestTreatment.regimen_details?.display_name ||
+                              latestTreatment.header?.primary_drug_name ||
+                              'Not available';
+          }
+
+          // Get disease status from diagnosis (same as DiseaseSummary and patient demographics)
+          const diseaseStatus = fullData.diagnosis?.disease_status || null;
 
           return {
             id: cached.mrn,
@@ -79,11 +118,9 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
             gender: fullData.demographics["Gender"] || '-',
             diagnosis: fullData.diagnosis_header?.primary_diagnosis || 'Not available',
             stage: currentStage,
-            currentTreatment: fullData.treatment_tab_info_LOT?.treatment_history && fullData.treatment_tab_info_LOT.treatment_history.length > 0
-              ? fullData.treatment_tab_info_LOT.treatment_history[fullData.treatment_tab_info_LOT.treatment_history.length - 1].regimen_details.display_name
-              : 'Not available',
+            currentTreatment,
             nextAppt: fullData.demographics["Last Visit"] || new Date(cached.updated_at).toLocaleDateString(),
-            status: 'active' as const,
+            diseaseStatus,
             lastVisit: fullData.demographics["Last Visit"] || new Date(cached.updated_at).toLocaleDateString()
           };
         } catch (err) {
@@ -98,7 +135,7 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
             stage: 'N/A',
             currentTreatment: 'N/A',
             nextAppt: 'N/A',
-            status: 'active' as const,
+            diseaseStatus: null,
             lastVisit: new Date(cached.updated_at).toLocaleDateString()
           };
         }
@@ -119,163 +156,68 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
     }
 
     try {
-      await fetchPatientData(searchMRN.trim());
+      if (demoMode) {
+        // Use demo mode - bypasses FHIR API
+        await fetchDemoPatientData(searchMRN.trim());
+      } else {
+        // Normal mode - uses FHIR API
+        await fetchPatientData(searchMRN.trim());
+      }
       setSearchMRN('');
       setShowAddPatient(false);
-      // Reload cached patients to include the new one
-      await loadCachedPatients();
+      // Reload cached patients to include the new one (only in normal mode)
+      if (!demoMode) {
+        await loadCachedPatients();
+      }
     } catch (err) {
       console.error('Failed to add patient:', err);
     }
   };
 
-  // Handle deleting a patient
-  const handleDeletePatient = async (mrn: string, patientName: string) => {
-    setDeletingMRN(mrn);
-    try {
-      await deletePatient(mrn);
-      console.log(`Successfully deleted patient ${patientName} (${mrn})`);
-    } catch (err) {
-      console.error('Failed to delete patient:', err);
-      alert(`Failed to delete patient: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setDeletingMRN(null);
-    }
-  };
-
-  // Fallback mock data if no cached patients
-  const mockPatients: Patient[] = [
-    {
-      id: '1',
-      mrn: 'MRN-2847563',
-      name: 'Sarah Mitchell',
-      age: 58,
-      gender: 'Female',
-      diagnosis: 'Non-Small Cell Lung Cancer',
-      stage: 'Stage IVA',
-      currentTreatment: 'Osimertinib 80mg daily',
-      nextAppt: 'Jan 15, 2025',
-      status: 'critical',
-      lastVisit: 'Dec 10, 2024'
-    },
-    {
-      id: '2',
-      mrn: 'MRN-2847891',
-      name: 'Robert Chen',
-      age: 62,
-      gender: 'Male',
-      diagnosis: 'Colorectal Adenocarcinoma',
-      stage: 'Stage IIIB',
-      currentTreatment: 'FOLFOX + Bevacizumab',
-      nextAppt: 'Jan 18, 2025',
-      status: 'active',
-      lastVisit: 'Jan 04, 2025'
-    },
-    {
-      id: '3',
-      mrn: 'MRN-2848012',
-      name: 'Maria Rodriguez',
-      age: 45,
-      gender: 'Female',
-      diagnosis: 'Breast Cancer (Triple Negative)',
-      stage: 'Stage IIA',
-      currentTreatment: 'AC-T chemotherapy',
-      nextAppt: 'Jan 20, 2025',
-      status: 'active',
-      lastVisit: 'Jan 06, 2025'
-    },
-    {
-      id: '4',
-      mrn: 'MRN-2848234',
-      name: 'James Patterson',
-      age: 71,
-      gender: 'Male',
-      diagnosis: 'Prostate Adenocarcinoma',
-      stage: 'Stage IVB',
-      currentTreatment: 'Enzalutamide + ADT',
-      nextAppt: 'Jan 22, 2025',
-      status: 'stable',
-      lastVisit: 'Dec 18, 2024'
-    },
-    {
-      id: '5',
-      mrn: 'MRN-2848567',
-      name: 'Linda Washington',
-      age: 54,
-      gender: 'Female',
-      diagnosis: 'Ovarian Cancer',
-      stage: 'Stage IIIC',
-      currentTreatment: 'Carboplatin + Paclitaxel',
-      nextAppt: 'Jan 16, 2025',
-      status: 'active',
-      lastVisit: 'Jan 02, 2025'
-    },
-    {
-      id: '6',
-      mrn: 'MRN-2848723',
-      name: 'David Kumar',
-      age: 67,
-      gender: 'Male',
-      diagnosis: 'Pancreatic Adenocarcinoma',
-      stage: 'Stage IIB',
-      currentTreatment: 'FOLFIRINOX',
-      nextAppt: 'Jan 19, 2025',
-      status: 'critical',
-      lastVisit: 'Jan 05, 2025'
-    },
-    {
-      id: '7',
-      mrn: 'MRN-2848891',
-      name: 'Jennifer Taylor',
-      age: 49,
-      gender: 'Female',
-      diagnosis: 'Melanoma',
-      stage: 'Stage IIIB',
-      currentTreatment: 'Pembrolizumab',
-      nextAppt: 'Jan 24, 2025',
-      status: 'stable',
-      lastVisit: 'Dec 27, 2024'
-    },
-    {
-      id: '8',
-      mrn: 'MRN-2849034',
-      name: 'Michael Johnson',
-      age: 59,
-      gender: 'Male',
-      diagnosis: 'Renal Cell Carcinoma',
-      stage: 'Stage IVA',
-      currentTreatment: 'Nivolumab + Cabozantinib',
-      nextAppt: 'Jan 17, 2025',
-      status: 'active',
-      lastVisit: 'Jan 03, 2025'
-    }
-  ];
+  // Fallback mock data if no cached patients (removed - not used anymore)
 
   // Use cached patients if available, otherwise show empty state
   const displayPatients = patients.length > 0 ? patients : [];
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'critical':
-        return 'bg-red-100 text-red-700 border-red-300';
-      case 'active':
-        return 'bg-blue-100 text-blue-700 border-blue-300';
-      case 'stable':
-        return 'bg-green-100 text-green-700 border-green-300';
-      default:
-        return 'bg-gray-100 text-gray-700 border-gray-300';
+  const getDiseaseStatusColor = (diseaseStatus: string | null) => {
+    if (!diseaseStatus || diseaseStatus === 'N/A' || diseaseStatus === 'NA') {
+      return null; // Don't display if null or N/A
     }
-  };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'critical':
-        return <AlertCircle className="w-3.5 h-3.5" />;
-      case 'active':
-        return <Activity className="w-3.5 h-3.5" />;
-      default:
-        return <Activity className="w-3.5 h-3.5" />;
+    const statusLower = diseaseStatus.toLowerCase();
+
+    // Positive/Good status (light green)
+    if (
+      statusLower.includes('complete response') ||
+      statusLower.includes('partial response') ||
+      statusLower.includes('responding to treatment') ||
+      statusLower.includes('remission') ||
+      statusLower.includes('no evidence of disease') ||
+      statusLower.includes('ned')
+    ) {
+      return 'bg-green-100 text-green-700 border-green-300';
     }
+
+    // Negative/Bad status (light red)
+    if (
+      statusLower.includes('progressive disease') ||
+      statusLower.includes('recurrent disease') ||
+      statusLower.includes('active disease') ||
+      statusLower.includes('progression')
+    ) {
+      return 'bg-red-100 text-red-700 border-red-300';
+    }
+
+    // Mild/Neutral status (light grey)
+    if (
+      statusLower.includes('stable disease') ||
+      statusLower.includes('newly diagnosed')
+    ) {
+      return 'bg-gray-100 text-gray-700 border-gray-300';
+    }
+
+    // Default to grey if unknown status
+    return 'bg-gray-100 text-gray-700 border-gray-300';
   };
 
   return (
@@ -316,7 +258,7 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
           <div className="bg-white rounded-lg shadow-sm border-2 border-blue-200 p-6 mb-6">
             <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Patient</h3>
             <p className="text-sm text-gray-600 mb-4">
-              Enter patient MRN to fetch data from the system. This will trigger the data pipeline and store results in the database.
+              Enter patient MRN to load their clinical data and documents from the system.
             </p>
             <div className="flex items-center gap-3">
               <input
@@ -410,116 +352,70 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
         {!loadingPatients && displayPatients.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
             {displayPatients.map((patient) => (
-            <div
-              key={patient.id}
-              className="bg-white rounded-lg shadow-sm border-2 border-gray-200 hover:border-blue-500 hover:shadow-md transition-all group"
-            >
-              {/* Patient Card - Clickable */}
-              <button
+              <div
+                key={patient.id}
                 onClick={() => onSelectPatient(patient.id)}
-                className="w-full text-left p-5"
+                className="bg-white rounded-xl shadow-sm border border-gray-200 hover:border-blue-500 hover:shadow-md transition-all group cursor-pointer p-5 flex flex-col gap-3"
               >
                 {/* Patient Header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1 pr-10">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <h3 className="text-gray-900 group-hover:text-blue-600 transition-colors font-medium">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <h3 className="text-gray-900 group-hover:text-blue-600 transition-colors text-base font-normal">
                         {patient.name}
                       </h3>
-                      <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${getStatusColor(patient.status)}`}>
-                        {getStatusIcon(patient.status)}
-                        <span className="capitalize">{patient.status}</span>
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500 mb-1">MRN: {patient.mrn}</p>
-                    {(patient.age > 0 || patient.gender !== '-') && (
-                      <p className="text-xs text-gray-500">
-                        {patient.age > 0 && patient.gender !== '-'
-                          ? `${patient.age} years • ${patient.gender}`
-                          : patient.age > 0
-                            ? `${patient.age} years`
-                            : patient.gender}
-                      </p>
-                    )}
-                  </div>
-                  <ArrowRight className="w-5 h-5 text-gray-400 group-hover:text-blue-600 group-hover:translate-x-1 transition-all flex-shrink-0 mt-1" />
-                </div>
-
-              {/* Diagnosis Info */}
-              {(patient.diagnosis !== 'Not available' || patient.stage !== '-') && (
-                <div className="space-y-3 mb-4 pb-4 border-b border-gray-200">
-                  {patient.diagnosis !== 'Not available' && (
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
-                      <p className="text-sm text-gray-900">{patient.diagnosis}</p>
-                    </div>
-                  )}
-                  {patient.stage !== '-' && (
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1">Stage</p>
-                      <p className="text-sm text-gray-900">{patient.stage}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Treatment & Appointment */}
-              <div className="space-y-2">
-                {patient.currentTreatment !== 'Not available' && (
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Current Treatment</p>
-                    <p className="text-sm text-gray-900">{patient.currentTreatment}</p>
-                  </div>
-                )}
-                <div className="flex items-center justify-between bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
-                  <p className="text-xs text-blue-700">Last Visit</p>
-                  <p className="text-sm text-blue-900">{patient.nextAppt}</p>
-                </div>
-              </div>
-              </button>
-
-              {/* Delete Button */}
-              <div className="border-t border-gray-200 px-5 py-3">
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <button
-                      onClick={(e) => e.stopPropagation()}
-                      className="flex items-center gap-2 text-sm text-gray-600 hover:text-red-600 transition-colors"
-                      disabled={deletingMRN === patient.mrn}
-                    >
-                      {deletingMRN === patient.mrn ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Deleting...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Trash2 className="w-4 h-4" />
-                          <span>Delete Patient Record</span>
-                        </>
+                      {getDiseaseStatusColor(patient.diseaseStatus) && (
+                        <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${getDiseaseStatusColor(patient.diseaseStatus)}`}>
+                          <span className="truncate max-w-[100px]">{patient.diseaseStatus}</span>
+                        </span>
                       )}
-                    </button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete Patient Record</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Are you sure you want to delete the record for <strong>{patient.name}</strong> (MRN: {patient.mrn})? This action cannot be undone and will remove all cached patient data.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => handleDeletePatient(patient.mrn, patient.name)}
-                        className="bg-red-600 hover:bg-red-700"
-                      >
-                        Delete
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                    </div>
+                    <p className="text-xs text-gray-500 mb-0.5">MRN: {patient.mrn}</p>
+                    <p className="text-xs text-gray-500">
+                      {patient.age > 0 && patient.gender !== '-'
+                        ? `${patient.age} years • ${patient.gender}`
+                        : patient.age > 0
+                          ? `${patient.age} years`
+                          : patient.gender !== '-'
+                            ? patient.gender
+                            : '-'}
+                    </p>
+                  </div>
+                  <ArrowRight className="w-5 h-5 text-gray-400 group-hover:text-blue-600 group-hover:translate-x-1 transition-all flex-shrink-0" />
+                </div>
+
+                {/* Diagnosis */}
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
+                  <p className="text-sm text-gray-900 font-normal line-clamp-2">{patient.diagnosis !== 'Not available' ? patient.diagnosis : '-'}</p>
+                </div>
+
+                {/* Stage and Last Visit - Side by Side */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Stage</p>
+                    <p className="text-sm text-gray-900 font-normal">{patient.stage !== '-' ? patient.stage : '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Last Visit</p>
+                    <p className="text-sm text-gray-900 font-normal">{patient.lastVisit}</p>
+                  </div>
+                </div>
+
+                {/* Treatment */}
+                <div className="flex-grow">
+                  <p className="text-xs text-gray-500 mb-1">Current Treatment</p>
+                  <p className="text-sm text-gray-900 font-normal line-clamp-2" title={patient.currentTreatment}>
+                    {patient.currentTreatment !== 'Not available' ? patient.currentTreatment : '-'}
+                  </p>
+                </div>
+
+                {/* Last Visit */}
+                <div className="flex items-center justify-between bg-blue-50 rounded-lg px-4 py-3 border border-blue-200">
+                  <p className="text-xs text-blue-600 font-normal">Last Visit</p>
+                  <p className="text-sm text-gray-900 font-normal">{patient.nextAppt}</p>
+                </div>
               </div>
-            </div>
             ))}
           </div>
         )}
@@ -530,16 +426,26 @@ export function PatientListView({ onSelectPatient }: PatientListViewProps) {
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                <span className="text-gray-600">Critical: {displayPatients.filter(p => p.status === 'critical').length}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                <span className="text-gray-600">Active: {displayPatients.filter(p => p.status === 'active').length}</span>
-              </div>
-              <div className="flex items-center gap-2">
                 <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                <span className="text-gray-600">Stable: {displayPatients.filter(p => p.status === 'stable').length}</span>
+                <span className="text-gray-600">Positive: {displayPatients.filter(p => {
+                  const status = p.diseaseStatus?.toLowerCase() || '';
+                  return status.includes('complete response') || status.includes('partial response') ||
+                         status.includes('responding') || status.includes('remission') || status.includes('ned');
+                }).length}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-gray-500 rounded-full"></div>
+                <span className="text-gray-600">Stable: {displayPatients.filter(p => {
+                  const status = p.diseaseStatus?.toLowerCase() || '';
+                  return status.includes('stable') || status.includes('newly diagnosed');
+                }).length}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                <span className="text-gray-600">Negative: {displayPatients.filter(p => {
+                  const status = p.diseaseStatus?.toLowerCase() || '';
+                  return status.includes('progressive') || status.includes('recurrent') || status.includes('active disease');
+                }).length}</span>
               </div>
             </div>
             <p className="text-gray-500">Showing {displayPatients.length} patients</p>

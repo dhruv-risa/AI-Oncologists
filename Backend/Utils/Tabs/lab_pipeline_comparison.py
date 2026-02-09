@@ -49,7 +49,7 @@ extracted_instructions = (
     "Targets: "
     "- TUMOR MARKERS: CEA, NSE, proGRP, CYFRA 21-1. "
     "- CBC: WBC, Hemoglobin, Platelets, ANC (if missing, use 'Segs#' or 'Polys, Abs'). "
-    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin. "
+    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin (may also be labeled as 'Bilirubin' or 'Bili')."
 
     "CLINICAL INTERPRETATION: "
     "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40), Neutropenia (ANC <1.5)."
@@ -709,7 +709,8 @@ def process_individual_lab_results_gemini(mrn: str, verbose: bool = False) -> Di
         "individual_results": individual_results,
         "combined_data": combined_data,
         "metadata": metadata,
-        "validation_summary": validation_summary
+        "validation_summary": validation_summary,
+        "lab_documents": lab_documents  # Return lab documents for URL extraction in main.py
     }
 
 

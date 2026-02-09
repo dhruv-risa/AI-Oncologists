@@ -2,6 +2,7 @@ import { TestTube, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import { LabTrendChart } from '../LabTrendChart';
 import { useState, useMemo } from 'react';
 import { usePatient } from '../../contexts/PatientContext';
+import { calculateLabStatus } from '../../utils/labNormalRanges';
 
 export function LabsTab() {
   const { currentPatient } = usePatient();
@@ -33,6 +34,13 @@ export function LabsTab() {
       return [];
     }
 
+    // Log raw treatment data to verify dates
+    console.log('Raw treatment history data:', JSON.stringify(treatmentHistory.map(t => ({
+      drug: t.header?.primary_drug_name,
+      line: t.header?.line_number,
+      dates: t.dates
+    })), null, 2));
+
     const stageColors = [
       { color: 'bg-purple-200', borderColor: 'border-purple-400', textColor: 'text-purple-700' },
       { color: 'bg-blue-200', borderColor: 'border-blue-400', textColor: 'text-blue-700' },
@@ -43,15 +51,25 @@ export function LabsTab() {
 
     const stages = treatmentHistory.map((treatment: any, idx: number) => {
       const colorScheme = stageColors[idx % stageColors.length];
-      const lineLabel = treatment.header?.line_number || `Line ${idx + 1}`;
+      const lineNumber = treatment.header?.line_number;
       const drugName = treatment.header?.primary_drug_name || 'Treatment';
       const startDate = treatment.dates?.start_date || '';
       const endDate = treatment.dates?.end_date === 'Ongoing' ? new Date().toISOString().split('T')[0] : treatment.dates?.end_date || '';
 
+      // Format label based on whether this is a systemic therapy (has line number) or standalone local therapy
+      let label: string;
+      if (lineNumber !== null && lineNumber !== undefined) {
+        // Systemic therapy - show line number
+        label = `${lineNumber} - ${drugName}`;
+      } else {
+        // Standalone local therapy (WBRT, surgery) - show treatment name only without line number
+        label = drugName;
+      }
+
       return {
         start_date: startDate,
         end_date: endDate,
-        label: `${lineLabel} - ${drugName}`,
+        label: label,
         ...colorScheme
       };
     }).filter((stage: any) => stage.start_date && stage.end_date);
@@ -119,7 +137,16 @@ export function LabsTab() {
   const renderBiomarkerCard = (panel: any, name: string, displayName?: string) => {
     const biomarker = getBiomarker(panel, name);
     const current = biomarker.current || {};
-    const style = getStatusStyle(current.status);
+
+    // Check if value is measured
+    const valueIsMeasured = biomarker.has_data && isMeasured(current.value);
+
+    // Recalculate status based on predefined normal ranges instead of using extracted status
+    const calculatedStatus = calculateLabStatus(name, current.value);
+    const status = calculatedStatus || current.status || 'Normal';
+
+    // Use neutral style if not measured, otherwise use status-based style
+    const style = valueIsMeasured ? getStatusStyle(status) : { bg: 'bg-white', border: 'border-gray-200', text: 'text-gray-900', badge: 'bg-gray-100 text-gray-700' };
     const trendIcon = getTrendIcon(biomarker.trend_direction);
 
     return (
@@ -142,46 +169,23 @@ export function LabsTab() {
           {trendIcon}
         </div>
         <p className={`text-2xl ${style.text} mb-1`}>
-          {biomarker.has_data && isMeasured(current.value) ? formatValue(current.value) : 'Not measured'}
+          {valueIsMeasured ? formatValue(current.value) : 'Not measured'}
         </p>
         <p className={`text-xs ${style.text} mb-3`}>
           {biomarker.has_data && isMeasured(current.unit) ? current.unit : ''}
         </p>
-        <span className={`px-2.5 py-1 rounded-lg text-xs ${style.badge}`}>
-          {current.status || 'N/A'}
-        </span>
+        {valueIsMeasured && (
+          <span className={`px-2.5 py-1 rounded-lg text-xs ${style.badge}`}>
+            {status}
+          </span>
+        )}
       </button>
     );
   };
 
   return (
     <div className="bg-white border border-t-0 border-gray-200 rounded-b-lg shadow-sm p-6">
-      <div className="mb-8">
-        <div className="flex items-center gap-2 mb-5">
-          <TestTube className="w-5 h-5 text-blue-600" />
-          <h3 className="text-gray-900">Tumor Markers</h3>
-          {lastUpdated && <span className="text-xs text-gray-500">Latest: {lastUpdated}</span>}
-        </div>
-
-        <div className="grid grid-cols-4 gap-4">
-          {renderBiomarkerCard(tumorMarkers, 'CEA')}
-          {renderBiomarkerCard(tumorMarkers, 'NSE')}
-          {renderBiomarkerCard(tumorMarkers, 'proGRP')}
-          {renderBiomarkerCard(tumorMarkers, 'CYFRA_21_1', 'CYFRA 21-1')}
-        </div>
-      </div>
-
-      <div className="mb-8 pb-8 border-b border-gray-200">
-        <h3 className="text-gray-900 mb-4">{selectedLab} Trend</h3>
-        <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-lg p-5 border border-slate-200">
-          <LabTrendChart
-            labName={selectedLab}
-            biomarkerData={getBiomarker(tumorMarkers, selectedLab)}
-            treatmentStages={treatmentStages}
-          />
-        </div>
-      </div>
-
+      {/* CBC Section - First */}
       <div className="mb-8">
         <h3 className="text-gray-900 mb-4">Complete Blood Count</h3>
         <div className="grid grid-cols-4 gap-4">
@@ -203,6 +207,7 @@ export function LabsTab() {
         </div>
       </div>
 
+      {/* Metabolic Panel Section - Second */}
       <div className="mb-8">
         <h3 className="text-gray-900 mb-4">Metabolic Panel</h3>
         <div className="grid grid-cols-4 gap-4">
@@ -219,6 +224,33 @@ export function LabsTab() {
           <LabTrendChart
             labName={selectedMetabolicLab}
             biomarkerData={getBiomarker(metabolicPanel, selectedMetabolicLab)}
+            treatmentStages={treatmentStages}
+          />
+        </div>
+      </div>
+
+      {/* Tumor Markers Section - Third */}
+      <div className="mb-8">
+        <div className="flex items-center gap-2 mb-5">
+          <TestTube className="w-5 h-5 text-blue-600" />
+          <h3 className="text-gray-900">Tumor Markers</h3>
+          {lastUpdated && <span className="text-xs text-gray-500">Latest: {lastUpdated}</span>}
+        </div>
+
+        <div className="grid grid-cols-4 gap-4">
+          {renderBiomarkerCard(tumorMarkers, 'CEA')}
+          {renderBiomarkerCard(tumorMarkers, 'NSE')}
+          {renderBiomarkerCard(tumorMarkers, 'proGRP')}
+          {renderBiomarkerCard(tumorMarkers, 'CYFRA_21_1', 'CYFRA 21-1')}
+        </div>
+      </div>
+
+      <div className="mb-8 pb-8 border-b border-gray-200">
+        <h3 className="text-gray-900 mb-4">{selectedLab} Trend</h3>
+        <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-lg p-5 border border-slate-200">
+          <LabTrendChart
+            labName={selectedLab}
+            biomarkerData={getBiomarker(tumorMarkers, selectedLab)}
             treatmentStages={treatmentStages}
           />
         </div>

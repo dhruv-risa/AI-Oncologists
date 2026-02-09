@@ -227,6 +227,7 @@ def lab_tab_info(mrn: str, verbose: bool = True):
             'lab_results_count': int,
             'processed_documents': int,
             'lab_info': dict,  # Consolidated lab data in UI-ready format
+            'lab_reports': list,  # List of lab document URLs with metadata
             'metadata': dict,  # Processing metadata
             'validation_summary': dict,  # Validation statistics
             'error': str (if failed)
@@ -240,6 +241,7 @@ def lab_tab_info(mrn: str, verbose: bool = True):
         'lab_results_count': 0,
         'processed_documents': 0,
         'lab_info': None,
+        'lab_reports': [],
         'metadata': None,
         'error': None
     }
@@ -265,6 +267,19 @@ def lab_tab_info(mrn: str, verbose: bool = True):
         result['processed_documents'] = processing_result['metadata']['processed_documents']
         result['lab_info'] = processing_result['combined_data']
         result['metadata'] = processing_result['metadata']
+
+        # Format lab documents for Documents tab
+        if 'lab_documents' in processing_result and processing_result['lab_documents']:
+            result['lab_reports'] = [
+                {
+                    'url': doc.get('url'),  # FHIR URL (will need Drive upload for user access)
+                    'date': doc.get('date'),
+                    'document_type': 'Lab Results',
+                    'description': doc.get('description', 'Lab Results'),
+                    'document_id': doc.get('document_id')
+                }
+                for doc in processing_result['lab_documents']
+            ]
 
         # Include validation summary
         if 'validation_summary' in processing_result:
@@ -540,6 +555,21 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
 
         # Pass bytes directly instead of URL to avoid re-downloading
         result['genomic_info'] = extract_genomic_info(pdf_input=combined_pdf_bytes)
+
+        # Format genomics documents for Documents tab (genomic pathology reports only, not MD notes)
+        if genomic_pathology_docs:
+            result['genomics_reports'] = [
+                {
+                    'url': doc.get('url'),  # FHIR URL
+                    'date': doc.get('date'),
+                    'document_type': 'Genomic Report',
+                    'description': doc.get('description', 'Genomic Pathology Report'),
+                    'document_id': doc.get('document_id')
+                }
+                for doc in genomic_pathology_docs
+            ]
+        else:
+            result['genomics_reports'] = []
 
         if verbose:
             print("\n" + "="*70)

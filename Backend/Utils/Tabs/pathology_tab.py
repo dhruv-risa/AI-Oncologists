@@ -32,7 +32,10 @@ extracted_instructions = (
     "     * Subtext: Key actionable note (e.g., 'High-grade features noted' or 'Routine follow-up').\n\n"
     "2. DIAGNOSIS (The 'Truth'):\n"
     "   - Extract the FINAL DIAGNOSIS section. Do not include 'Clinical History' or 'Gross Description'.\n"
-    "   - formatting: Split the diagnosis into clean, distinct bullet points. Remove disclaimer footers.\n\n"
+    "   - CRITICAL: Use proper capitalization (not all caps). Ensure correct medical spelling (kappa not kapp).\n"
+    "   - LIMIT: Summarize into 5-7 KEY bullet points maximum. Group related findings together.\n"
+    "   - Focus on: Primary diagnosis, tumor characteristics, nodal status, key margins/invasion, and critical immunostains if mentioned.\n"
+    "   - Formatting: Return as a concise array of the most important findings only. Remove disclaimer footers.\n\n"
     "3. PROCEDURE & SITE:\n"
     "   - Procedure Type: Classify strictly as 'Surgical Resection' (lobectomy, wedge, mastectomy) OR 'Biopsy/FNA' (core needle, fluid cytology).\n"
     "   - Site: The specific anatomical origin (e.g., 'Upper Lobe, Right Lung').\n\n"
@@ -374,8 +377,9 @@ DETAILED EXTRACTION RULES & EXAMPLES
 
 3. DIAGNOSIS EXTRACTION
    Rule: Extract ONLY the FINAL DIAGNOSIS section. Exclude clinical history, gross description, and disclaimers
+   CRITICAL: Limit to 5-7 KEY bullet points by summarizing and grouping related findings
 
-   Format: Clean, distinct bullet points
+   Format: Concise bullet points focusing on most clinically significant information
 
    Example Input:
    "FINAL DIAGNOSIS:
@@ -383,15 +387,29 @@ DETAILED EXTRACTION RULES & EXAMPLES
       - Invasive adenocarcinoma, moderately differentiated
       - Tumor size: 2.5 cm
       - Margins negative for tumor
-   B. Hilar lymph nodes (3): No evidence of malignancy"
+      - Lymphovascular invasion present
+      - Visceral pleura invasion present
+   B. Hilar lymph nodes (3): No evidence of malignancy
+   C. Peribronchial lymph nodes (2): No evidence of malignancy
+   D. Subcarinal lymph nodes (1): No evidence of malignancy
 
-   Example Output:
+   IMMUNOHISTOCHEMISTRY:
+   - TTF-1: Positive
+   - Napsin A: Positive
+   - CK7: Positive
+   - PD-L1 (22C3): TPS 70%"
+
+   Example Output (Condensed to 5-7 points):
    [
-     "Right upper lobe, lung, wedge resection: Invasive adenocarcinoma, moderately differentiated",
-     "Tumor size: 2.5 cm",
+     "Right upper lobe lung, wedge resection: Invasive adenocarcinoma, moderately differentiated, 2.5 cm",
      "Margins negative for tumor",
-     "Hilar lymph nodes (3): No evidence of malignancy"
+     "Lymphovascular and visceral pleura invasion present",
+     "Hilar, peribronchial, and subcarinal lymph nodes negative for malignancy (6 total nodes examined)",
+     "Immunostains: TTF-1 positive, Napsin A positive, CK7 positive",
+     "PD-L1 (22C3) TPS 70%"
    ]
+
+   Note: Group related findings (e.g., multiple lymph node stations, multiple IHC markers) into single bullet points
 
 4. PROCEDURE CLASSIFICATION
    Rule: Classify strictly into TWO categories based on the procedure type

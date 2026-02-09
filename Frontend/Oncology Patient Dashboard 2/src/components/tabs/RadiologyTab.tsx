@@ -13,22 +13,7 @@ export function RadiologyTab() {
   // Get radiology reports from patient data
   const radiologyReports = currentPatient?.radiology_reports || [];
 
-  // Sort reports by date (most recent first)
-  const sortedReports = [...radiologyReports].sort((a, b) =>
-    new Date(b.date).getTime() - new Date(a.date).getTime()
-  );
-
-  const visibleReports = sortedReports.slice(0, 4);
-  const hiddenReports = sortedReports.slice(4);
-  const hasMore = sortedReports.length > 4;
-
-  const selectedReport = sortedReports[selectedReportIndex];
-
-  const handleSelectFromModal = (index: number) => {
-    setSelectedReportIndex(index);
-    setShowMoreModal(false);
-  };
-
+  // Helper functions
   const formatDate = (dateStr: string) => {
     try {
       const date = new Date(dateStr);
@@ -40,6 +25,33 @@ export function RadiologyTab() {
     } catch {
       return dateStr;
     }
+  };
+
+  // Get the study date from radiology report (use extracted study_date > file date)
+  const getReportDate = (report: RadiologyReportDetail) => {
+    // Try to get study_date from extracted radiology data
+    if (report.radiology_summary?.report_summary?.study_date) {
+      return report.radiology_summary.report_summary.study_date;
+    }
+
+    // Fall back to file date
+    return report.date;
+  };
+
+  // Sort reports by date (most recent first) - use study date from extraction
+  const sortedReports = [...radiologyReports].sort((a, b) =>
+    new Date(getReportDate(b)).getTime() - new Date(getReportDate(a)).getTime()
+  );
+
+  const visibleReports = sortedReports.slice(0, 4);
+  const hiddenReports = sortedReports.slice(4);
+  const hasMore = sortedReports.length > 4;
+
+  const selectedReport = sortedReports[selectedReportIndex];
+
+  const handleSelectFromModal = (index: number) => {
+    setSelectedReportIndex(index);
+    setShowMoreModal(false);
   };
 
   const getResponseBadge = (response?: string) => {
@@ -61,11 +73,102 @@ export function RadiologyTab() {
     return null;
   };
 
-  const formatValue = (value: string) => {
+  const formatValue = (value: string | undefined) => {
     if (!value || value === 'NA' || value === 'N/A') {
-      return 'Data not available';
+      return 'Not measured';
     }
     return value;
+  };
+
+  // Check if current value is valid (not NA, not incomplete)
+  const isValidCurrentValue = (value: string | undefined) => {
+    if (!value || value === 'NA' || value === 'N/A') {
+      return false;
+    }
+
+    const trimmedValue = value.trim();
+
+    // Check for incomplete dimensions like "4.12 x" or "4.12 x " (ends with 'x' followed by optional whitespace)
+    if (/x\s*$/i.test(trimmedValue)) {
+      return false;
+    }
+
+    // If it contains an 'x', it should be a complete two-dimension measurement (e.g., "4.1 x 2.3 cm")
+    if (trimmedValue.toLowerCase().includes('x')) {
+      // Must have pattern: number x number unit (e.g., "4.1 x 2.3 cm")
+      // Unit must be 2+ chars to avoid matching trailing 'x' as unit
+      const completeTwoDimPattern = /^\d+\.?\d*\s*x\s*\d+\.?\d*\s*[a-zA-Z]{2,}$/i;
+      if (!completeTwoDimPattern.test(trimmedValue)) {
+        return false;
+      }
+
+      // Extra validation: the unit should not be just "x"
+      const unitMatch = trimmedValue.match(/[a-zA-Z]+$/);
+      if (unitMatch && unitMatch[0].toLowerCase() === 'x') {
+        return false;
+      }
+    } else {
+      // Single dimension - must have pattern: number unit (e.g., "10.37 cm")
+      const singleDimPattern = /^\d+\.?\d*\s*[a-zA-Z]{2,}$/;
+      if (!singleDimPattern.test(trimmedValue)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  // Calculate current value from baseline and percentage change
+  const calculateCurrentValue = (baseline: string, changePercentage: string) => {
+    // Check if baseline and change are available
+    if (!baseline || baseline === 'NA' || baseline === 'N/A' ||
+        !changePercentage || changePercentage === 'NA' || changePercentage === 'N/A') {
+      return 'Not measured';
+    }
+
+    const changeNum = parseFloat(changePercentage.replace('%', ''));
+    if (isNaN(changeNum)) {
+      return 'Not measured';
+    }
+
+    // Extract unit from the END of the string (not the first letter match)
+    // This ensures we get "cm" not "x" for "4.1 x 2.3 cm"
+    const unitMatch = baseline.match(/[a-zA-Z]+$/);
+    const unit = unitMatch?.[0] || 'cm';
+
+    // Check if baseline has two dimensions (e.g., "4.1 x 2.3 cm")
+    const twoDimensionMatch = baseline.match(/(\d+\.?\d*)\s*x\s*(\d+\.?\d*)/i);
+
+    if (twoDimensionMatch) {
+      // Two dimensions found
+      const dim1 = parseFloat(twoDimensionMatch[1]);
+      const dim2 = parseFloat(twoDimensionMatch[2]);
+
+      if (isNaN(dim1) || isNaN(dim2)) {
+        return 'Not measured';
+      }
+
+      // Calculate both dimensions: current = baseline × (1 + change/100)
+      const currentDim1 = dim1 * (1 + changeNum / 100);
+      const currentDim2 = dim2 * (1 + changeNum / 100);
+
+      return `${currentDim1.toFixed(2)} x ${currentDim2.toFixed(2)} ${unit}`;
+    } else {
+      // Single dimension (e.g., "12.2 cm")
+      const singleDimMatch = baseline.match(/(\d+\.?\d*)/);
+      if (!singleDimMatch) {
+        return 'Not measured';
+      }
+
+      const baselineNum = parseFloat(singleDimMatch[1]);
+      if (isNaN(baselineNum)) {
+        return 'Not measured';
+      }
+
+      // Calculate: current = baseline × (1 + change/100)
+      const currentValue = baselineNum * (1 + changeNum / 100);
+      return `${currentValue.toFixed(2)} ${unit}`;
+    }
   };
 
   const getChangeColor = (changeStr: string) => {
@@ -118,6 +221,63 @@ export function RadiologyTab() {
       const fileId = fileIdMatch[1];
       const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
       window.open(downloadUrl, '_blank');
+    }
+  };
+
+  // Get treatment regimen name at the time of the radiology report
+  const getTreatmentAtDate = (reportDate: string) => {
+    const treatmentHistory = currentPatient?.treatment_tab_info_LOT?.treatment_history || [];
+
+    if (!reportDate || reportDate === 'NA') {
+      return 'Treatment info unavailable';
+    }
+
+    try {
+      const reportDateObj = new Date(reportDate);
+
+      // Sort treatments by start date to check from earliest to latest
+      const sortedTreatments = [...treatmentHistory].sort((a, b) => {
+        const dateA = a.dates?.start_date;
+        const dateB = b.dates?.start_date;
+        if (!dateA || dateA === 'NA') return 1;
+        if (!dateB || dateB === 'NA') return -1;
+        return new Date(dateA).getTime() - new Date(dateB).getTime();
+      });
+
+      // Find the treatment line that was active on the report date
+      for (const treatment of sortedTreatments) {
+        const startDate = treatment.dates?.start_date;
+        const endDate = treatment.dates?.end_date;
+
+        if (!startDate || startDate === 'NA') continue;
+
+        const treatmentStart = new Date(startDate);
+
+        // Check if report date is after treatment start
+        if (reportDateObj >= treatmentStart) {
+          // If treatment is ongoing or no end date, this is the active treatment
+          if (!endDate || endDate === 'Ongoing' || endDate === 'NA') {
+            return treatment.systemic_regimen || treatment.header?.primary_drug_name || 'Treatment name unavailable';
+          }
+
+          // If there's an end date, check if report is within range
+          const treatmentEnd = new Date(endDate);
+          if (reportDateObj <= treatmentEnd) {
+            return treatment.systemic_regimen || treatment.header?.primary_drug_name || 'Treatment name unavailable';
+          }
+        }
+      }
+
+      // If no match found, return the most recent treatment
+      if (sortedTreatments.length > 0) {
+        const lastTreatment = sortedTreatments[sortedTreatments.length - 1];
+        return lastTreatment.systemic_regimen || lastTreatment.header?.primary_drug_name || 'Treatment info unavailable';
+      }
+
+      return 'No treatment data';
+    } catch (e) {
+      console.error('Error matching treatment to date:', e);
+      return 'Treatment info unavailable';
     }
   };
 
@@ -182,7 +342,7 @@ export function RadiologyTab() {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 mb-2">{formatDate(report.date)}</p>
+                  <p className="text-xs text-gray-500 mb-2">{formatDate(getReportDate(report))}</p>
 
                   {/* Action buttons */}
                   <div className="flex items-center gap-1">
@@ -201,7 +361,7 @@ export function RadiologyTab() {
                       title="Download document"
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDownloadDocument(report.drive_url, `${report.description}_${formatDate(report.date)}.pdf`);
+                        handleDownloadDocument(report.drive_url, `${report.description}_${formatDate(getReportDate(report))}.pdf`);
                       }}
                     >
                       <Download className="w-3 h-3" />
@@ -244,7 +404,7 @@ export function RadiologyTab() {
                 <FileText className="w-4 h-4 text-gray-400" />
                 <h3 className="text-gray-900">Report summary</h3>
                 <span className="text-xs text-gray-500">
-                  {selectedReport.description} - {formatDate(selectedReport.date)}
+                  {selectedReport.description} - {formatDate(getReportDate(selectedReport))}
                 </span>
               </div>
               <button
@@ -266,9 +426,7 @@ export function RadiologyTab() {
                   />
                   <DataField
                     label="Study date"
-                    value={formatValue(selectedReport.radiology_summary.report_summary.study_date) !== 'Data not available'
-                      ? formatValue(selectedReport.radiology_summary.report_summary.study_date)
-                      : formatDate(selectedReport.date)}
+                    value={formatDate(getReportDate(selectedReport))}
                   />
                   <DataField
                     label="Overall response"
@@ -315,97 +473,113 @@ export function RadiologyTab() {
                         <thead className="bg-gray-50">
                           <tr>
                             <th className="px-3 py-2 text-left text-xs text-gray-600">Lesion</th>
-                            <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={2}>
-                              <div className="flex flex-col">
-                                <span className="font-semibold text-blue-700">
-                                  {recistData.column_headers.initial_diagnosis_label?.split(' ').slice(0, 2).join(' ') || 'Initial Diagnosis'}
-                                </span>
-                                <span className="text-xs text-gray-500 font-normal">
-                                  {recistData.column_headers.initial_diagnosis_label?.split(' ').slice(-2).join(' ') || ''}
-                                </span>
-                              </div>
-                            </th>
-                            <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={2}>
+                            <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={3}>
                               <div className="flex flex-col">
                                 <span className="font-semibold text-purple-700">
-                                  {recistData.column_headers.current_treatment_label?.split(' ').slice(0, 2).join(' ') || 'Current Treatment'}
+                                  Current Treatment ({getTreatmentAtDate(getReportDate(selectedReport))})
                                 </span>
                                 <span className="text-xs text-gray-500 font-normal">
-                                  {recistData.column_headers.current_treatment_label?.split(' ').slice(-2).join(' ') || ''}
+                                  {formatDate(getReportDate(selectedReport))}
                                 </span>
                               </div>
                             </th>
                           </tr>
                           <tr className="border-t border-gray-300">
                             <th className="px-3 py-2 text-left text-xs text-gray-600"></th>
-                            <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">Baseline</th>
-                            <th className="px-3 py-2 text-left text-xs text-gray-600">Change</th>
-                            <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">Baseline</th>
+                            <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">
+                              <div className="flex flex-col">
+                                <span>Baseline</span>
+                                <span className="text-xs text-gray-500 font-normal">(First study)</span>
+                              </div>
+                            </th>
+                            <th className="px-3 py-2 text-left text-xs text-gray-600">
+                              <div className="flex flex-col">
+                                <span>Current</span>
+                                <span className="text-xs text-gray-500 font-normal">(Current study)</span>
+                              </div>
+                            </th>
                             <th className="px-3 py-2 text-left text-xs text-gray-600">Change</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
                           {/* Lesion rows */}
-                          {recistData.lesions.map((lesion, idx) => (
-                            <tr key={idx}>
-                              <td className="px-3 py-2 text-gray-900">{lesion.lesion_name}</td>
-                              <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
-                                {formatValue(lesion.initial_diagnosis_data.baseline_val)}
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={getChangeColor(lesion.initial_diagnosis_data.change_percentage)}>
-                                  {formatValue(lesion.initial_diagnosis_data.change_percentage)}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
-                                {formatValue(lesion.current_treatment_data.baseline_val)}
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={getChangeColor(lesion.current_treatment_data.change_percentage)}>
-                                  {formatValue(lesion.current_treatment_data.change_percentage)}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                          {recistData.lesions.map((lesion, idx) => {
+                            // Try to use current_val if valid, otherwise calculate it
+                            const currentVal = lesion.current_treatment_data.current_val;
+                            const displayCurrentVal = isValidCurrentValue(currentVal)
+                              ? formatValue(currentVal)
+                              : calculateCurrentValue(
+                                  lesion.current_treatment_data.baseline_val,
+                                  lesion.current_treatment_data.change_percentage
+                                );
+
+                            return (
+                              <tr key={idx}>
+                                <td className="px-3 py-2 text-gray-900">{lesion.lesion_name}</td>
+                                <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
+                                  {formatValue(lesion.current_treatment_data.baseline_val)}
+                                </td>
+                                <td className="px-3 py-2 text-gray-600">
+                                  {displayCurrentVal}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span className={getChangeColor(lesion.current_treatment_data.change_percentage)}>
+                                    {formatValue(lesion.current_treatment_data.change_percentage)}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
 
                           {/* Sum row */}
-                          {recistData.sum_row && (
-                            <tr className="bg-gray-50 font-semibold">
-                              <td className="px-3 py-2 text-gray-900">
-                                {recistData.sum_row.lesion_name}
-                              </td>
-                              <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
-                                {formatValue(recistData.sum_row.initial_diagnosis_data.baseline_val)}
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={getChangeColor(recistData.sum_row.initial_diagnosis_data.change_percentage)}>
-                                  {formatValue(recistData.sum_row.initial_diagnosis_data.change_percentage)}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
-                                {formatValue(recistData.sum_row.current_treatment_data.baseline_val)}
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={getChangeColor(recistData.sum_row.current_treatment_data.change_percentage)}>
-                                  {formatValue(recistData.sum_row.current_treatment_data.change_percentage)}
-                                </span>
-                              </td>
-                            </tr>
-                          )}
+                          {recistData.sum_row && (() => {
+                            // Try to use current_val if valid, otherwise calculate it
+                            const currentVal = recistData.sum_row.current_treatment_data.current_val;
+                            const displayCurrentVal = isValidCurrentValue(currentVal)
+                              ? formatValue(currentVal)
+                              : calculateCurrentValue(
+                                  recistData.sum_row.current_treatment_data.baseline_val,
+                                  recistData.sum_row.current_treatment_data.change_percentage
+                                );
+
+                            // Check if all values are N/A or not quantifiable
+                            const baselineVal = formatValue(recistData.sum_row.current_treatment_data.baseline_val);
+                            const changeVal = formatValue(recistData.sum_row.current_treatment_data.change_percentage);
+
+                            const isNA = (val: string) => {
+                              const normalizedVal = val.toLowerCase().trim();
+                              return normalizedVal === 'not measured' ||
+                                     normalizedVal === 'n/a' ||
+                                     normalizedVal === 'na' ||
+                                     normalizedVal.includes('not quantifiable');
+                            };
+
+                            // Hide sum row if all values are N/A or not quantifiable
+                            if (isNA(baselineVal) && isNA(displayCurrentVal) && isNA(changeVal)) {
+                              return null;
+                            }
+
+                            return (
+                              <tr className="bg-gray-50 font-semibold">
+                                <td className="px-3 py-2 text-gray-900">
+                                  {recistData.sum_row.lesion_name}
+                                </td>
+                                <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
+                                  {baselineVal}
+                                </td>
+                                <td className="px-3 py-2 text-gray-900">
+                                  {displayCurrentVal}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span className={getChangeColor(recistData.sum_row.current_treatment_data.change_percentage)}>
+                                    {changeVal}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })()}
                         </tbody>
                       </table>
-                    </div>
-
-                    {/* Legend */}
-                    <div className="mt-3 flex items-center gap-4 text-xs text-gray-600">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-blue-50 border border-blue-300 rounded"></div>
-                        <span>Initial diagnosis baseline</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-purple-50 border border-purple-300 rounded"></div>
-                        <span>Current treatment baseline</span>
-                      </div>
                     </div>
                   </div>
                 );
@@ -482,7 +656,7 @@ export function RadiologyTab() {
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-gray-500">{formatDate(report.date)}</p>
+                        <p className="text-xs text-gray-500">{formatDate(getReportDate(report))}</p>
                       </div>
                     </button>
                   );

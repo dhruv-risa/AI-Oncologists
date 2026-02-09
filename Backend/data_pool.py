@@ -116,6 +116,75 @@ class DataPool:
             print(f"Error storing patient data: {e}")
             return False
 
+    def _normalize_timeline_dates(self, data: Dict) -> Dict:
+        """
+        Normalize vague date terms in timeline data (migration for cached data).
+
+        Converts:
+        - 'Late 2025' → 'December 2025'
+        - 'Early 2023' → 'January 2023'
+        - 'Late 2025 - Early 2026' → 'December 2025'
+        - etc.
+
+        Args:
+            data: Patient data dictionary
+
+        Returns:
+            Patient data with normalized dates
+        """
+        import re
+
+        def normalize_date_label(date_str):
+            """Normalize a single date label."""
+            if not date_str or not isinstance(date_str, str):
+                return date_str
+
+            date_lower = date_str.lower().strip()
+
+            # Handle "Current Status" - don't modify
+            if 'current' in date_lower:
+                return date_str
+
+            # Extract year from the string
+            year_match = re.search(r'\b(20\d{2})\b', date_str)
+            if not year_match:
+                return date_str  # Can't parse, return as-is
+
+            year = year_match.group(1)
+
+            # Handle vague date terms
+            if 'late' in date_lower and '-' in date_str and ('early' in date_lower or 'mid' in date_lower):
+                # "Late 2025 - Early 2026" → use the first year, late = December
+                return f'December {year}'
+            elif 'late' in date_lower:
+                # "Late 2025" → "December 2025"
+                return f'December {year}'
+            elif 'early' in date_lower:
+                # "Early 2023" → "January 2023"
+                return f'January {year}'
+            elif 'mid' in date_lower or 'middle' in date_lower:
+                # "Mid-2024" → "June 2024"
+                return f'June {year}'
+            elif 'end' in date_lower:
+                # "End 2024" → "December 2024"
+                return f'December {year}'
+            elif 'beginning' in date_lower or 'start' in date_lower:
+                # "Beginning 2023" → "January 2023"
+                return f'January {year}'
+
+            # If it's already in a good format, return as-is
+            return date_str
+
+        # Normalize diagnosis_evolution_timeline dates
+        if 'diagnosis_evolution_timeline' in data and isinstance(data['diagnosis_evolution_timeline'], dict):
+            timeline = data['diagnosis_evolution_timeline'].get('timeline', [])
+            if isinstance(timeline, list):
+                for event in timeline:
+                    if isinstance(event, dict) and 'date_label' in event:
+                        event['date_label'] = normalize_date_label(event['date_label'])
+
+        return data
+
     def get_patient_data(self, mrn: str) -> Optional[Dict]:
         """
         Retrieve patient data from the pool.
@@ -145,6 +214,10 @@ class DataPool:
             if result:
                 data = json.loads(result[0])
                 data['pool_updated_at'] = result[1]  # Add metadata about when it was stored
+
+                # Normalize timeline dates in cached data (migration for old data with vague dates)
+                data = self._normalize_timeline_dates(data)
+
                 return data
             return None
         except Exception as e:

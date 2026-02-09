@@ -40,7 +40,7 @@ extracted_instructions = (
     "Targets: "
     "- TUMOR MARKERS: CEA, NSE, proGRP, CYFRA 21-1. "
     "- CBC: WBC, Hemoglobin, Platelets, ANC (if missing, use 'Segs#' or 'Polys, Abs'). "
-    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin. "
+    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin (may also be labeled as 'Bilirubin' or 'Bili')."
 
     "CLINICAL INTERPRETATION: "
     "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40), Neutropenia (ANC <1.5)."
@@ -135,7 +135,7 @@ METABOLIC PANEL:
 - Creatinine
 - ALT (Alanine Aminotransferase)
 - AST (Aspartate Aminotransferase)
-- Total Bilirubin
+- Total Bilirubin (also look for "Bilirubin", "Bili", "T. Bili", "Total Bili")
 
 ========================
 CRITICAL EXTRACTION RULES
@@ -167,9 +167,25 @@ CRITICAL EXTRACTION RULES
    - If biomarker is not found in this report, still include it with null values
    - DO NOT guess or infer missing information
 
-6. SOURCE CONTEXT RULE
-   - Include brief context about where in the document the value was found
-   - Example: 'Lab Report Page 1 - CBC Panel', 'Page 2 - Tumor Markers'
+6. SOURCE CONTEXT RULE (CRITICAL FOR PRIORITIZATION)
+   - Include document type and location in the source_context field
+   - Document type MUST be one of these (in priority order):
+     * 'LAB_REPORT' - Official laboratory result reports (HIGHEST PRIORITY)
+     * 'LAB_PANEL' - Lab panel summaries with resulted dates
+     * 'LAB_SUMMARY' - Lab value summaries
+     * 'MD_NOTE' - Lab values mentioned in physician notes (LOWEST PRIORITY)
+   - Format: '<DOCUMENT_TYPE> - <location details>'
+   - Examples:
+     * 'LAB_REPORT - Page 1 CBC Panel'
+     * 'LAB_PANEL - Page 2 Comprehensive Metabolic Panel'
+     * 'MD_NOTE - Progress Note mentioning recent labs'
+   - This prioritization helps when multiple measurements exist for the same date
+
+7. BIOMARKER NAME VARIATIONS RULE
+   - Total Bilirubin may appear as: "Total Bilirubin", "Bilirubin", "Bili", "T. Bili", "Total Bili", "Bilirubin, Total"
+   - When you find ANY of these variations, extract it as "Total Bilirubin" in the output schema
+   - ANC may appear as: "ANC", "Absolute Neutrophil Count", "Segs#", "Polys, Abs", "Neutrophils, Absolute"
+   - Always map variations to the standardized names in the output schema
 
 ========================
 OUTPUT SCHEMA (STRICT)

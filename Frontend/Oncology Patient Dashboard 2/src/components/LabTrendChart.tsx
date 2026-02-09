@@ -1,5 +1,6 @@
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import React, { useMemo } from 'react';
+import { calculateLabStatus, getNormalLimitForChart, PREDEFINED_NORMAL_LIMITS } from '../utils/labNormalRanges';
 
 interface TrendDataPoint {
   date: string;
@@ -74,27 +75,10 @@ const getTailwindColor = (colorClass: string): string => {
   return colorMap[colorClass] || '#cccccc';
 };
 
-// Helper to extract normal limit from reference range
-const extractNormalLimit = (referenceRange: string | null, status: string | null): number | null => {
-  if (!referenceRange) return null;
-
-  // Try to extract upper limit for High status
-  if (status === 'High' || status === 'Elevated') {
-    const match = referenceRange.match(/(?:<=?|<)\s*(\d+\.?\d*)/);
-    if (match) return parseFloat(match[1]);
-  }
-
-  // Try to extract lower limit for Low status
-  if (status === 'Low') {
-    const match = referenceRange.match(/(?:>=?|>)\s*(\d+\.?\d*)/);
-    if (match) return parseFloat(match[1]);
-  }
-
-  // Try to extract upper limit from range format (e.g., "0.5-1.2")
-  const rangeMatch = referenceRange.match(/(\d+\.?\d*)\s*-\s*(\d+\.?\d*)/);
-  if (rangeMatch) return parseFloat(rangeMatch[2]);
-
-  return null;
+// Helper function to recalculate status based on predefined normal ranges
+const recalculateStatus = (value: number, labName: string): string => {
+  const status = calculateLabStatus(labName, value);
+  return status || 'Normal';
 };
 
 export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTrendChartProps) {
@@ -103,20 +87,23 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
     return <div className="text-sm text-gray-500">No trend data available for {labName}</div>;
   }
 
-  // Format trend data for the chart
+  // Format trend data for the chart and recalculate status based on predefined normal ranges
   const chartData = useMemo(() => {
     const data = biomarkerData.trend
       .filter(point => point.value != null && !isNaN(Number(point.value)))
-      .map(point => ({
-        date: formatDateForDisplay(point.date),
-        fullDate: point.date,
-        value: typeof point.value === 'number' ? point.value : parseFloat(point.value),
-        status: point.status
-      }))
+      .map(point => {
+        const value = typeof point.value === 'number' ? point.value : parseFloat(point.value);
+        return {
+          date: formatDateForDisplay(point.date),
+          fullDate: point.date,
+          value: value,
+          status: recalculateStatus(value, labName) // Recalculate status based on predefined limits
+        };
+      })
       .sort((a, b) => new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime());
 
     return data;
-  }, [biomarkerData.trend]);
+  }, [biomarkerData.trend, labName]);
 
   // If no valid chart data after filtering, show no data message
   if (chartData.length === 0) {
@@ -124,7 +111,10 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
   }
 
   const unit = biomarkerData.current.unit || '';
-  const normalLimit = extractNormalLimit(biomarkerData.current.reference_range, biomarkerData.current.status);
+
+  // Recalculate current status based on predefined normal ranges
+  const currentStatus = calculateLabStatus(labName, biomarkerData.current.value);
+  const normalLimit = getNormalLimitForChart(labName, currentStatus);
 
   // Calculate tick interval based on number of data points
   const tickInterval = useMemo(() => {
@@ -253,20 +243,12 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
       console.log(`[${labName}] Stage ${idx}: "${stage.label}" → Overlay from ${overlay.x1} to ${overlay.x2} (color: ${overlay.fillColor})`);
       overlays.push(overlay);
 
-      // Add tick marks for treatment start and end dates
+      // Add tick mark only for treatment start date
       tickMarks.push({
         date: chartData[x1Idx].date,
         label: `${stage.label} Start`,
         color: getTailwindColor(stage.borderColor)
       });
-
-      if (x1Idx !== x2Idx) {
-        tickMarks.push({
-          date: chartData[x2Idx].date,
-          label: `${stage.label} End`,
-          color: getTailwindColor(stage.borderColor)
-        });
-      }
     });
 
     console.log(`[${labName}] Total overlays created: ${overlays.length}`);
@@ -287,19 +269,56 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
           <div className="flex flex-wrap items-center gap-4">
             {treatmentStages.map((stage, idx) => {
               const formatDateShort = (dateStr: string) => {
+                // Check for invalid dates
+                if (!dateStr || dateStr === 'NA' || dateStr === 'N/A' || dateStr === 'null') {
+                  return null;
+                }
+
                 try {
+                  // Format as "DD MMM YYYY" to match treatment tab display
                   const date = new Date(dateStr);
-                  return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+                  // Check if date is valid
+                  if (isNaN(date.getTime())) {
+                    return null;
+                  }
+
+                  const day = date.getDate();
+                  const month = date.toLocaleDateString('en-US', { month: 'short' });
+                  const year = date.getFullYear();
+                  return `${day} ${month} ${year}`;
                 } catch {
-                  return dateStr;
+                  return null;
                 }
               };
+
+              // Format start and end dates
+              const formattedStart = formatDateShort(stage.start_date);
+              const formattedEnd = stage.end_date === new Date().toISOString().split('T')[0]
+                ? 'Ongoing'
+                : formatDateShort(stage.end_date);
+
+              // Determine date range text
+              let dateRangeText = '';
+              const showDateRange = formattedStart !== null || formattedEnd !== null;
+
+              if (showDateRange) {
+                // If start and end dates are the same, only show one date
+                if (formattedStart === formattedEnd && formattedStart !== null) {
+                  dateRangeText = `(${formattedStart})`;
+                } else {
+                  // Show full range
+                  dateRangeText = `(${formattedStart || ''} - ${formattedEnd || ''})`;
+                }
+              }
 
               return (
                 <div key={idx} className="flex items-center gap-1.5 text-xs">
                   <div className={`w-3 h-3 ${stage.color} border-2 ${stage.borderColor} rounded flex-shrink-0`}></div>
                   <span className={`font-medium ${stage.textColor}`}>{stage.label}</span>
-                  <span className="text-gray-500 text-[10px]">({formatDateShort(stage.start_date)} - {stage.end_date === new Date().toISOString().split('T')[0] ? 'Ongoing' : formatDateShort(stage.end_date)})</span>
+                  {showDateRange && (
+                    <span className="text-gray-500 text-[10px]">{dateRangeText}</span>
+                  )}
                 </div>
               );
             })}
@@ -309,53 +328,25 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
 
       <ResponsiveContainer width="100%" height={280}>
         <LineChart data={chartData} margin={{ top: 45, right: 20, bottom: 20, left: 20 }}>
-          {/* Test overlay - should show RED across first half of chart */}
-          <ReferenceArea
-            x1={chartData[0].date}
-            x2={chartData[Math.floor(chartData.length / 2)].date}
-            fill="#ff0000"
-            fillOpacity={0.3}
-            stroke="#ff0000"
-            strokeOpacity={1}
-            strokeWidth={2}
-            label="TEST OVERLAY"
-          />
-
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
 
-          {/* Treatment stage overlays - colored background regions */}
-          {treatmentOverlays.overlays.map((overlay: any, idx: number) => {
-            console.log(`Rendering overlay ${idx}:`, overlay.x1, '→', overlay.x2, overlay.fillColor);
-            return (
-              <ReferenceArea
-                key={`overlay-${idx}`}
-                x1={overlay.x1}
-                x2={overlay.x2}
-                fill={overlay.fillColor}
-                fillOpacity={0.85}
-                stroke={overlay.strokeColor}
-                strokeOpacity={1}
-                strokeWidth={4}
-                label={overlay.label}
-              />
-            );
-          })}
-
-          {/* Treatment start/end tick marks - vertical lines */}
+          {/* Treatment start tick marks - vertical lines with enhanced visibility */}
           {treatmentOverlays.tickMarks.map((tick, idx) => (
             <ReferenceLine
               key={`tick-${idx}`}
               x={tick.date}
               stroke={tick.color}
-              strokeWidth={3}
-              strokeDasharray="5 5"
+              strokeWidth={4}
+              strokeDasharray="8 4"
               label={{
                 value: tick.label,
                 position: 'top',
-                fontSize: 11,
+                fontSize: 12,
                 fill: tick.color,
-                fontWeight: 'bold'
+                fontWeight: 'bold',
+                offset: 10
               }}
+              isFront={true}
             />
           ))}
           <XAxis
@@ -374,11 +365,46 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
             content={({ active, payload }) => {
               if (active && payload && payload.length) {
                 const data = payload[0].payload;
+
+                // Get normal range for this biomarker
+                const normalRange = PREDEFINED_NORMAL_LIMITS[labName];
+
+                // Get status color based on recalculated status
+                const getStatusColor = (status: string) => {
+                  if (status === 'High') return 'text-red-600';
+                  if (status === 'Low') return 'text-amber-600';
+                  return 'text-green-600';
+                };
+
+                // Get status explanation with normal range bounds
+                const getStatusExplanation = (status: string) => {
+                  if (!normalRange) return null;
+
+                  if (status === 'High') {
+                    return `Above upper limit (>${normalRange.upper} ${unit})`;
+                  } else if (status === 'Low') {
+                    return `Below lower limit (<${normalRange.lower} ${unit})`;
+                  } else {
+                    return `Within normal range (${normalRange.lower}-${normalRange.upper} ${unit})`;
+                  }
+                };
+
                 return (
-                  <div className="bg-white p-2 border border-gray-300 rounded shadow-sm text-xs">
-                    <p className="font-semibold">{data.fullDate}</p>
-                    <p className="text-blue-600">Value: {data.value} {unit}</p>
-                    {data.status && <p className="text-gray-600">Status: {data.status}</p>}
+                  <div className="bg-white p-3 border-2 border-gray-300 rounded shadow-lg">
+                    <p className="font-semibold text-gray-800 mb-2 text-sm">{data.fullDate}</p>
+                    <p className="text-blue-600 font-semibold text-sm mb-1">
+                      Value: {data.value} {unit}
+                    </p>
+                    {data.status && (
+                      <>
+                        <p className={`font-bold text-sm ${getStatusColor(data.status)}`}>
+                          Status: {data.status}
+                        </p>
+                        <p className="text-gray-600 text-xs mt-1">
+                          {getStatusExplanation(data.status)}
+                        </p>
+                      </>
+                    )}
                   </div>
                 );
               }
@@ -386,12 +412,20 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
             }}
           />
 
-          {normalLimit && (
+          {normalLimit !== null && (
             <ReferenceLine
               y={normalLimit}
               stroke="#ef4444"
-              strokeDasharray="3 3"
-              label={{ value: 'Normal limit', fontSize: 10 }}
+              strokeDasharray="5 5"
+              strokeWidth={2}
+              label={{
+                value: `Normal limit: ${normalLimit}`,
+                fontSize: 10,
+                fill: '#ef4444',
+                fontWeight: 'bold',
+                position: 'insideTopRight',
+                offset: 10
+              }}
             />
           )}
           <Line

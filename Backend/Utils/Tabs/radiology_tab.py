@@ -98,7 +98,8 @@ description_imp_RECIST = {
                 },
                 "current_treatment_data": {
                     "baseline_val": "String - Measurement at start of current treatment (e.g., '3.2 cm')",
-                    "change_percentage": "String - Percentage change vs current (e.g., '-34%')"
+                    "current_val": "String - Current measurement on this study (e.g., '2.1 cm')",
+                    "change_percentage": "String - Percentage change from baseline to current (e.g., '-34%')"
                 }
             },
             "Extract ONE object per target lesion found."
@@ -111,7 +112,8 @@ description_imp_RECIST = {
             },
             "current_treatment_data": {
                 "baseline_val": "String - Total SOD at current treatment start (e.g., '7.4 cm')",
-                "change_percentage": "String - Total % change (e.g., '-28%')"
+                "current_val": "String - Current total SOD on this study (e.g., '5.3 cm')",
+                "change_percentage": "String - Total % change from baseline to current (e.g., '-28%')"
             }
         }
     },
@@ -475,10 +477,12 @@ DETAILED EXTRACTION RULES & EXAMPLES
      "lesion_name": "RUL mass",
      "initial_diagnosis_data": {{
        "baseline_val": "3.5 cm",
+       "current_val": "2.1 cm",
        "change_percentage": "-40%"
      }},
      "current_treatment_data": {{
        "baseline_val": "3.2 cm",
+       "current_val": "2.1 cm",
        "change_percentage": "-34%"
      }}
    }}
@@ -525,10 +529,12 @@ DETAILED EXTRACTION RULES & EXAMPLES
      "lesion_name": "Sum",
      "initial_diagnosis_data": {{
        "baseline_val": "8.1 cm",        // 3.5 + 2.8 + 1.8
+       "current_val": "5.3 cm",         // 2.1 + 1.9 + 1.3
        "change_percentage": "-35%"       // ((5.3 - 8.1) / 8.1) × 100
      }},
      "current_treatment_data": {{
        "baseline_val": "7.4 cm",         // 3.2 + 2.5 + 1.7
+       "current_val": "5.3 cm",          // 2.1 + 1.9 + 1.3
        "change_percentage": "-28%"       // ((5.3 - 7.4) / 7.4) × 100
      }}
    }}

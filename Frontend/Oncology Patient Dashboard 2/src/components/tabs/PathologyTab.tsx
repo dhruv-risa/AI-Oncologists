@@ -12,8 +12,52 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
   const [showMoreModal, setShowMoreModal] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Get the most relevant date from pathology report (surgery date > biopsy date > file date)
+  const getReportDate = (report: PathologyReportDetail) => {
+    const details = report.pathology_summary?.pathology_report?.details;
+
+    // Try surgery date first if it exists and is not "Not applicable"
+    if (details?.surgery_date && details.surgery_date !== 'Not applicable') {
+      return details.surgery_date;
+    }
+
+    // Try biopsy date next
+    if (details?.biopsy_date && details.biopsy_date !== 'Not applicable') {
+      return details.biopsy_date;
+    }
+
+    // Fall back to file date
+    return report.date;
+  };
+
   // Get pathology reports directly from patient data (already extracted during initial load)
-  const reports: PathologyReportDetail[] = patientData?.pathology_reports || [];
+  // Filter out genomic reports (report_type === 'GENOMIC_ALTERATIONS')
+  const rawReports: PathologyReportDetail[] = (patientData?.pathology_reports || []).filter(report => {
+    const reportType = report.pathology_summary?.report_type || report.report_type;
+    return reportType !== 'GENOMIC_ALTERATIONS';
+  });
+
+  // Sort reports by date (latest first)
+  const reports = [...rawReports].sort((a, b) => {
+    const dateA = getReportDate(a);
+    const dateB = getReportDate(b);
+
+    // Parse dates for comparison
+    const parseDateString = (dateStr: string) => {
+      if (!dateStr) return new Date(0);
+      try {
+        return new Date(dateStr);
+      } catch {
+        return new Date(0);
+      }
+    };
+
+    const parsedA = parseDateString(dateA);
+    const parsedB = parseDateString(dateB);
+
+    // Sort descending (latest first)
+    return parsedB.getTime() - parsedA.getTime();
+  });
 
   const visibleReports = reports.slice(0, 4);
   const hiddenReports = reports.slice(4);
@@ -86,7 +130,10 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
                   {report.pathology_summary?.pathology_report?.header?.report_id || report.document_id}
                 </p>
                 <p className="text-xs text-gray-600 mb-1.5">{report.description || report.document_type}</p>
-                <p className="text-xs text-gray-500">{formatDate(report.date)}</p>
+                {/* Hide date for NO_TEST_PERFORMED reports */}
+                {(report.pathology_summary?.report_type !== 'NO_TEST_PERFORMED' && report.report_type !== 'NO_TEST_PERFORMED') && (
+                  <p className="text-xs text-gray-500">{formatDate(getReportDate(report))}</p>
+                )}
 
                 {/* Action buttons */}
                 <div className="flex items-center gap-1 mt-2">
@@ -140,14 +187,106 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
 
       {/* Main Content */}
       <div className="flex-1 bg-white rounded-lg border border-gray-200 p-6">
-        {!currentReport?.pathology_summary?.pathology_report || !currentReport?.pathology_markers ? (
-          <div className="text-center py-12">
-            <p className="text-red-600 mb-2">Failed to extract pathology details</p>
-            <p className="text-gray-500 text-sm">
-              {currentReport?.extraction_error || 'Pathology data not available'}
-            </p>
-          </div>
-        ) : (
+        {(() => {
+          // Check for special report types first
+          const reportType = currentReport?.pathology_summary?.report_type || currentReport?.report_type;
+          const classification = currentReport?.pathology_summary?.classification || currentReport?.classification;
+
+          // Case 1: GENOMIC_ALTERATIONS - report contains genomic data
+          if (reportType === 'GENOMIC_ALTERATIONS') {
+            return (
+              <div className="py-12 max-w-3xl mx-auto">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="flex items-center justify-center w-12 h-12 bg-gray-100 rounded-lg">
+                    <Microscope className="w-6 h-6 text-gray-700" />
+                  </div>
+                  <h3 className="text-xl font-medium text-gray-900">Genomic Report Detected</h3>
+                </div>
+
+                <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                  <p className="text-sm text-gray-900 leading-relaxed mb-3">
+                    This report contains genomic alterations data and should be viewed in the <span className="font-medium">Genomics tab</span>.
+                  </p>
+                  {classification?.reasoning && (
+                    <>
+                      <p className="text-sm text-gray-700 leading-relaxed">
+                        {classification.reasoning}
+                      </p>
+                      {classification.key_indicators && classification.key_indicators.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <p className="text-xs text-gray-600 font-medium mb-2">Key phrases found in report:</p>
+                          <div className="flex flex-wrap gap-2">
+                            {classification.key_indicators.map((indicator: string, idx: number) => (
+                              <span key={idx} className="px-2 py-1 bg-white border border-gray-300 text-gray-900 rounded text-xs">
+                                {indicator}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          // Case 2: NO_TEST_PERFORMED - report indicates no test was conducted
+          if (reportType === 'NO_TEST_PERFORMED') {
+            return (
+              <div className="py-12 max-w-3xl mx-auto">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="flex items-center justify-center w-12 h-12 bg-gray-100 rounded-lg">
+                    <FileText className="w-6 h-6 text-gray-700" />
+                  </div>
+                  <h3 className="text-xl font-medium text-gray-900">No Test Performed</h3>
+                </div>
+
+                {classification?.reasoning && (
+                  <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                    <p className="text-sm text-gray-900 leading-relaxed">
+                      {classification.reasoning}
+                    </p>
+                    {classification.key_indicators && classification.key_indicators.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-200">
+                        <p className="text-xs text-gray-600 font-medium mb-2">Key phrases found in report:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {classification.key_indicators.map((indicator: string, idx: number) => (
+                            <span key={idx} className="px-2 py-1 bg-white border border-gray-300 text-gray-900 rounded text-xs">
+                              {indicator}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          // Case 3: Regular pathology report but extraction failed
+          if (!currentReport?.pathology_summary?.pathology_report || !currentReport?.pathology_markers) {
+            return (
+              <div className="py-12 max-w-3xl mx-auto">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="flex items-center justify-center w-12 h-12 bg-gray-100 rounded-lg">
+                    <FileText className="w-6 h-6 text-gray-700" />
+                  </div>
+                  <h3 className="text-xl font-medium text-gray-900">Failed to Extract Pathology Details</h3>
+                </div>
+
+                <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                  <p className="text-sm text-gray-900 leading-relaxed">
+                    {currentReport?.extraction_error || 'Pathology data could not be extracted from this report'}
+                  </p>
+                </div>
+              </div>
+            );
+          }
+
+          // Case 4: Valid pathology report with data
+          return (
           /* Report details */
           <div>
             <div className="flex items-center justify-between mb-4">
@@ -323,7 +462,8 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
               )}
             </div>
           </div>
-        )}
+          );
+        })()}
 
       </div>
 
@@ -352,7 +492,10 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
                       {report.pathology_summary?.pathology_report?.header?.report_id || report.document_id}
                     </p>
                     <p className="text-xs text-gray-600">{report.description || report.document_type}</p>
-                    <p className="text-xs text-gray-500 mt-1">{formatDate(report.date)}</p>
+                    {/* Hide date for NO_TEST_PERFORMED reports */}
+                    {(report.pathology_summary?.report_type !== 'NO_TEST_PERFORMED' && report.report_type !== 'NO_TEST_PERFORMED') && (
+                      <p className="text-xs text-gray-500 mt-1">{formatDate(getReportDate(report))}</p>
+                    )}
                   </div>
                 </button>
               ))}

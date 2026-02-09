@@ -11,11 +11,134 @@ NEW ARCHITECTURE (Post-Refactor):
 from typing import Dict, List, Any
 from datetime import datetime
 import json
+import time
+import random
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
 # Initialize Vertex AI
 vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+
+
+def exponential_retry(
+    func,
+    max_retries: int = 5,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0,
+    exponential_base: float = 2.0,
+    jitter: bool = True
+):
+    """
+    Execute a function with exponential backoff retry logic.
+
+    This is particularly useful for handling transient failures like rate limits (429),
+    network timeouts, or temporary service unavailability.
+
+    Args:
+        func: The function to execute (should be a callable with no arguments)
+        max_retries: Maximum number of retry attempts (default: 5)
+        base_delay: Initial delay in seconds before first retry (default: 1.0)
+        max_delay: Maximum delay in seconds between retries (default: 60.0)
+        exponential_base: Base for exponential calculation (default: 2.0)
+        jitter: Add random jitter to prevent thundering herd (default: True)
+
+    Returns:
+        The result of the function call if successful
+
+    Raises:
+        The last exception encountered if all retries are exhausted
+
+    Example:
+        wait_time = base_delay * (exponential_base ^ attempt) + random_jitter
+        - Attempt 1: 1s + jitter
+        - Attempt 2: 2s + jitter
+        - Attempt 3: 4s + jitter
+        - Attempt 4: 8s + jitter
+        - Attempt 5: 16s + jitter
+    """
+    last_exception = None
+
+    for attempt in range(max_retries + 1):  # +1 because first attempt is not a retry
+        try:
+            # Execute the function
+            return func()
+
+        except Exception as e:
+            last_exception = e
+            error_str = str(e)
+
+            # Check if this is a retryable error
+            is_rate_limit = "429" in error_str or "Resource exhausted" in error_str
+            is_timeout = "timeout" in error_str.lower()
+            is_connection_error = "connection" in error_str.lower()
+
+            # If not retryable or we've exhausted retries, raise immediately
+            if not (is_rate_limit or is_timeout or is_connection_error):
+                print(f"❌ Non-retryable error: {error_str}")
+                raise
+
+            if attempt >= max_retries:
+                print(f"❌ Max retries ({max_retries}) exhausted")
+                raise
+
+            # Calculate delay with exponential backoff
+            delay = min(base_delay * (exponential_base ** attempt), max_delay)
+
+            # Add jitter (random value between 0 and 25% of delay)
+            if jitter:
+                jitter_amount = delay * 0.25 * random.random()
+                delay += jitter_amount
+
+            print(f"⚠️  Attempt {attempt + 1} failed: {error_str}")
+            print(f"⏳ Retrying in {delay:.1f} seconds... ({max_retries - attempt} retries remaining)")
+
+            time.sleep(delay)
+
+    # This should never be reached, but just in case
+    raise last_exception
+
+
+def normalize_date(date_str: str) -> str:
+    """
+    Normalize various date formats to YYYY-MM-DD format.
+
+    Args:
+        date_str: Date string in various formats
+
+    Returns:
+        Normalized date string in YYYY-MM-DD format, or original string if parsing fails
+    """
+    if not date_str or not isinstance(date_str, str):
+        return date_str
+
+    date_str = date_str.strip()
+
+    # Already in YYYY-MM-DD format
+    if len(date_str) == 10 and date_str[4] == '-' and date_str[7] == '-':
+        return date_str
+
+    # Try different date format patterns
+    date_formats = [
+        "%Y-%m-%dT%H:%M:%S.%f",  # ISO format with milliseconds
+        "%Y-%m-%dT%H:%M:%S",     # ISO format with time
+        "%B %d, %Y",             # December 25, 2025
+        "%b %d, %Y",             # Dec 25, 2025
+        "%m/%d/%Y",              # 12/25/2025
+        "%d/%m/%Y",              # 25/12/2025
+        "%Y/%m/%d",              # 2025/12/25
+        "%d-%b-%Y",              # 25-Dec-2025
+        "%Y-%m-%d",              # 2025-12-25 (explicit)
+    ]
+
+    for fmt in date_formats:
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, AttributeError):
+            continue
+
+    # If no format matches, return original
+    return date_str
 
 
 def is_empty_biomarker(biomarker_data: Dict) -> bool:
@@ -35,22 +158,61 @@ def is_empty_biomarker(biomarker_data: Dict) -> bool:
     return is_value_empty
 
 
+def get_source_priority(source_context: str) -> int:
+    """
+    Determine priority of a data source. Lower number = higher priority.
+
+    Args:
+        source_context: Source context string from extraction
+
+    Returns:
+        Priority score (0-3, where 0 is highest priority)
+    """
+    if not source_context:
+        return 99  # Unknown source - lowest priority
+
+    source_upper = str(source_context).upper()
+
+    # Check for document type markers
+    if 'LAB_REPORT' in source_upper:
+        return 0  # Highest priority - official lab reports
+    elif 'LAB_PANEL' in source_upper:
+        return 1  # High priority - lab panel summaries
+    elif 'LAB_SUMMARY' in source_upper:
+        return 2  # Medium priority - lab summaries
+    elif 'MD_NOTE' in source_upper:
+        return 3  # Low priority - mentioned in notes
+    else:
+        # Fallback: try to infer from content
+        if 'LAB' in source_upper and ('REPORT' in source_upper or 'RESULT' in source_upper):
+            return 0
+        elif 'PANEL' in source_upper:
+            return 1
+        elif 'NOTE' in source_upper or 'PROGRESS' in source_upper:
+            return 3
+        else:
+            return 2  # Default to medium priority
+
+
 def build_trend_from_values(biomarker_entries: List[Dict]) -> List[Dict]:
     """
     Build trend array from multiple single-document extractions.
 
-    NEW APPROACH: Each entry represents one document's extraction.
-    We aggregate them into a chronological trend.
+    When multiple measurements exist for the same date, prioritize by source quality:
+    1. LAB_REPORT (official lab reports) - highest priority
+    2. LAB_PANEL (lab panel summaries)
+    3. LAB_SUMMARY (lab summaries)
+    4. MD_NOTE (physician notes) - lowest priority
 
     Args:
         biomarker_entries: List of biomarker dictionaries from different documents
                           Each is a flat dict: {value, unit, date, status, reference_range, source_context}
 
     Returns:
-        Sorted trend array with deduplicated entries
+        Sorted trend array with deduplicated entries (one entry per date, prioritized by source)
     """
     trend = []
-    seen = {}  # Track (date, value) combinations to avoid duplicates
+    seen_by_date = {}  # Track by normalized date to ensure one measurement per date
 
     for entry in biomarker_entries:
         # Handle both old nested format and new flat format
@@ -63,24 +225,60 @@ def build_trend_from_values(biomarker_entries: List[Dict]) -> List[Dict]:
 
         date = data.get("date")
         value = data.get("value")
+        source_context = data.get("source_context", "")
 
         # Skip entries with NA or missing date/value
         if date == "NA" or value == "NA" or date is None or value is None or value == "":
             continue
 
-        key = (date, value)
+        # Normalize date to YYYY-MM-DD format for proper deduplication
+        normalized_date = normalize_date(date)
 
-        # If we haven't seen this combination, or this entry has more info, keep it
-        if key not in seen or len(str(data.get("source_context", ""))) > len(str(seen[key].get("source_context", ""))):
-            seen[key] = {
-                "date": date,
-                "value": value,
+        # Convert value to float for comparison
+        try:
+            numeric_value = float(value)
+        except (ValueError, TypeError):
+            continue
+
+        # If we already have a measurement for this normalized date, keep the higher priority source
+        if normalized_date in seen_by_date:
+            existing = seen_by_date[normalized_date]
+            existing_priority = get_source_priority(existing.get("source_context", ""))
+            new_priority = get_source_priority(source_context)
+
+            # Keep the entry from the higher priority source (lower number = higher priority)
+            if new_priority < existing_priority:
+                # New source is higher priority - replace existing
+                seen_by_date[normalized_date] = {
+                    "date": normalized_date,
+                    "value": numeric_value,
+                    "status": data.get("status"),
+                    "source_context": source_context
+                }
+            elif new_priority == existing_priority:
+                # Same priority - if values are very close, keep the one with more complete data
+                existing_value = float(existing["value"])
+                if abs(numeric_value - existing_value) / max(existing_value, numeric_value) < 0.01:
+                    # Values are essentially the same - keep the one with more complete status/reference info
+                    if data.get("status") and not existing.get("status"):
+                        seen_by_date[normalized_date] = {
+                            "date": normalized_date,
+                            "value": numeric_value,
+                            "status": data.get("status"),
+                            "source_context": source_context
+                        }
+            # Otherwise keep existing (it's higher priority or has same priority with different value)
+        else:
+            # First time seeing this normalized date - add it
+            seen_by_date[normalized_date] = {
+                "date": normalized_date,
+                "value": numeric_value,
                 "status": data.get("status"),
-                "source_context": data.get("source_context", "")
+                "source_context": source_context
             }
 
     # Convert to list and sort by date (oldest to newest)
-    trend = list(seen.values())
+    trend = list(seen_by_date.values())
     trend.sort(key=lambda x: x.get("date", ""))
 
     return trend
@@ -183,13 +381,13 @@ def consolidate_panel(panel_list: List[Dict], biomarker_names: List[str]) -> Dic
 
 def consolidate_clinical_interpretations(interpretations_list: List[List[str]]) -> List[str]:
     """
-    Consolidate clinical interpretations, removing duplicates.
+    Consolidate clinical interpretations, removing duplicates and similar variations.
 
     Args:
         interpretations_list: List of interpretation arrays from different batches
 
     Returns:
-        Unique interpretations list
+        Unique interpretations list with duplicates and near-duplicates removed
     """
     all_interpretations = []
     for interps in interpretations_list:
@@ -197,7 +395,9 @@ def consolidate_clinical_interpretations(interpretations_list: List[List[str]]) 
 
     # Remove duplicates while preserving order
     seen = set()
+    seen_normalized = set()  # Track normalized versions to catch variations
     unique_interpretations = []
+
     for interp in all_interpretations:
         # Clean up the interpretation text
         clean_interp = interp.strip()
@@ -206,9 +406,16 @@ def consolidate_clinical_interpretations(interpretations_list: List[List[str]]) 
         if not clean_interp:
             continue
 
-        # Skip if we've seen this before (case-insensitive)
-        if clean_interp.lower() not in seen:
+        # Normalize text to catch similar variations
+        # Remove extra whitespace, punctuation variations, and normalize case
+        import re
+        normalized = re.sub(r'[^\w\s]', '', clean_interp.lower())
+        normalized = ' '.join(normalized.split())  # Normalize whitespace
+
+        # Skip if we've seen this exact interpretation or a very similar version
+        if clean_interp.lower() not in seen and normalized not in seen_normalized:
             seen.add(clean_interp.lower())
+            seen_normalized.add(normalized)
             unique_interpretations.append(clean_interp)
 
     return unique_interpretations
@@ -271,7 +478,7 @@ INSTRUCTIONS:
 5. Focus on actionable findings relevant to cancer treatment
 6. Include trend information where relevant
 7. Keep each point concise (1-2 sentences maximum)
-8. Return EXACTLY 4-6 most important clinical points (prioritize critical findings)
+8. Return MAXIMUM 5 most important clinical points (prioritize critical findings)
 
 PRIORITIZATION RULES:
 - Critical abnormalities (e.g., severe anemia, neutropenia requiring intervention) = Highest priority
@@ -280,21 +487,39 @@ PRIORITIZATION RULES:
 - Stable or normal findings with clinical context = Include only if space permits
 
 OUTPUT FORMAT:
-Return a JSON array of exactly 4-6 strings, each string being one refined clinical interpretation.
+Return a JSON array of maximum 5 strings, each string being one refined clinical interpretation.
 Example:
 ["Mild anemia (Hgb 10.2 g/dL) with stable trend over 3 measurements, consider transfusion if symptomatic", "Hepatic transaminases mildly elevated (ALT 58 U/L, AST 52 U/L) consistent with drug-induced liver injury, recommend monitoring", "Preserved bone marrow function (WBC 6.8 K/uL, ANC 3.8 K/uL, Platelets 185 K/uL) - safe to continue chemotherapy", "Renal function normal (Creatinine 0.9 mg/dL) - no dose adjustments required"]
 
 Return ONLY the JSON array, no other text."""
 
     try:
+        # Add initial delay to avoid rate limit issues when called after other Gemini API calls
+        print("⏳ Waiting 4 seconds before AI refinement to avoid rate limits...")
+        time.sleep(4)
+
         model = GenerativeModel("gemini-2.0-flash-exp")
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.3,
-                "top_p": 0.95,
-                "max_output_tokens": 1024
-            }
+
+        # Define the API call as a lambda function for exponential retry
+        def make_api_call():
+            return model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.3,
+                    "top_p": 0.95,
+                    "max_output_tokens": 1024
+                }
+            )
+
+        # Execute with exponential retry (handles 429 rate limits automatically)
+        print("🔄 Calling Gemini API with exponential retry protection...")
+        response = exponential_retry(
+            func=make_api_call,
+            max_retries=5,
+            base_delay=2.0,
+            max_delay=60.0,
+            exponential_base=2.0,
+            jitter=True
         )
 
         response_text = response.text.strip()
@@ -311,15 +536,35 @@ Return ONLY the JSON array, no other text."""
         refined_interpretations = json.loads(response_text)
 
         if isinstance(refined_interpretations, list) and all(isinstance(item, str) for item in refined_interpretations):
-            # Validate count (should be 4-6 points)
-            count = len(refined_interpretations)
-            if count < 4 or count > 6:
-                print(f"⚠️ AI returned {count} points (expected 4-6), trimming/keeping as is")
-                if count > 6:
-                    refined_interpretations = refined_interpretations[:6]  # Keep top 6
-                # If less than 4, keep what we have
+            # Remove any duplicates or near-duplicates from AI output
+            import re
+            seen = set()
+            seen_normalized = set()
+            deduplicated = []
 
-            print(f"✅ AI refinement successful: {len(refined_interpretations)} interpretations")
+            for interp in refined_interpretations:
+                clean_interp = interp.strip()
+                if not clean_interp:
+                    continue
+
+                # Normalize to catch variations
+                normalized = re.sub(r'[^\w\s]', '', clean_interp.lower())
+                normalized = ' '.join(normalized.split())
+
+                if clean_interp.lower() not in seen and normalized not in seen_normalized:
+                    seen.add(clean_interp.lower())
+                    seen_normalized.add(normalized)
+                    deduplicated.append(clean_interp)
+
+            refined_interpretations = deduplicated
+
+            # Validate count (should be maximum 5 points)
+            count = len(refined_interpretations)
+            if count > 5:
+                print(f"⚠️ AI returned {count} unique points (expected maximum 5), trimming to 5")
+                refined_interpretations = refined_interpretations[:5]  # Keep top 5
+
+            print(f"✅ AI refinement successful: {len(refined_interpretations)} unique interpretations")
             return refined_interpretations
         else:
             print(f"⚠️ AI refinement returned invalid format, using raw interpretations")

@@ -42,31 +42,37 @@ export interface TreatmentHistoryItem {
     end_date: string;
     display_text: string;
   };
-  regimen_details: {
+  systemic_regimen?: string | null;
+  local_therapy?: string | null;
+  regimen_details?: {
     display_name: string;
   };
-  cycles_data: {
+  cycles_data?: {
     completed: string;
     planned: string;
     display_text: string;
   };
-  toxicities: Array<{
+  toxicities?: Array<{
     grade: string;
     name: string;
     display_tag: string;
   }>;
-  outcome: {
+  outcome?: {
     response_tag: string;
     details: string;
   };
-  reason_for_discontinuation: string;
+  reason_for_discontinuation?: string;
 }
 
 export interface TimelineEvent {
   date_display: string;
-  title: string;
-  subtitle: string;
-  event_type: string;
+  systemic_regimen?: string | null;
+  local_therapy?: string | null;
+  details?: string;
+  event_type?: string;
+  // Legacy fields (kept for backward compatibility)
+  title?: string;
+  subtitle?: string;
 }
 
 export interface DiagnosisTimelineItem {
@@ -74,7 +80,16 @@ export interface DiagnosisTimelineItem {
   stage_header: string;
   tnm_status: string;
   disease_status: string;
-  regimen: string;
+  regimen?: string;
+  systemic_regimen?: string | null;
+  local_therapy?: string | null;
+  relapse_info?: {
+    is_relapse: boolean;
+    relapse_pattern?: string;
+    comparison_to_initial?: string;
+    remission_duration?: string;
+    relapse_detected_by?: string;
+  };
   toxicities: Array<{
     effect: string;
     grade: string;
@@ -153,10 +168,13 @@ export interface LabInfo {
 }
 
 export interface Document {
-  type: string;
+  type?: string;
   date: string;
   url: string;
   file_id?: string;
+  description?: string;
+  document_id?: string;
+  document_type?: string;
 }
 
 export interface PathologySummary {
@@ -207,9 +225,16 @@ export interface PathologyReportDetail {
   document_type: string;
   description: string;
   document_id: string;
-  pathology_summary: PathologySummary | null;
+  pathology_summary: PathologySummary | any | null; // Can be PathologySummary or special report type object
   pathology_markers: PathologyMarkers | null;
   extraction_error?: string;
+  report_type?: string; // GENOMIC_ALTERATIONS, NO_TEST_PERFORMED, or TYPICAL_PATHOLOGY
+  classification?: {
+    category: string;
+    confidence: string;
+    reasoning: string;
+    key_indicators: string[];
+  };
 }
 
 export interface PathologyDetailsResponse {
@@ -234,10 +259,12 @@ export interface RecistLesion {
   lesion_name: string;
   initial_diagnosis_data: {
     baseline_val: string;
+    current_val?: string;
     change_percentage: string;
   };
   current_treatment_data: {
     baseline_val: string;
+    current_val?: string;
     change_percentage: string;
   };
 }
@@ -252,10 +279,12 @@ export interface RecistMeasurements {
     lesion_name: string;
     initial_diagnosis_data: {
       baseline_val: string;
+      current_val?: string;
       change_percentage: string;
     };
     current_treatment_data: {
       baseline_val: string;
+      current_val?: string;
       change_percentage: string;
     };
   };
@@ -346,20 +375,23 @@ export interface PatientData {
   diagnosis_footer: {
     duration_since_diagnosis: string;
     duration_since_progression: string;
+    duration_since_relapse?: string;
     reference_dates: {
         initial_diagnosis_date: string;
         last_progression_date: string | null;
+        last_relapse_date?: string | null;
     }
   };
   lab_results?: LabResult[];
   lab_info?: LabInfo;
+  lab_reports?: Document[]; // Individual lab result documents with URLs for Documents tab
   pathology_summary?: any;
   pathology_markers?: any;
   pathology_reports?: PathologyReportDetail[]; // Individual pathology reports with extracted details
   genomics_data?: GenomicMutation[];
   genomic_info?: GenomicInfo; // Genomic data from backend (detected_driver_mutations, immunotherapy_markers, additional_genomic_alterations)
   radiology_reports?: RadiologyReportDetail[]; // Individual radiology reports with extracted details
-  genomics_reports?: Document[];
+  genomics_reports?: Document[]; // Individual genomics documents with URLs for Documents tab
 }
 
 export interface CachedPatient {
@@ -547,6 +579,18 @@ class ApiService {
   async clearCache(): Promise<ApiResponse<any>> {
     return this.request<ApiResponse<any>>('/api/pool/clear', {
       method: 'DELETE',
+    });
+  }
+
+  // Demo mode endpoints (bypasses FHIR API, uses demo_data.json)
+  async getDemoMRNs(): Promise<{ success: boolean; mrns: string[]; count: number }> {
+    return this.request<{ success: boolean; mrns: string[]; count: number }>('/api/demo/mrns');
+  }
+
+  async getDemoPatientData(mrn: string): Promise<any> {
+    return this.request<any>('/api/demo/patient', {
+      method: 'POST',
+      body: JSON.stringify({ mrn }),
     });
   }
 }
