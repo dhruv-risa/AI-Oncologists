@@ -14,6 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.background import BackgroundScheduler
+import threading
 
 # Add project root to path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
@@ -47,15 +50,68 @@ from Backend.Utils.logger_config import setup_logger
 # Setup logger
 logger = setup_logger(__name__)
 
+# Initialize data pool (before lifespan so it's available at startup)
+data_pool = get_data_pool()
+
+_sync_lock = threading.Lock()
+
+def scheduled_trial_sync():
+    """Nightly job: sync trials and recompute eligibility for all patients."""
+    if not _sync_lock.acquire(blocking=False):
+        logger.info("Sync already in progress - skipping")
+        return
+    try:
+        logger.info("SCHEDULED TRIAL SYNC STARTING")
+        from Backend.Utils.batch_eligibility_engine import get_batch_engine
+        engine = get_batch_engine()
+        result = engine.full_sync(max_trials_per_query=50, limit_trials=100)
+        logger.info(f"Scheduled sync completed: {result}")
+    except Exception as e:
+        logger.error(f"Scheduled trial sync failed: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        _sync_lock.release()
+
+@asynccontextmanager
+async def lifespan(app):
+    # STARTUP
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        scheduled_trial_sync,
+        trigger='cron',
+        hour=2, minute=0,
+        id='nightly_trial_sync',
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("APScheduler started - nightly trial sync at 2:00 AM")
+
+    # Initial sync if cache is empty
+    try:
+        trials_count = data_pool.get_trials_count()
+        if trials_count == 0:
+            logger.info("Trials cache empty - triggering initial sync in background")
+            thread = threading.Thread(target=scheduled_trial_sync, daemon=True)
+            thread.start()
+        else:
+            logger.info(f"Trials cache has {trials_count} trials - skipping initial sync")
+    except Exception as e:
+        logger.error(f"Error checking trials cache on startup: {e}")
+
+    yield
+
+    # SHUTDOWN
+    scheduler.shutdown(wait=False)
+    logger.info("APScheduler shut down")
+
 # Initialize FastAPI app
 app = FastAPI(
     title="AI Oncologist API",
     description="API for extracting and managing oncology patient data from EMR",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
-
-# Initialize data pool
-data_pool = get_data_pool()
 
 # Configure CORS
 app.add_middleware(
@@ -1366,14 +1422,17 @@ async def sync_trials_batch(
             # First sync trials
             sync_result = engine.sync_trials(max_per_query=max_per_query)
 
-            # Then auto-compute eligibility for all existing patients
-            if auto_compute_eligibility:
+            # Then auto-compute eligibility ONLY for newly added trials
+            new_nct_ids = sync_result.get("new_nct_ids", [])
+            if auto_compute_eligibility and new_nct_ids:
                 patients = data_pool.list_all_patients()
                 if patients:
                     print(f"\n{'='*60}")
-                    print(f"AUTO-COMPUTING ELIGIBILITY for {len(patients)} existing patients")
+                    print(f"AUTO-COMPUTING ELIGIBILITY for {len(patients)} patients against {len(new_nct_ids)} NEW trials")
                     print(f"{'='*60}")
-                    engine.compute_eligibility_matrix(limit_trials=100)
+                    engine.compute_eligibility_matrix(trial_nct_ids=new_nct_ids)
+            elif not new_nct_ids:
+                print("No new trials added - skipping eligibility computation")
 
             return sync_result
 
@@ -1532,12 +1591,32 @@ async def get_sync_status():
 
         trials_count = data_pool.get_trials_count()
 
+        # Check scheduler status
+        scheduler_active = False
+        next_scheduled_sync = None
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler
+            # The scheduler is created in lifespan; check via the job store
+            # We look for any running BackgroundScheduler instances
+            import gc
+            for obj in gc.get_referrers(BackgroundScheduler):
+                if isinstance(obj, BackgroundScheduler) and obj.running:
+                    scheduler_active = True
+                    job = obj.get_job('nightly_trial_sync')
+                    if job and job.next_run_time:
+                        next_scheduled_sync = job.next_run_time.isoformat()
+                    break
+        except Exception:
+            pass
+
         return {
             "success": True,
             "trials_in_cache": trials_count,
             "last_trials_sync": last_trials_sync,
             "last_eligibility_computation": last_eligibility_sync,
-            "last_full_sync": last_full_sync
+            "last_full_sync": last_full_sync,
+            "scheduler_active": scheduler_active,
+            "next_scheduled_sync": next_scheduled_sync
         }
     except Exception as e:
         raise HTTPException(
