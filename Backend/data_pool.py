@@ -559,7 +559,7 @@ class DataPool:
             print(f"Error storing trial: {e}")
             return False
 
-    def bulk_store_trials(self, trials: List[Dict]) -> int:
+    def bulk_store_trials(self, trials: List[Dict]) -> Dict:
         """
         Store multiple trials in bulk.
 
@@ -567,12 +567,24 @@ class DataPool:
             trials: List of trial dictionaries
 
         Returns:
-            Number of successfully stored trials
+            Dict with 'stored_count' and 'new_nct_ids' (trials not previously in cache)
         """
         stored_count = 0
+        new_nct_ids = []
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+
+            # Get existing NCT IDs to identify truly new trials
+            incoming_ids = [t.get("nct_id") for t in trials if t.get("nct_id")]
+            existing_ids = set()
+            if incoming_ids:
+                placeholders = ",".join("?" * len(incoming_ids))
+                cursor.execute(
+                    f"SELECT nct_id FROM trials_cache WHERE nct_id IN ({placeholders})",
+                    incoming_ids,
+                )
+                existing_ids = {row[0] for row in cursor.fetchall()}
 
             for trial in trials:
                 try:
@@ -615,6 +627,8 @@ class DataPool:
                         trial.get("is_active", True)
                     ))
                     stored_count += 1
+                    if nct_id not in existing_ids:
+                        new_nct_ids.append(nct_id)
                 except Exception as e:
                     print(f"Error storing trial {trial.get('nct_id', 'unknown')}: {e}")
                     continue
@@ -624,7 +638,7 @@ class DataPool:
         except Exception as e:
             print(f"Error in bulk store trials: {e}")
 
-        return stored_count
+        return {"stored_count": stored_count, "new_nct_ids": new_nct_ids}
 
     def get_trial(self, nct_id: str) -> Optional[Dict]:
         """

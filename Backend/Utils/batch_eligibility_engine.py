@@ -120,12 +120,14 @@ class BatchEligibilityEngine:
         print(f"Storing {len(all_trials)} trials in cache...")
 
         trials_list = list(all_trials.values())
-        stored = self.data_pool.bulk_store_trials(trials_list)
+        store_result = self.data_pool.bulk_store_trials(trials_list)
+        stored = store_result["stored_count"]
+        new_nct_ids = store_result["new_nct_ids"]
 
         # Log the sync
         self.data_pool.log_sync(
             sync_type="trials_fetch",
-            new_trials=stored,
+            new_trials=len(new_nct_ids),
             status="completed"
         )
 
@@ -133,10 +135,12 @@ class BatchEligibilityEngine:
             "queries_processed": len(search_queries),
             "total_trials_fetched": len(all_trials),
             "trials_stored": stored,
+            "new_trials": len(new_nct_ids),
+            "new_nct_ids": new_nct_ids,
             "timestamp": datetime.now().isoformat()
         }
 
-        print(f"\nSync complete: {stored} trials stored")
+        print(f"\nSync complete: {stored} trials stored ({len(new_nct_ids)} new)")
         return summary
 
     def _normalize_trial_data(self, trial: Dict) -> Dict:
@@ -436,13 +440,28 @@ class BatchEligibilityEngine:
         # Step 1: Sync trials
         trials_summary = self.sync_trials(max_per_query=max_trials_per_query)
 
-        # Step 2: Compute eligibility
-        eligibility_summary = self.compute_eligibility_matrix(limit_trials=limit_trials)
+        # Step 2: Compute eligibility ONLY for newly added trials
+        new_nct_ids = trials_summary.get("new_nct_ids", [])
+        if new_nct_ids:
+            print(f"\n{len(new_nct_ids)} new trials found - computing eligibility for all patients")
+            eligibility_summary = self.compute_eligibility_matrix(
+                trial_nct_ids=new_nct_ids
+            )
+        else:
+            print("\nNo new trials - skipping eligibility computation")
+            eligibility_summary = {
+                "patients_processed": 0,
+                "trials_processed": 0,
+                "eligibility_computed": 0,
+                "errors": 0,
+                "elapsed_seconds": 0,
+                "skipped": "no_new_trials"
+            }
 
         # Log full sync
         self.data_pool.log_sync(
             sync_type="full_sync",
-            new_trials=trials_summary.get("trials_stored", 0),
+            new_trials=len(new_nct_ids),
             eligibility_computed=eligibility_summary.get("eligibility_computed", 0),
             status="completed"
         )

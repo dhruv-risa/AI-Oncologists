@@ -558,20 +558,20 @@ def check_disease_match(trial: Dict, patient_data: Dict) -> Tuple[bool, str]:
     """
     # Get patient's cancer/disease type
     diagnosis = patient_data.get("diagnosis", {})
-    patient_cancer = diagnosis.get("cancer_type", "").lower()
-    patient_histology = diagnosis.get("histology", "").lower()
+    patient_cancer = (diagnosis.get("cancer_type") or "").lower()
+    patient_histology = (diagnosis.get("histology") or "").lower()
 
     if not patient_cancer and not patient_histology:
         return True, "No patient diagnosis available for comparison"
 
     # Get trial's target conditions
-    trial_conditions = trial.get("conditions", trial.get("cancer_types", []))
-    trial_title = trial.get("title", "").lower()
-    trial_summary = trial.get("brief_summary", "").lower()
+    trial_conditions = trial.get("conditions", trial.get("cancer_types", [])) or []
+    trial_title = (trial.get("title") or "").lower()
+    trial_summary = (trial.get("brief_summary") or "").lower()
 
     # Combine all trial condition text for matching
     trial_text = " ".join([
-        " ".join(trial_conditions) if trial_conditions else "",
+        " ".join(str(c) for c in trial_conditions if c) if trial_conditions else "",
         trial_title,
         trial_summary
     ]).lower()
@@ -719,7 +719,7 @@ def pre_filter_trial(trial: Dict, patient_data: Dict) -> Tuple[bool, str]:
 
     if patient_ecog is not None:
         # Check eligibility criteria for ECOG requirements
-        criteria_text = trial.get("eligibility_criteria_text", "").lower()
+        criteria_text = (trial.get("eligibility_criteria_text") or "").lower()
 
         # Common patterns: "ECOG 0-1", "ECOG ≤ 2", "ECOG performance status 0, 1, or 2"
         ecog_patterns = [
