@@ -9,8 +9,8 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from Backend.Utils.Tabs.llmparser import llmresponsedetailed
-from Backend.Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
+from Utils.Tabs.llmparser import llmresponsedetailed
+from Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -257,7 +257,7 @@ Only the JSON object.
     logger.info("🤖 Requesting genomic data extraction from Vertex AI Gemini...")
 
     # Initialize model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")

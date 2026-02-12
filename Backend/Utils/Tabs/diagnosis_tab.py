@@ -97,28 +97,48 @@ def extract_diagnosis_header_with_gemini(pdf_input):
     "3. CURRENT STAGING: Find the MOST RECENT or CURRENT staging information. This reflects the latest disease status. Look for terms like 'current', 'most recent', 'latest', 'now shows', 'restaging', 'progression', or dates closest to the document date. "
     "IMPORTANT: If no recent staging is explicitly mentioned (no restaging, no progression noted, no new TNM documented), this likely means the staging has NOT changed from initial diagnosis. In this case, use the same values from initial_staging for current_staging."
     "4. STAGING FORMAT - CRITICAL RULES:"
-    " - TNM field: Extract ONLY the TNM classification (e.g., 'T2a N1 M0', 'T2aN1M0', 'T4N3M1c'). "
+    " - TNM field: Extract ONLY the TNM classification (e.g., 'cT2a cN1 cM0', 'T2aN1M0', 'cT4N3M1c'). "
     "   Include all components (T, N, M) with their modifiers (prefixes like c/p/y and suffixes like letters/numbers). "
+    "   CRITICAL: Use lowercase 'c' for clinical staging (cT, cN, cM) and lowercase 'p' for pathological staging (pT, pN, pM)."
     "   ABSOLUTELY NEVER use the word 'Stage' in the TNM field. TNM is separate from stage."
+    "   EXAMPLES: 'cT3 cN0 cM1b', 'pT2a pN1 cM0', 'ypT0 ypN0 cM0' (correct) vs 'CT3, CN0, CM1b' (WRONG - uppercase C)"
     " - AJCC Stage field: Extract the full AJCC stage designation and it MUST start with 'Stage' (e.g., 'Stage IIB', 'Stage IVA', 'Stage 4', 'Stage IIIA'). "
     "   Include stage type prefix if mentioned (e.g., 'Pathologic Stage IIIA', 'Clinical Stage IB'). "
     "   The word 'Stage' is MANDATORY in this field."
-    "5. DISEASE STATUS: Extract metastatic status (whether cancer has spread), specific metastatic sites (organs/locations), and recurrence/disease progression status."
+    ""
+    "5. AJCC 8TH EDITION STAGING VALIDATION - CRITICAL FOR ACCURACY:"
+    " If the document provides TNM classification, you MUST verify the AJCC stage matches the TNM according to these rules:"
+    ""
+    " FOR LUNG CANCER (NSCLC & SCLC) - M1 Subcategories are CRITICAL:"
+    "  • M1a = Separate tumor nodule(s) in contralateral lobe OR pleural/pericardial nodules OR malignant pleural/pericardial effusion → Stage IVA"
+    "  • M1b = SINGLE extrathoracic metastasis (one distant organ site) → Stage IVB"
+    "  • M1c = MULTIPLE extrathoracic metastases (multiple organs or multiple lesions in one organ) → Stage IVB"
+    ""
+    " EXAMPLES FOR VERIFICATION:"
+    "  ✓ CORRECT: TNM 'cT3 cN0 cM1b' with metastasis to porta hepatis (single extrathoracic site) → Stage IVB"
+    "  ✗ WRONG: TNM 'cT3 cN0 cM1b' → Stage IVA (M1b is ALWAYS Stage IVB, not IVA)"
+    "  ✓ CORRECT: TNM 'cT2a cN2 cM1a' with contralateral lung nodules → Stage IVA"
+    "  ✓ CORRECT: TNM 'cT4 cN3 cM1c' with liver + bone metastases → Stage IVB"
+    "  ✓ CORRECT: TNM 'cT1a cN0 cM0' → Stage IA"
+    ""
+    " If you find a mismatch between documented TNM and documented stage (e.g., document says 'cM1b Stage IVA'), use the CORRECT stage based on TNM (Stage IVB in this case)."
+    ""
+    "6. DISEASE STATUS: Extract metastatic status (whether cancer has spread), specific metastatic sites (organs/locations), and recurrence/disease progression status."
     "CRITICAL METASTATIC SITE RULE: DO NOT list the primary organ as a metastatic site. The primary cancer site is where the cancer originated - metastatic sites are where it has SPREAD TO."
     "Examples:"
     "  - Lung cancer patient: Valid metastatic sites = Brain, Bone, Liver, Adrenal, Pleura, Contralateral lung. INVALID: 'Lung' alone."
     "  - Breast cancer patient: Valid metastatic sites = Bone, Lung, Liver, Brain. INVALID: 'Breast'."
     "  - Prostate cancer patient: Valid metastatic sites = Bone, Lymph nodes, Lung. INVALID: 'Prostate'."
-    "6. KEY RULES:"
+    "7. KEY RULES:"
     " - If only one staging is documented in the record, use it for both initial_staging and current_staging."
     " - If no recent/current staging is mentioned and there's no documentation of progression or restaging, assume no change occurred and copy initial_staging to current_staging."
     " - If the document mentions 'upstaging', 'downstaging', 'progression', or 'restaging', ensure these changes are reflected in current_staging with the new TNM/stage values."
     " - Return null for any field not explicitly stated in the document."
-    " - Do not infer or calculate values."
+    " - Do not infer or calculate values EXCEPT when correcting obvious TNM-stage mismatches as described in rule 5."
     "- If some data is not available then mention that the data is not available and do not hallucinate."
     ""
     "CRITICAL FORMATTING ENFORCEMENT:"
-    "- TNM fields: NEVER EVER include 'Stage' - only T, N, M components"
+    "- TNM fields: NEVER EVER include 'Stage' - only T, N, M components with lowercase prefixes (cT, cN, cM, pT, pN, pM)"
     "- AJCC stage fields: ALWAYS start with 'Stage'"
     "Return as a JSON object matching the schema below.")
 
@@ -129,16 +149,16 @@ def extract_diagnosis_header_with_gemini(pdf_input):
     "histologic_type": "The specific microscopic cell type or histologic subtype documented in the medical record. This can come from pathology report, biopsy, or clinical diagnosis. Examples: 'Adenocarcinoma', 'Squamous cell carcinoma', 'Epithelioid', 'Sarcomatoid', 'Biphasic', 'Small cell', 'Large cell', 'Ductal carcinoma', 'Invasive lobular'. If the histology is embedded in the primary diagnosis (e.g., 'Epithelioid Pleural Mesothelioma'), extract just the histologic subtype ('Epithelioid'). Look in: Pathology section, Biopsy results, Diagnosis section, Clinical notes. Return null ONLY if absolutely no histologic information exists in the document.",
     "diagnosis_date": "The exact date when the cancer was first diagnosed in MM/DD/YYYY format (e.g., '03/15/2023'). Look for phrases like 'diagnosed on', 'initial diagnosis date', or earliest mention of cancer detection.",
     "initial_staging": {
-    "tnm": "CRITICAL: TNM classification ONLY - this field must NEVER contain the word 'Stage'. This is the T-N-M tumor staging classification at initial/first diagnosis. Format examples: 'T2a N1 M0', 'T2aN1M0', 'pT1c pN2 cM0', 'cT3 cN2 cM1a', 'T4 N3 M1c'. Include prefixes (c=clinical, p=pathologic, y=post-therapy) and all modifiers. The TNM field describes Tumor size (T), Node involvement (N), and Metastasis status (M). DO NOT put stage groups like 'Stage IV' or 'Stage IIB' here - those go in ajcc_stage field. If staging evolved from initial diagnosis, this should capture the EARLIEST TNM mentioned. IMPORTANT: Return null (not empty string, not 'N/A', not 'NA') if no TNM classification is documented in the record.",
-    "ajcc_stage": "CRITICAL: AJCC stage group ONLY - this field must ALWAYS contain the word 'Stage'. Format examples: 'Stage IIB', 'Stage IIIA', 'Pathologic Stage IB', 'Clinical Stage IVA', 'Stage IV'. Include the stage type prefix (Clinical/Pathologic) if documented. This is the baseline stage when cancer was first found. DO NOT put TNM classifications like 'T2 N1 M0' here - those go in the tnm field."
+    "tnm": "CRITICAL: TNM classification ONLY - this field must NEVER contain the word 'Stage'. This is the T-N-M tumor staging classification at initial/first diagnosis. IMPORTANT FORMATTING: Use lowercase 'c' for clinical (cT, cN, cM) and lowercase 'p' for pathological (pT, pN, pM). Format examples: 'cT2a cN1 cM0', 'pT1c pN2 cM0', 'cT3 cN2 cM1a', 'cT4 cN3 cM1c'. WRONG format: 'CT3, CN0, CM1b' (uppercase letters). Include prefixes (c=clinical, p=pathologic, y=post-therapy) and all modifiers. The TNM field describes Tumor size (T), Node involvement (N), and Metastasis status (M). DO NOT put stage groups like 'Stage IV' or 'Stage IIB' here - those go in ajcc_stage field. If staging evolved from initial diagnosis, this should capture the EARLIEST TNM mentioned. IMPORTANT: Return null (not empty string, not 'N/A', not 'NA') if no TNM classification is documented in the record.",
+    "ajcc_stage": "CRITICAL: AJCC stage group ONLY - this field must ALWAYS contain the word 'Stage'. Format examples: 'Stage IIB', 'Stage IIIA', 'Pathologic Stage IB', 'Clinical Stage IVA', 'Stage IV'. Include the stage type prefix (Clinical/Pathologic) if documented. This is the baseline stage when cancer was first found. VERIFY ACCURACY: For lung cancer with M1 disease, check M1 subcategory: M1a→Stage IVA, M1b or M1c→Stage IVB. If documented stage conflicts with TNM (e.g., 'cM1b' with 'Stage IVA'), use the CORRECT stage per AJCC guidelines (Stage IVB). DO NOT put TNM classifications like 'T2 N1 M0' here - those go in the tnm field."
     },
     "current_staging": {
-    "tnm": "CRITICAL: TNM classification ONLY - this field must NEVER contain the word 'Stage'. This is the MOST RECENT T-N-M tumor staging classification. Format examples: 'T4 N3 M1c', 'cT2 cN1 cM1b', 'ypT0 ypN0 cM0', 'T2a N1 M0'. This should reflect the latest disease extent documented in the record with Tumor size (T), Node involvement (N), and Metastasis status (M). Look for most recent imaging, pathology, or clinical assessment. DO NOT put stage groups like 'Stage IV' or 'Stage IIA' here - those go in ajcc_stage field. Return null if no TNM is documented.",
-    "ajcc_stage": "CRITICAL: AJCC stage group ONLY - this field must ALWAYS contain the word 'Stage'. This is the MOST RECENT stage group. Format examples: 'Stage IVB', 'Stage IIA', 'Clinical Stage IVA', 'Pathologic Stage IIIB', 'Stage IV'. This is the current or latest stage reflecting current disease status. If disease progressed or responded to treatment, this should show the updated stage. DO NOT put TNM classifications like 'T4 N3 M1c' here - those go in the tnm field."
+    "tnm": "CRITICAL: TNM classification ONLY - this field must NEVER contain the word 'Stage'. This is the MOST RECENT T-N-M tumor staging classification. IMPORTANT FORMATTING: Use lowercase 'c' for clinical (cT, cN, cM) and lowercase 'p' for pathological (pT, pN, pM). Format examples: 'cT4 cN3 cM1c', 'cT2 cN1 cM1b', 'ypT0 ypN0 cM0', 'cT2a cN1 cM0'. WRONG format: 'CT3, CN0, CM1b' (uppercase letters). This should reflect the latest disease extent documented in the record with Tumor size (T), Node involvement (N), and Metastasis status (M). Look for most recent imaging, pathology, or clinical assessment. DO NOT put stage groups like 'Stage IV' or 'Stage IIA' here - those go in ajcc_stage field. Return null if no TNM is documented.",
+    "ajcc_stage": "CRITICAL: AJCC stage group ONLY - this field must ALWAYS contain the word 'Stage'. This is the MOST RECENT stage group. Format examples: 'Stage IVB', 'Stage IIA', 'Clinical Stage IVA', 'Pathologic Stage IIIB', 'Stage IV'. This is the current or latest stage reflecting current disease status. If disease progressed or responded to treatment, this should show the updated stage. VERIFY ACCURACY: For lung cancer with M1 disease, check M1 subcategory: M1a→Stage IVA, M1b or M1c→Stage IVB. Example: Patient with cT3 cN0 cM1b and liver metastasis must be Stage IVB (not Stage IVA). If documented stage conflicts with TNM, use the CORRECT stage per AJCC guidelines. DO NOT put TNM classifications like 'T4 N3 M1c' here - those go in the tnm field."
     },
     "metastatic_status": "Clear statement of metastatic spread. Examples: 'Yes - Active metastases', 'No metastatic disease', 'Metastatic', 'Limited stage', 'Extensive stage', 'M0 - No distant metastasis'. This indicates if cancer has spread beyond the primary site.",
     "metastatic_sites": "Array of specific anatomical sites where metastases are present. CRITICAL RULES: (1) If metastatic_status indicates metastasis but NO specific sites are documented, return ['Sites not specified in report']. (2) If specific metastatic sites are documented, list them (e.g., ['Brain', 'Liver', 'Bone'], ['Bone', 'Lymph nodes']). (3) If NO metastasis (M0 or 'No metastatic disease'), return empty array []. (4) CRITICAL: DO NOT list the primary organ as a metastatic site. For example, if primary cancer is lung cancer, do NOT include 'Lung' as a metastatic site unless it's specifically 'Contralateral lung' (opposite lung from primary). For lung cancer, valid metastatic sites include: Brain, Bone, Liver, Adrenal glands, Contralateral lung, Pleura, etc. - but NOT just 'Lung'. Similarly, for breast cancer, do NOT list 'Breast' as a metastatic site. Never return null.",
-    "recurrence_status": "Current disease behavior or progression state. Examples: 'Initial diagnosis - no prior cancer history', 'Progressive disease', 'Stable disease', 'Recurrent disease', 'Complete response', 'Partial response', 'Local recurrence', 'Distant recurrence'. This describes the disease trajectory."
+    "recurrence_status": "Current disease behavior or progression state. MUST align with RECIST evaluation and imaging findings. Examples: 'Initial diagnosis - no prior cancer history', 'Progressive disease', 'Stable disease', 'Recurrent disease', 'Complete response', 'Partial response', 'Local recurrence', 'Distant recurrence'. If RECIST criteria are mentioned, ensure this field matches the RECIST assessment (e.g., if RECIST shows progressive disease, use 'Progressive disease' not 'Partial response'). This describes the disease trajectory based on objective measurements."
     }
     GEMINI_PROMPT = f"""
     {extraction_instruction}
@@ -160,7 +180,7 @@ def extract_diagnosis_header_with_gemini(pdf_input):
     logger.info("🤖 Generating diagnosis header extraction with Vertex AI Gemini...")
 
     # Initialize the model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
@@ -312,7 +332,32 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
     - systemic_regimen: 'No data' or null or blank
     - Reason: You failed to perform deep scan of narrative text
 
-    ⚠️ CRITICAL: RELAPSE DETECTION - READ THIS FIRST ⚠️
+    ⚠️ CRITICAL: RELAPSE/RECURRENCE DETECTION - READ THIS FIRST ⚠️
+
+    RELAPSE/RECURRENCE DEFINITION (Oncology):
+    Relapse (also called recurrence) means the return of cancer after a period of improvement or control.
+
+    Relapse/recurrence can occur in TWO clinically valid scenarios:
+
+    TYPE 1 — CLASSIC RELAPSE (after remission or curative-intent therapy):
+    - The patient had localized disease (Stage I–III)
+    - Received curative-intent treatment (surgery ± chemo/radiation)
+    - Later developed cancer again (local or metastatic)
+    → This is systemic relapse/recurrence
+
+    TYPE 2 — LOCAL RECURRENCE OF A TREATED METASTATIC LESION (Stage IV patients):
+    Even if the patient was Stage IV from the beginning, recurrence can still occur when:
+    - A metastatic site was treated definitively (e.g., SRS, SBRT, surgical resection)
+    - Later imaging or biopsy shows regrowth at the same treated site
+    - The note uses terms such as:
+      "recurrent brain metastasis"
+      "recurrence at surgical cavity"
+      "local recurrence after radiation"
+    → This must be labeled as recurrence at that metastatic site
+
+    IMPORTANT DISTINCTION:
+    - SYSTEMIC PROGRESSION = continuous worsening or new metastatic spread while cancer has remained present
+    - RECURRENCE = regrowth/return at a previously treated site after local control, even without complete systemic remission
 
     BEFORE creating the timeline, determine if this is a relapse case by examining the ENTIRE document:
 
@@ -321,21 +366,34 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
        - Was the initial stage early/localized? (Stage I, Stage II, Stage III, Stage IIIA, Stage IIIB, etc.)
        - Or was it already metastatic at diagnosis? (Stage IV, Stage IVA, Stage IVB, M1)
 
-    2. CHECK INITIAL TREATMENT INTENT:
+    2. CHECK TREATMENT HISTORY:
+       TYPE 1 - For early-stage patients:
        - Was curative intent treatment given initially?
        - Look for: Surgery (lobectomy, resection, excision), Radiation therapy, Adjuvant/neoadjuvant chemotherapy
        - Early-stage disease + curative treatment = potential for cure
 
-    3. CHECK FOR LATER METASTATIC DISEASE:
+       TYPE 2 - For Stage IV patients:
+       - Were specific metastatic sites treated definitively?
+       - Look for: SRS (stereotactic radiosurgery), SBRT (stereotactic body radiation therapy), surgical resection of metastases
+       - Treated metastatic site = potential for local recurrence at that site
+
+    3. CHECK FOR DISEASE RETURN:
+       TYPE 1 - Check for later metastatic disease:
        - Does the patient later develop metastatic disease (Stage IV, distant metastases, M1)?
        - Look for: "new metastases", "progression to Stage IV", "now metastatic", "distant spread"
        - Compare timing: Was there a gap (months/years) between initial treatment and metastatic presentation?
 
-    4. RELAPSE IDENTIFICATION RULE:
+       TYPE 2 - Check for regrowth at treated metastatic sites:
+       - Does imaging show regrowth/return at a previously treated metastatic site?
+       - Look for: "recurrent brain metastasis", "local recurrence at [site]", "regrowth at surgical cavity", "recurrence after SRS"
+       - Compare to post-treatment baseline: Was the site controlled, then showed regrowth?
+
+    4. RELAPSE IDENTIFICATION RULES:
+       TYPE 1 - CLASSIC RELAPSE:
        ⚠️ IF initial diagnosis = Stage I/II/III (early-stage, localized)
        AND patient received curative intent treatment (surgery/radiation/chemo)
        AND later developed metastatic disease (Stage IV, distant mets)
-       → THIS IS A RELAPSE CASE
+       → THIS IS A TYPE 1 RELAPSE CASE
 
        The timeline entry where metastatic disease first appears should have:
        - disease_status: "Recurrence" (NOT "Initial diagnosis", NOT "Disease progression")
@@ -344,11 +402,34 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
        - comparison_to_initial: Compare to original stage (e.g., "More extensive than initial Stage II - now Stage IV with bone and brain metastases")
        - remission_duration: Calculate time from end of initial treatment to recurrence detection
 
-    EXAMPLE RELAPSE SCENARIO:
+       TYPE 2 - LOCAL RECURRENCE AT TREATED METASTATIC SITE:
+       ⚠️ IF patient has/had Stage IV disease
+       AND a specific metastatic site was treated definitively (SRS, SBRT, surgery)
+       AND that treated site later shows regrowth/recurrence
+       → THIS IS A TYPE 2 LOCAL RECURRENCE (even if patient remains Stage IV systemically)
+
+       The timeline entry where local recurrence is detected should have:
+       - disease_status: "Recurrence" (specifically noting it's local recurrence at treated metastatic site)
+       - is_relapse: true
+       - relapse_pattern: "Local recurrence at previously treated metastatic site: [specific site and treatment]" (e.g., "Local recurrence at left occipital brain metastasis previously treated with SRS")
+       - comparison_to_initial: Compare to the treated site's baseline (e.g., "Regrowth at brain metastasis site that had complete response to SRS")
+       - remission_duration: Calculate time from treatment completion to recurrence detection at that site
+
+    EXAMPLE SCENARIOS:
+
+    TYPE 1 - Classic Relapse:
     - 2009: Diagnosed with Stage II NSCLC → Right lower lobectomy + chemotherapy (curative intent)
     - 2017: PET scan shows new bone metastases, multiple lung nodules → Stage IV
-    - CORRECT interpretation: This is RECURRENCE/RELAPSE after 8 years
+    - CORRECT interpretation: This is TYPE 1 RECURRENCE/RELAPSE after 8 years
     - INCORRECT interpretation: Do NOT call 2009 "Stage IV" or treat 2017 as just "progression"
+
+    TYPE 2 - Local Recurrence at Treated Metastatic Site:
+    - 2020: Stage IV NSCLC with brain metastases at diagnosis
+    - 2021: Left occipital brain metastasis treated with SRS, achieved local control
+    - 2023: MRI shows recurrent/regrowth at the same left occipital brain metastasis site
+    - CORRECT interpretation: This is TYPE 2 LOCAL RECURRENCE at treated metastatic site (patient remains Stage IV)
+    - The recurrence is specific to that treated brain metastasis, not systemic progression
+    - INCORRECT interpretation: Do NOT call this just "disease progression" - it's local recurrence after treatment
 
     Create a new timeline entry ONLY when there is a major oncologic transition, including:
     1. Initial cancer diagnosis
@@ -422,13 +503,20 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
          * For pre-diagnosis findings or entries without TNM, set to null (it's acceptable to have null TNM for pre-diagnosis entries).
          * Set to null if no TNM information is available for this timeline point.
 
-    3. DISEASE STATUS (REQUIRED): Choose exactly one:
+    3. DISEASE STATUS (REQUIRED): Choose exactly one based on RECIST criteria and clinical assessment:
        - 'Initial diagnosis'
        - 'Disease progression' (worsening/spread WITHOUT prior remission)
        - 'Recurrence' (cancer returns AFTER a period of remission/complete response/NED)
        - 'Stable disease' (ONLY if explicitly stated or imaging confirms no change)
        - 'Partial response' (tumor shrinkage per RECIST criteria, but cancer remains)
        - 'Complete remission' (all signs of cancer have disappeared)
+
+       CRITICAL: Disease status MUST align with RECIST evaluation if mentioned:
+       - If RECIST shows "Progressive disease" → use 'Disease progression'
+       - If RECIST shows "Stable disease" → use 'Stable disease'
+       - If RECIST shows "Partial response" → use 'Partial response'
+       - If RECIST shows "Complete response" → use 'Complete remission'
+       - NEVER contradict RECIST findings (e.g., don't use 'Partial response' if RECIST shows progression)
 
        CRITICAL CLINICAL DISTINCTIONS:
 
@@ -455,7 +543,9 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
        - The patient has never had this cancer before
        - Use ONLY for the very first timeline entry when cancer was discovered
 
-       Use 'Recurrence' when:
+       Use 'Recurrence' when (TWO TYPES):
+
+       TYPE 1 - Classic Relapse (after remission or curative-intent therapy):
        - Patient had EARLY-STAGE disease (Stage I/II/III) initially
        - Patient received CURATIVE INTENT treatment (surgery, radiation, adjuvant chemo)
        - Cancer has NOW RETURNED after a disease-free period
@@ -464,24 +554,42 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
        - Examples: "Stage II NSCLC in 2015 → lobectomy + chemo → Now 2023 with brain metastases"
        - Time gap between initial treatment and metastatic presentation suggests RELAPSE
 
+       TYPE 2 - Local Recurrence at Treated Metastatic Site (Stage IV patients):
+       - Patient has/had Stage IV disease (metastatic from the start OR after Type 1 relapse)
+       - A specific metastatic site was treated definitively (e.g., SRS, SBRT, surgical resection)
+       - That treated site later shows regrowth/recurrence
+       - Look for terms: "recurrent brain metastasis", "local recurrence at [site]", "regrowth at surgical cavity", "recurrence after SRS/SBRT"
+       - Examples: "Stage IV patient with brain met treated with SRS → 18 months later, regrowth at same brain met site"
+       - This is LOCAL recurrence at a treated metastatic lesion, even if patient remains Stage IV systemically
+
        Use 'Disease progression' when:
-       - Cancer was ALREADY metastatic (Stage IV) at initial diagnosis, and now worsening
+       - Cancer was ALREADY metastatic (Stage IV) at initial diagnosis, and now worsening with NEW sites or growth at UNTREATED sites
        - Patient has had continuous disease without achieving remission
        - Cancer is spreading or growing in patients with ongoing disease
-       - Examples: Stage IV at diagnosis → remained Stage IV with new mets appearing
+       - NEW metastatic sites appearing (not regrowth at previously treated sites)
+       - Examples: Stage IV at diagnosis → remained Stage IV with new mets appearing at different locations
 
        RELAPSE DETECTION CHECKLIST:
+       TYPE 1 - Classic Relapse:
        ✓ Was initial diagnosis early-stage? (Stage I/II/III) → If YES, continue
        ✓ Was curative treatment given? (surgery, radiation, chemo) → If YES, continue
-       ✓ Did patient later develop metastatic disease? (Stage IV, distant mets) → If YES, this is RECURRENCE
+       ✓ Did patient later develop metastatic disease? (Stage IV, distant mets) → If YES, this is TYPE 1 RECURRENCE
        ✓ Look for time gap between initial treatment and metastatic presentation
+
+       TYPE 2 - Local Recurrence at Treated Metastatic Site:
+       ✓ Does patient have Stage IV disease? → If YES, continue
+       ✓ Was a specific metastatic site treated definitively? (SRS, SBRT, surgery) → If YES, continue
+       ✓ Does imaging show regrowth/recurrence at that treated site? → If YES, this is TYPE 2 LOCAL RECURRENCE
+       ✓ Look for phrases: "recurrent [site] metastasis", "local recurrence after [treatment]", "regrowth at [site]"
 
     4. RELAPSE INFORMATION (CRITICAL - EXTRACT ONLY IF disease_status = 'Recurrence'):
        If you identified disease_status as 'Recurrence', you MUST populate the relapse_info object:
 
        - is_relapse: Set to true (this is a relapse case)
 
-       - relapse_pattern: WHERE did the cancer return? Extract the specific location pattern:
+       - relapse_pattern: WHERE did the cancer return? Extract the specific location pattern based on TYPE:
+
+         TYPE 1 - Classic Relapse (early-stage → metastatic):
          * If cancer returned at the same anatomical site as initial diagnosis: "Local recurrence at [site]"
          * If cancer appeared at NEW sites not involved initially: "Distant recurrence - new sites: [list sites]"
          * If both: "Both local and distant - [details]"
@@ -489,9 +597,21 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
          * Example: "Distant recurrence at new sites: brain (3 lesions) and L3 vertebra"
          * Example: "Distant recurrence - bone metastases and multiple lung nodules, whereas initial diagnosis was localized Stage II"
          * Example: "Local recurrence at original right upper lobe site"
-         * Look in: Current imaging vs initial staging/imaging, pathology notes, physician assessment
 
-       - comparison_to_initial: HOW does this relapse compare to the initial diagnosis?
+         TYPE 2 - Local Recurrence at Treated Metastatic Site (Stage IV patients):
+         * Document the specific treated metastatic site where regrowth occurred
+         * Include the treatment modality used: "Local recurrence at [site] previously treated with [SRS/SBRT/surgery]"
+         * Example: "Local recurrence at left occipital brain metastasis previously treated with SRS"
+         * Example: "Regrowth at right upper lobe metastatic lesion treated with SBRT"
+         * Example: "Local recurrence at surgical cavity from resected brain metastasis"
+         * Example: "Recurrent disease at L3 vertebral metastasis previously treated with radiation"
+         * Look for: Imaging comparison to post-treatment baseline, mentions of "recurrent [site] metastasis"
+
+         * Look in: Current imaging vs initial staging/imaging, pathology notes, physician assessment, treatment history
+
+       - comparison_to_initial: HOW does this relapse compare to the initial diagnosis or treated baseline?
+
+         TYPE 1 - Classic Relapse:
          * CRITICAL: If initial stage was I/II/III and relapse is Stage IV, you MUST note this progression
          * Compare stage: "More extensive than initial [stage] - now [new stage]"
          * Compare burden: "Similar disease burden", "More aggressive presentation", "Limited compared to initial"
@@ -500,14 +620,31 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
          * Example: "More extensive than initial Stage IIB - now Stage IV with brain and bone metastases"
          * Example: "Progressed from localized Stage IIIA to metastatic Stage IV with distant spread"
          * Example: "Less extensive - single brain lesion vs original Stage IIIB with mediastinal involvement"
-         * Look for: Comparison statements in notes, review of initial vs current staging
+
+         TYPE 2 - Local Recurrence at Treated Metastatic Site:
+         * Compare to the post-treatment baseline of that specific site
+         * Note if site had achieved complete response before recurring
+         * Example: "Regrowth at brain metastasis site that had complete response to SRS"
+         * Example: "Local recurrence at vertebral metastasis that was previously controlled with radiation"
+         * Example: "Recurrent disease at resection cavity - site had been NED after surgery"
+         * Note: Patient may remain Stage IV systemically, so focus on local site comparison
+
+         * Look for: Comparison statements in notes, review of initial vs current staging, treatment response history
 
        - remission_duration: Calculate or extract the disease-free interval:
-         * Calculate time from end of initial treatment to recurrence detection
+
+         TYPE 1 - Classic Relapse:
+         * Calculate time from end of initial curative treatment to systemic recurrence detection
          * Look for phrases: "disease-free for 18 months", "recurrence after 2-year remission", "8 years after initial treatment"
          * If you can calculate from dates (initial treatment completion date → recurrence detection date), do so
          * Format: "18 months", "2 years", "8 years", "approximately 5 years"
          * Example: If initial surgery was 2009 and metastases detected in 2017, remission_duration = "approximately 8 years"
+
+         TYPE 2 - Local Recurrence at Treated Metastatic Site:
+         * Calculate time from completion of local treatment (SRS/SBRT/surgery) to local recurrence detection
+         * Look for phrases: "18 months after SRS", "recurrence 2 years post-resection", "local failure after 14 months"
+         * Format: "18 months post-SRS", "2 years after surgery", "14 months after SBRT"
+         * Example: If SRS completed in March 2021 and recurrence detected in September 2022, remission_duration = "18 months post-SRS"
 
        - relapse_detected_by: HOW was the relapse discovered?
          * "Routine surveillance PET-CT", "New neurologic symptoms prompted MRI", "Rising tumor markers prompted restaging"
@@ -626,7 +763,7 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
                 "date_label": "String. REQUIRED. The specific date this phase began. MUST use one of these formats ONLY: 'MM/DD/YYYY' (e.g., '06/15/2024'), 'Month YYYY' (e.g., 'June 2024', 'March 2023'), or 'YYYY' (e.g., '2023'). For the most recent entry, use 'Current Status'. NEVER use vague terms like 'Late 2025', 'Early 2023', or date ranges like 'Late 2025 - Early 2026'.",
                 "stage_header": "String. REQUIRED. MUST start with 'Stage' (e.g., 'Stage IVB'). For pre-diagnosis findings, use 'Pre-diagnosis finding'. For entries without staging, use 'Staging not performed'. Use most recent stage if available.",
                 "tnm_status": "String. REQUIRED. TNM classification (e.g., 'T4N3M1c'). MUST NOT contain 'Stage'. Use most recent if missing.",
-                "disease_status": "String. REQUIRED. One of: 'Initial diagnosis', 'Disease progression', 'Recurrence', 'Stable disease', 'Partial response', 'Complete remission'. Use 'Partial response' when tumors have shrunk but cancer remains (RECIST ≥30% decrease). Use 'Complete remission' ONLY when all signs of cancer have disappeared. During active treatment with tumor shrinkage, use 'Partial response' not 'Complete remission'.",
+                "disease_status": "String. REQUIRED. One of: 'Initial diagnosis', 'Disease progression', 'Recurrence', 'Stable disease', 'Partial response', 'Complete remission'. MUST align with RECIST evaluation if mentioned in reports. Use 'Partial response' when tumors have shrunk but cancer remains (RECIST ≥30% decrease). Use 'Complete remission' ONLY when all signs of cancer have disappeared. During active treatment with tumor shrinkage, use 'Partial response' not 'Complete remission'. NEVER contradict RECIST findings - if RECIST shows progressive disease, must use 'Disease progression' regardless of treatment response narratives.",
 
                 # UPDATED FIELDS START HERE
                 "systemic_regimen": "String. Drug-based treatments ONLY. Include Chemo, Immuno, Targeted therapy (e.g., 'Carboplatin + Pemetrexed'). CRITICAL EXTRACTION RULES: (1) DO NOT rely only on tables - SCAN Assessment, Plan, Disease History, Interim History sections. (2) If table shows 'No data' or blank, perform DEEP SCAN of narrative for treatment mentions during that timeframe. (3) Look for cycle mentions (e.g., 'Cycle 6 on 12/4/24') and extract the regimen. (4) Look for treatment windows (start/end dates) - if timeline date falls within window, extract that treatment. (5) Look for concurrent therapy phrases: 'along with', 'plus', 'in combination with', 'maintenance' - capture ALL drugs. (6) Check recent Assessment/Plan for status: 'Continued', 'Completed', 'Proceeded' to confirm if treatment is active. (7) NEVER output null/'No data' if narrative mentions treatment during that time. Set to null ONLY if this event is only surgery/radiation.",
@@ -726,7 +863,7 @@ Just the JSON object following the schema above.
 
     logger.info("🤖 Generating diagnosis evolution timeline extraction with Vertex AI Gemini...")
 
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
 
     try:
@@ -1026,47 +1163,68 @@ def extract_diagnosis_footer_with_gemini(pdf_input):
 
     extraction_instruction = ("Extract temporal information about the patient's cancer diagnosis, disease progression, and relapse/recurrence. "
                                     "1. DIAGNOSIS DATE: Identify the date of the first cancer diagnosis and calculate the total duration from that date to the document signature date or current date mentioned in the document. "
-                                    "2. PROGRESSION DATE: Identify the date of the most recent disease progression event (e.g., new metastases detected, disease advancement without prior remission, upstaging) and calculate the duration from that progression date to the document signature date. "
+                                    "2. PROGRESSION DATE: Identify the date of the most recent disease progression event (e.g., new metastases at NEW UNTREATED sites, disease advancement without prior remission, upstaging) and calculate the duration from that progression date to the document signature date. "
+                                    "   CRITICAL: Do NOT count local recurrence at a previously treated metastatic site as progression - that is recurrence (see below). "
                                     "   If there is no documented progression, set duration_since_progression to 'N/A'. "
-                                    "3. RELAPSE/RECURRENCE DATE (CRITICAL): Identify if there was a documented relapse or recurrence event. Relapse/recurrence means the cancer RETURNED after a period of remission, complete response, disease-free status, OR after curative intent treatment of early-stage disease. "
-                                    "   CRITICAL RELAPSE DETECTION RULES: "
-                                    "   ⚠️ PATTERN 1 - Early-Stage → Metastatic Recurrence: "
+                                    "3. RELAPSE/RECURRENCE DATE (CRITICAL): Identify if there was a documented relapse or recurrence event. Relapse/recurrence means the RETURN of cancer after a period of improvement or control. "
+                                    "   CRITICAL RELAPSE DETECTION RULES - TWO TYPES: "
+                                    "   "
+                                    "   ⚠️ TYPE 1 - Classic Relapse (Early-Stage → Metastatic Recurrence): "
                                     "     If the document shows: "
                                     "     - Initial diagnosis was EARLY-STAGE (Stage I, II, or III - localized disease) "
                                     "     - Patient received CURATIVE INTENT treatment (surgery like lobectomy/resection + chemotherapy) "
                                     "     - Years later, patient developed METASTATIC disease (Stage IV, distant metastases) "
-                                    "     → THIS IS RELAPSE/RECURRENCE, even if not explicitly called 'recurrence' in the document "
+                                    "     → THIS IS TYPE 1 RELAPSE/RECURRENCE, even if not explicitly called 'recurrence' in the document "
                                     "     → Extract the date when metastatic disease was first detected as the relapse date "
                                     "   "
-                                    "   ⚠️ PATTERN 2 - Explicit Remission → Return of Disease: "
+                                    "   ⚠️ TYPE 2 - Local Recurrence at Treated Metastatic Site (Stage IV patients): "
+                                    "     If the document shows: "
+                                    "     - Patient has/had Stage IV disease (metastatic at diagnosis or after Type 1 relapse) "
+                                    "     - A specific metastatic site was treated definitively (e.g., SRS, SBRT, surgical resection) "
+                                    "     - Later imaging or biopsy shows REGROWTH at that SAME treated site "
+                                    "     Look for phrases: 'recurrent brain metastasis', 'local recurrence at [site]', 'recurrence at surgical cavity', 'local recurrence after radiation', 'regrowth at [treated site]' "
+                                    "     → THIS IS TYPE 2 LOCAL RECURRENCE at treated metastatic lesion "
+                                    "     → Extract the date when the local recurrence was detected as the relapse date "
+                                    "     → Note: Patient may remain Stage IV systemically, but this is still recurrence at that specific site "
+                                    "   "
+                                    "   ⚠️ PATTERN 3 - Explicit Remission → Return of Disease: "
                                     "     Look for phrases like: 'recurrence', 'relapse', 'disease returned', 'cancer came back', 'recurrent disease', 'after remission', 'disease-free interval', 'following complete response' "
                                     "     → Extract the date when recurrence was documented "
                                     "   "
                                     "   IMPORTANT DISTINCTION: "
-                                    "     - RELAPSE: Cancer returns AFTER achieving remission/complete response/NED OR after curative treatment of early-stage disease. There was a disease-free period or curative intent treatment. "
-                                    "     - PROGRESSION: Cancer worsens or spreads in patients who had metastatic disease (Stage IV) from the start, continuous disease WITHOUT prior remission. "
+                                    "     - RECURRENCE (TYPE 1): Systemic cancer returns AFTER curative treatment of early-stage disease. There was a disease-free period or curative intent treatment. "
+                                    "     - RECURRENCE (TYPE 2): Regrowth at a previously treated metastatic site after local control, even if patient remains Stage IV systemically. "
+                                    "     - PROGRESSION: NEW metastases at untreated sites OR continuous worsening in patients who never achieved control. "
                                     "   "
-                                    "   If a relapse/recurrence event is identified (EITHER pattern above): "
-                                    "     - Extract the date when the relapse/metastatic disease was detected or documented "
+                                    "   If a relapse/recurrence event is identified (ANY type above): "
+                                    "     - Extract the date when the relapse/recurrence was detected or documented "
                                     "     - Calculate the duration from that relapse date to the document signature date "
                                     "     - Store the date in reference_dates.last_relapse_date "
-                                    "   If NO relapse/recurrence (patient had Stage IV at initial diagnosis with continuous metastatic disease): "
+                                    "   If NO relapse/recurrence (patient had Stage IV at initial diagnosis with continuous metastatic disease and no local recurrence at treated sites): "
                                     "     - Set duration_since_relapse to 'N/A' "
                                     "     - Set reference_dates.last_relapse_date to null "
                                     "   "
-                                    "   EXAMPLE: "
+                                    "   EXAMPLES: "
+                                    "   TYPE 1 Example: "
                                     "   - 2009: Stage II NSCLC, lobectomy + chemo (curative intent) "
                                     "   - 2017: New bone metastases detected → Stage IV "
-                                    "   - CORRECT: This is RELAPSE, last_relapse_date = 2017 date, duration_since_relapse = time from 2017 to now "
+                                    "   - CORRECT: This is TYPE 1 RELAPSE, last_relapse_date = 2017 date, duration_since_relapse = time from 2017 to now "
                                     "   - WRONG: Do NOT treat 2009 as 'Stage IV from the beginning' "
+                                    "   "
+                                    "   TYPE 2 Example: "
+                                    "   - 2020: Stage IV NSCLC with brain metastases at diagnosis "
+                                    "   - 2021: Left occipital brain metastasis treated with SRS, achieved local control "
+                                    "   - 2023: MRI shows recurrent/regrowth at the same left occipital brain metastasis site "
+                                    "   - CORRECT: This is TYPE 2 LOCAL RECURRENCE, last_relapse_date = 2023 date, duration_since_relapse = time from 2023 to now "
+                                    "   - Note: Patient remains Stage IV systemically, but this is recurrence at the treated site "
                                     "Return the output strictly as a JSON object matching the schema described. "
                                     "Express durations in human-readable format (e.g., '14 months', '3 months', '2 years', '18 months'). "
                                     "Do not infer values; if a value is not explicitly stated, return null.")
 
     description = {
                         "duration_since_diagnosis": "Total time from first ever diagnosis to the document signature date in human-readable format (e.g., '14 months', '2 years').",
-                        "duration_since_progression": "Time elapsed from the most recent progression or new primary event to the document signature date in human-readable format (e.g., '3 months', '6 weeks'). Use 'N/A' if no progression is documented. NOTE: This is for continuous disease progression WITHOUT prior remission.",
-                        "duration_since_relapse": "Time elapsed from the most recent relapse/recurrence event to the document signature date in human-readable format (e.g., '18 months', '6 months'). Use 'N/A' if no relapse/recurrence is documented. CRITICAL: This field is ONLY for cases where cancer RETURNED after a period of remission/complete response/NED. If the disease has been continuously present or progressively worsening without a remission period, use 'N/A'.",
+                        "duration_since_progression": "Time elapsed from the most recent progression or new primary event to the document signature date in human-readable format (e.g., '3 months', '6 weeks'). Use 'N/A' if no progression is documented. NOTE: This is for NEW metastases at untreated sites or continuous disease progression WITHOUT prior control. Do NOT count local recurrence at treated metastatic sites as progression.",
+                        "duration_since_relapse": "Time elapsed from the most recent relapse/recurrence event to the document signature date in human-readable format (e.g., '18 months', '6 months'). Use 'N/A' if no relapse/recurrence is documented. CRITICAL: This field is for TWO types of recurrence: (TYPE 1) Systemic cancer RETURNED after curative treatment of early-stage disease, OR (TYPE 2) Local regrowth at a previously treated metastatic site after achieving local control. If the disease has been continuously present or progressively worsening at untreated sites without any control/remission period, use 'N/A'.",
                         "reference_dates": {
                             "initial_diagnosis_date": "The date of the first cancer diagnosis in MM/DD/YYYY format (e.g., '03/15/2023') or partial format (YYYY-MM).",
                             "last_progression_date": "The date of the most recent disease progression event in MM/DD/YYYY format (e.g., '06/10/2024') or partial format (YYYY-MM). Use null if no progression. This is for continuous progression events.",
@@ -1097,7 +1255,7 @@ Just the JSON object following the schema above.
 
     logger.info("🤖 Generating diagnosis footer extraction with Vertex AI Gemini...")
 
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
 
     try:
@@ -1184,7 +1342,7 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
                 },
                 "metastatic_status": "Clear statement of metastatic spread. Examples: 'Yes - Active metastases', 'No metastatic disease', 'Metastatic', 'Limited stage', 'Extensive stage', 'M0 - No distant metastasis'. This indicates if cancer has spread beyond the primary site.",
                 "metastatic_sites": "Array of specific anatomical sites where metastases are present. CRITICAL RULES: (1) If metastatic_status indicates metastasis but NO specific sites are documented, return ['Sites not specified in report']. (2) If specific metastatic sites are documented, list ALL sites mentioned (e.g., ['Brain', 'Liver', 'Bone'], ['Bone', 'Lymph nodes']). (3) If NO metastasis (M0 or 'No metastatic disease'), return empty array []. (4) CRITICAL: DO NOT list the primary organ as a metastatic site. For lung cancer, do NOT include 'Lung' unless it's 'Contralateral lung'. For breast cancer, do NOT list 'Breast'. Metastatic sites are where cancer has SPREAD TO, not the primary origin. Never return null.",
-                "recurrence_status": "Current disease behavior or progression state. Examples: 'Initial diagnosis - no prior cancer history', 'Progressive disease', 'Stable disease', 'Recurrent disease', 'Complete response', 'Partial response', 'Local recurrence', 'Distant recurrence'. This describes the disease trajectory."
+                "recurrence_status": "Current disease behavior or progression state. MUST align with RECIST evaluation and imaging findings. Examples: 'Initial diagnosis - no prior cancer history', 'Progressive disease', 'Stable disease', 'Recurrent disease', 'Complete response', 'Partial response', 'Local recurrence', 'Distant recurrence'. If RECIST criteria are mentioned, ensure this field matches the RECIST assessment (e.g., if RECIST shows progressive disease, use 'Progressive disease' not 'Partial response'). This describes the disease trajectory based on objective measurements."
                 }
 
     extraction_instruction_evolution_timeline = (
@@ -1236,7 +1394,7 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
             "   - Format example: [\"Primary tumor 4.2cm in RUL\", \"Mediastinal lymphadenopathy 2cm\", \"EGFR exon 19 deletion\", \"PD-L1 50%\"]"
             ""
             "KEY GUIDELINES:"
-            "- Create timeline entries for: initial diagnosis, staging changes, treatment starts, disease progression/response events, and current status."
+            "- Create timeline entries for: initial diagnosis, staging changes, treatment starts, disease progresWsion/response events, and current status."
             "- Each time point should be a distinct entry in the array, ordered chronologically."
             "- Include at least: initial diagnosis entry and current status entry."
             "- If staging changed over time (e.g., upstaging from Stage II to Stage IV), ensure this is captured with separate timeline entries."
@@ -1266,18 +1424,23 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
 
     extraction_instruction_footer = ("Extract temporal information about the patient's cancer diagnosis, disease progression, and relapse/recurrence. "
                                     "1. DIAGNOSIS DATE: Identify the date of the first cancer diagnosis and calculate the total duration from that date to the document signature date or current date mentioned in the document. "
-                                    "2. PROGRESSION DATE: Identify the date of the most recent disease progression event (e.g., new metastases detected, disease advancement without prior remission, upstaging) and calculate the duration from that progression date to the document signature date. "
+                                    "2. PROGRESSION DATE: Identify the date of the most recent disease progression event (e.g., NEW metastases at UNTREATED sites, disease advancement without prior control, upstaging) and calculate the duration from that progression date to the document signature date. "
+                                    "   CRITICAL: Do NOT count local recurrence at a previously treated metastatic site as progression - that is recurrence (see below). "
                                     "   If there is no documented progression, set duration_since_progression to 'N/A'. "
-                                    "3. RELAPSE/RECURRENCE DATE (CRITICAL): Identify if there was a documented relapse or recurrence event. Relapse/recurrence means the cancer RETURNED after a period of remission, complete response, or disease-free status. "
-                                    "   Look for phrases like: 'recurrence', 'relapse', 'disease returned', 'cancer came back', 'recurrent disease', 'after remission', 'disease-free interval', 'following complete response'. "
+                                    "3. RELAPSE/RECURRENCE DATE (CRITICAL): Identify if there was a documented relapse or recurrence event. Relapse/recurrence means the RETURN of cancer after a period of improvement or control. "
+                                    "   CRITICAL - TWO TYPES OF RECURRENCE: "
+                                    "   TYPE 1 - Classic Relapse: Cancer returns after curative treatment of early-stage disease (Stage I/II/III → later Stage IV). "
+                                    "   TYPE 2 - Local Recurrence at Treated Metastatic Site: Regrowth at a previously treated metastatic lesion (e.g., brain met treated with SRS that later recurs at same site). "
+                                    "   Look for phrases like: 'recurrence', 'relapse', 'disease returned', 'cancer came back', 'recurrent disease', 'recurrent brain metastasis', 'local recurrence at [site]', 'regrowth at [treated site]', 'recurrence after SRS/SBRT/surgery'. "
                                     "   IMPORTANT DISTINCTION: "
-                                    "     - RELAPSE: Cancer returns AFTER achieving remission/complete response/NED (No Evidence of Disease). There was a disease-free period. "
-                                    "     - PROGRESSION: Cancer worsens or spreads WITHOUT a prior remission period (continuous disease). "
-                                    "   If a relapse/recurrence event is documented: "
-                                    "     - Extract the date when the relapse was detected or documented "
+                                    "     - RECURRENCE (TYPE 1): Systemic cancer returns AFTER curative treatment of early-stage disease. "
+                                    "     - RECURRENCE (TYPE 2): Local regrowth at a previously treated metastatic site after achieving local control. "
+                                    "     - PROGRESSION: NEW metastases at untreated sites OR continuous worsening WITHOUT prior control/remission. "
+                                    "   If a relapse/recurrence event is documented (EITHER TYPE): "
+                                    "     - Extract the date when the relapse/recurrence was detected or documented "
                                     "     - Calculate the duration from that relapse date to the document signature date "
                                     "     - Store the date in reference_dates.last_relapse_date "
-                                    "   If NO relapse/recurrence is documented (initial diagnosis, stable disease, or continuous progression without remission): "
+                                    "   If NO relapse/recurrence is documented (initial diagnosis, stable disease, or continuous progression at untreated sites without any control period): "
                                     "     - Set duration_since_relapse to 'N/A' "
                                     "     - Set reference_dates.last_relapse_date to null "
                                     "Return the output strictly as a JSON object matching the schema described. "
@@ -1285,8 +1448,8 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
                                     "Do not infer values; if a value is not explicitly stated, return null.")
     description_footer = {
                         "duration_since_diagnosis": "Total time from first ever diagnosis to the document signature date in human-readable format (e.g., '14 months', '2 years').",
-                        "duration_since_progression": "Time elapsed from the most recent progression or new primary event to the document signature date in human-readable format (e.g., '3 months', '6 weeks'). Use 'N/A' if no progression is documented. NOTE: This is for continuous disease progression WITHOUT prior remission.",
-                        "duration_since_relapse": "Time elapsed from the most recent relapse/recurrence event to the document signature date in human-readable format (e.g., '18 months', '6 months'). Use 'N/A' if no relapse/recurrence is documented. CRITICAL: This field is ONLY for cases where cancer RETURNED after a period of remission/complete response/NED. If the disease has been continuously present or progressively worsening without a remission period, use 'N/A'.",
+                        "duration_since_progression": "Time elapsed from the most recent progression or new primary event to the document signature date in human-readable format (e.g., '3 months', '6 weeks'). Use 'N/A' if no progression is documented. NOTE: This is for NEW metastases at untreated sites or continuous disease progression WITHOUT prior control. Do NOT count local recurrence at treated metastatic sites as progression.",
+                        "duration_since_relapse": "Time elapsed from the most recent relapse/recurrence event to the document signature date in human-readable format (e.g., '18 months', '6 months'). Use 'N/A' if no relapse/recurrence is documented. CRITICAL: This field is for TWO types of recurrence: (TYPE 1) Systemic cancer RETURNED after curative treatment of early-stage disease, OR (TYPE 2) Local regrowth at a previously treated metastatic site after achieving local control. If the disease has been continuously present or progressively worsening at untreated sites without any control/remission period, use 'N/A'.",
                         "reference_dates": {
                             "initial_diagnosis_date": "The date of the first cancer diagnosis in MM/DD/YYYY format (e.g., '03/15/2023') or partial format (YYYY-MM).",
                             "last_progression_date": "The date of the most recent disease progression event in MM/DD/YYYY format (e.g., '06/10/2024') or partial format (YYYY-MM). Use null if no progression. This is for continuous progression events.",

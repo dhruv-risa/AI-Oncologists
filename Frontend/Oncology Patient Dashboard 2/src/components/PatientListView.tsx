@@ -4,6 +4,7 @@ import { usePatient } from '../contexts/PatientContext';
 import { apiService } from '../services/api';
 import { PatientListSkeleton } from './PatientCardSkeleton';
 import { LoadingModal } from './LoadingModal';
+import { normalizePatientName } from '../utils/stringFormatters';
 
 interface Patient {
   id: string;
@@ -118,7 +119,7 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
           return {
             id: cached.mrn,
             mrn: cached.mrn,
-            name: fullData.demographics["Patient Name"] || `Patient ${cached.mrn}`,
+            name: normalizePatientName(fullData.demographics["Patient Name"]) || `Patient ${cached.mrn}`,
             age: fullData.demographics["Age"] ? parseInt(fullData.demographics["Age"]) : 0,
             gender: fullData.demographics["Gender"] || '-',
             diagnosis: fullData.diagnosis_header?.primary_diagnosis || 'Not available',
@@ -408,16 +409,10 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
                   <p className="text-sm text-gray-900 font-normal line-clamp-2">{patient.diagnosis !== 'Not available' ? patient.diagnosis : '-'}</p>
                 </div>
 
-                {/* Stage and Last Visit - Side by Side */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Stage</p>
-                    <p className="text-sm text-gray-900 font-normal">{patient.stage !== '-' ? patient.stage : '-'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Last Visit</p>
-                    <p className="text-sm text-gray-900 font-normal">{patient.lastVisit}</p>
-                  </div>
+                {/* Stage */}
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Stage</p>
+                  <p className="text-sm text-gray-900 font-normal">{patient.stage !== '-' ? patient.stage : '-'}</p>
                 </div>
 
                 {/* Treatment */}
@@ -477,7 +472,7 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 bg-gray-500 rounded-full"></div>
-                <span className="text-gray-600">Stable: {displayPatients.filter(p => {
+                <span className="text-gray-900">Stable: {displayPatients.filter(p => {
                   const status = p.diseaseStatus?.toLowerCase() || '';
                   return status.includes('stable') || status.includes('newly diagnosed');
                 }).length}</span>

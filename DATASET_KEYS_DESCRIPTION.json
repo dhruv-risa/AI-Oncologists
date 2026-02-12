@@ -1,0 +1,248 @@
+{
+  "dataset_name": "AI-Oncologists Patient Data Pool",
+  "total_patients": 11,
+  "database_file": "Backend/data_pool.db",
+  "table_name": "patient_data_pool",
+  "extraction_model": "Vertex AI Gemini 2.5 Flash",
+
+  "keys_description": {
+    "success": {
+      "type": "boolean",
+      "description": "Validation flag indicating successful data extraction from all sources"
+    },
+
+    "mrn": {
+      "type": "string",
+      "description": "Medical Record Number - unique patient identifier used as primary key"
+    },
+
+    "demographics": {
+      "type": "object",
+      "description": "Basic patient information extracted from most recent MD notes",
+      "source": "Most recent MD notes",
+      "fields": {
+        "Patient Name": "Full legal name",
+        "MRN": "Medical Record Number",
+        "Date of Birth": "Birth date in MM/DD/YYYY format",
+        "Age": "Current age in years (calculated)",
+        "Gender": "Male/Female/Other",
+        "Height": "Height in feet/inches or cm",
+        "Weight": "Weight in pounds or kg",
+        "Primary Oncologist": "Name of treating oncologist",
+        "Last Visit": "Most recent clinical visit date"
+      }
+    },
+
+    "diagnosis": {
+      "type": "object",
+      "description": "Comprehensive cancer diagnosis and disease status information",
+      "source": "Most recent MD notes",
+      "fields": {
+        "cancer_type": "Primary cancer diagnosis (e.g., 'Pulmonary adenocarcinoma')",
+        "histology": "Specific cell type (e.g., 'Adenocarcinoma')",
+        "diagnosis_date": "Initial diagnosis date (YYYY-MM-DD)",
+        "initial_staging": {
+          "tnm": "TNM classification at diagnosis (never includes 'Stage')",
+          "ajcc_stage": "AJCC stage at diagnosis (always includes 'Stage')"
+        },
+        "current_staging": {
+          "tnm": "Most recent TNM classification",
+          "ajcc_stage": "Most recent AJCC stage"
+        },
+        "line_of_therapy": "Current treatment line as integer (1, 2, 3)",
+        "metastatic_sites": "Array of organs/locations where cancer has spread",
+        "ecog_status": "Performance status score (0-4)",
+        "disease_status": "Current disease behavior using standard oncology terminology (e.g., 'Progressive Disease (PD)', 'Stable Disease (SD)')"
+      }
+    },
+
+    "comorbidities": {
+      "type": "object",
+      "description": "Non-cancer medical conditions and functional status",
+      "source": "Most recent MD notes",
+      "fields": {
+        "comorbidities": "Array of condition objects with name, severity, clinical details, and medications",
+        "ecog_performance_status": {
+          "score": "Numerical ECOG score (0-4)",
+          "description": "Textual definition of activity level"
+        }
+      }
+    },
+
+    "treatment_tab_info_LOT": {
+      "type": "object",
+      "description": "Lines of Therapy view - structured treatment history with line numbering",
+      "source": "Most recent MD notes",
+      "fields": {
+        "treatment_history": "Array of treatment line objects containing header (line number, drug name, status), dates, systemic regimen (drug names only), local therapy (radiation/surgery), cycles data, toxicities, outcome with clinical details, and reason for discontinuation"
+      },
+      "key_concept": "Line numbers only for systemic therapies. Line changes on disease progression or complete therapy switch. Dosage changes keep same line number."
+    },
+
+    "treatment_tab_info_timeline": {
+      "type": "object",
+      "description": "Chronological timeline view of all major cancer-related treatment events",
+      "source": "Most recent MD notes",
+      "fields": {
+        "timeline_events": "Array of events in reverse chronological order with date display, systemic regimen, local therapy, context-specific clinical details, and event type (Systemic/Radiation/Surgery/Imaging)"
+      }
+    },
+
+    "diagnosis_header": {
+      "type": "object",
+      "description": "Structured summary of key diagnosis information for UI display",
+      "source": "Most recent MD notes",
+      "fields": {
+        "primary_diagnosis": "Full cancer name with proper medical terminology",
+        "histologic_type": "Specific cell type",
+        "diagnosis_date": "ISO format date",
+        "initial_staging": "TNM and AJCC at diagnosis",
+        "current_staging": "Most recent TNM and AJCC",
+        "metastatic_status": "Clear statement of metastatic spread",
+        "metastatic_sites": "Array of spread locations (excludes primary organ)",
+        "recurrence_status": "Disease trajectory description"
+      }
+    },
+
+    "diagnosis_evolution_timeline": {
+      "type": "object",
+      "description": "Stage evolution and disease progression timeline with normalized dates",
+      "source": "Most recent MD notes",
+      "fields": {
+        "timeline": "Array of progression events with normalized date labels (e.g., 'December 2025'), event descriptions, stage info, and clinical details"
+      },
+      "special_feature": "Automatically normalizes vague dates: 'Late 2025' → 'December 2025', 'Early 2023' → 'January 2023'"
+    },
+
+    "diagnosis_footer": {
+      "type": "object",
+      "description": "Additional diagnosis context and duration calculations",
+      "source": "Most recent MD notes"
+    },
+
+    "lab_info": {
+      "type": "object",
+      "description": "Structured laboratory test results with clinical interpretation",
+      "source": "Laboratory result reports (NOT MD notes)",
+      "fields": {
+        "tumor_markers": "CEA, NSE, proGRP, CYFRA 21-1 with values, units, dates, status, reference ranges",
+        "complete_blood_count": "WBC, Hemoglobin, Platelets, ANC with values, units, dates, status, reference ranges",
+        "metabolic_panel": "Creatinine, ALT, AST, Total Bilirubin with values, units, dates, status, reference ranges",
+        "clinical_interpretation": "Array of abnormality summaries (anemia, hepatic dysfunction, neutropenia rules)"
+      },
+      "critical_rule": "ONLY extracts from formal lab reports, IGNORES MD notes. Uses 'Lab Resulted' dates, not collection dates."
+    },
+
+    "lab_reports": {
+      "type": "array",
+      "description": "Google Drive URLs linking to raw laboratory report documents (5-11 per patient)"
+    },
+
+    "genomic_info": {
+      "type": "object",
+      "description": "Clinically relevant molecular and genomic profiling data",
+      "source": "Genomic testing reports or MD visit notes",
+      "fields": {
+        "driver_mutations": "Status of 9 key oncogenic drivers (EGFR, ALK, ROS1, KRAS, BRAF, MET, RET, HER2, NTRK) with detection status, variant details, and actionability flag",
+        "biomarkers": {
+          "PD-L1_expression": "Value and scoring metric",
+          "TMB": "Tumor Mutational Burden",
+          "MSI": "Microsatellite Instability status"
+        },
+        "additional_alterations": "Only FDA-approved targets, guideline-recommended alterations, or clinical trial-relevant findings"
+      },
+      "key_concept": "Focuses on actionable findings. Driver mutations always reported even if not detected. Additional alterations filtered for clinical relevance."
+    },
+
+    "genomics_reports": {
+      "type": "array",
+      "description": "Google Drive URLs linking to genomic testing and molecular profiling reports (1-6 per patient)"
+    },
+
+    "pathology_summary": {
+      "type": "object",
+      "description": "Primary pathology diagnosis and procedural details",
+      "source": "Selected pathology report",
+      "fields": {
+        "header": {
+          "report_id": "Accession number",
+          "alert_banner": "5-word headline and actionable subtext"
+        },
+        "diagnosis_section": {
+          "full_diagnosis": "Array of 5-7 KEY bullet points (concise, proper capitalization)",
+          "procedure_category": "Surgical Resection or Biopsy/FNA",
+          "procedure_original_text": "Raw procedure name"
+        },
+        "details": {
+          "biopsy_site": "Anatomical location",
+          "biopsy_date": "Collection date (YYYY-MM-DD)",
+          "surgery_date": "Surgery date or 'Not applicable'",
+          "tumor_grade": "Histologic grade",
+          "margin_status": "Margin assessment for resections"
+        }
+      }
+    },
+
+    "pathology_markers": {
+      "type": "object",
+      "description": "Advanced pathology features including morphology and immunohistochemistry (IHC) markers",
+      "source": "Selected pathology report",
+      "fields": {
+        "morphology_column": "Context-dependent: Tissue architecture (for resections) or Cellular features (for cytology/FNA)",
+        "ihc_column": {
+          "markers": "Array of IHC markers with standardized names, status (Positive/Negative/Equivocal/Focal), and details (intensity + quantity)"
+        },
+        "interpretation_tags": "3-5 diagnostic signature tags (histologic subtype, driver status, high-risk features)"
+      },
+      "special_handling": "Splits combined marker lists (e.g., 'CK7 and TTF1 positive' → two separate marker objects)"
+    },
+
+    "pathology_reports": {
+      "type": "array",
+      "description": "Google Drive URLs linking to pathology and biopsy report documents (1-7 per patient)"
+    },
+
+    "radiology_reports": {
+      "type": "array",
+      "description": "Google Drive URLs linking to radiology imaging reports (CT, MRI, PET scans) with extracted structured data",
+      "source": "Radiology imaging reports",
+      "extracted_sections": {
+        "report_summary": "Study type, study date, overall response, prior comparison date",
+        "recist_measurements": "Dual-baseline tracking: compares current scan vs BOTH initial diagnosis baseline AND current treatment baseline with % changes for each target lesion",
+        "impression": "Array of distinct findings from impression section",
+        "additional_findings": "Top 3-5 clinically relevant findings beyond impression (new lesions, non-target changes, incidental findings)"
+      },
+      "special_feature": "Dual-baseline RECIST allows tracking disease response relative to two different time points simultaneously"
+    }
+  },
+
+  "data_quality_standards": {
+    "extraction_principle": "Deterministic (temperature=0), explicit data only, no inference or hallucination",
+    "terminology": "Industry-standard oncology terms (RECIST, AJCC, TNM)",
+    "date_format": "ISO 8601 (YYYY-MM-DD)",
+    "null_handling": "Returns null for missing data, never fabricates values",
+    "validation": "Schema enforcement with strict formatting rules"
+  },
+
+  "formatting_rules": {
+    "TNM_classification": "NEVER includes the word 'Stage' (e.g., 'T2a N1 M0')",
+    "AJCC_stage": "ALWAYS includes the word 'Stage' (e.g., 'Stage IVA')",
+    "line_of_therapy": "Must be integer (1, 2, 3), not string",
+    "disease_status": "Use RECIST terms (CR, PR, SD, PD) or clinical standard terms",
+    "dates": "ISO 8601 format (YYYY-MM-DD) throughout"
+  },
+
+  "patient_mrns": [
+    "2511180119",
+    "2512120056",
+    "319864",
+    "4006762",
+    "4028657",
+    "4034659",
+    "4121934",
+    "4125731",
+    "4173898",
+    "443455",
+    "451358"
+  ]
+}

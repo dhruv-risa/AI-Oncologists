@@ -61,6 +61,11 @@ def exponential_retry(
     for attempt in range(max_retries + 1):  # +1 because first attempt is not a retry
         try:
             # Execute the function
+            if attempt == 0:
+                print(f"🔄 Initial attempt...")
+            else:
+                print(f"🔄 Retry attempt {attempt}/{max_retries}...")
+
             return func()
 
         except Exception as e:
@@ -71,14 +76,15 @@ def exponential_retry(
             is_rate_limit = "429" in error_str or "Resource exhausted" in error_str
             is_timeout = "timeout" in error_str.lower()
             is_connection_error = "connection" in error_str.lower()
+            is_value_error = isinstance(e, ValueError)  # Added to handle empty/invalid responses
 
             # If not retryable or we've exhausted retries, raise immediately
-            if not (is_rate_limit or is_timeout or is_connection_error):
+            if not (is_rate_limit or is_timeout or is_connection_error or is_value_error):
                 print(f"❌ Non-retryable error: {error_str}")
                 raise
 
             if attempt >= max_retries:
-                print(f"❌ Max retries ({max_retries}) exhausted")
+                print(f"❌ Max retries ({max_retries}) exhausted after {attempt + 1} total attempts")
                 raise
 
             # Calculate delay with exponential backoff
@@ -90,7 +96,7 @@ def exponential_retry(
                 delay += jitter_amount
 
             print(f"⚠️  Attempt {attempt + 1} failed: {error_str}")
-            print(f"⏳ Retrying in {delay:.1f} seconds... ({max_retries - attempt} retries remaining)")
+            print(f"⏳ Waiting {delay:.1f} seconds before retry... ({max_retries - attempt} retries remaining)")
 
             time.sleep(delay)
 
@@ -163,6 +169,184 @@ def format_date_for_display(date_str: str) -> str:
     except (ValueError, AttributeError):
         # If it fails, return original
         return date_str
+
+
+def is_unit_in_thousands(unit_normalized: str) -> bool:
+    """
+    Detect if a unit is already in thousands format (10^3, K, etc.).
+
+    This handles various notations used in lab reports:
+    - 10^3, 10*3, 10**3 (exponential notations)
+    - 10³ (unicode superscript)
+    - 10e3 (scientific notation)
+    - K, k (kilo prefix)
+    - x10^3, x10*3 (multiplication prefix)
+    - Thousand (spelled out)
+
+    Args:
+        unit_normalized: Normalized unit string (lowercase, no spaces)
+
+    Returns:
+        True if unit is already in thousands format, False otherwise
+    """
+    # Check for all known "thousands" indicators
+    thousands_indicators = [
+        '10^3', '10*3', '10**3',        # Exponential: 10^3, 10*3, 10**3
+        '10³',                           # Unicode superscript
+        '10e3',                          # Scientific notation
+        'x10^3', 'x10*3', 'x10**3',     # With multiplication prefix
+        'x10³', 'x10e3',                # With multiplication prefix (other formats)
+        'k/', 'k/u', '/k',              # K notation (e.g., K/uL)
+        'thousand',                      # Spelled out
+        '×10^3', '×10*3', '×10**3',     # Multiplication symbol (×)
+        '*10^3', '*10*3', '*10**3',     # Asterisk multiplication
+    ]
+
+    return any(indicator in unit_normalized for indicator in thousands_indicators)
+
+
+def standardize_lab_unit(biomarker_name: str, value: Any, unit: str) -> tuple:
+    """
+    Standardize lab units to match the expected units in the frontend PREDEFINED_NORMAL_LIMITS.
+
+    ROBUST CONVERSION: Handles all common unit variations found in lab reports including:
+    - Multiple exponent notations (^, *, **, ³, e3)
+    - Various prefixes (K, k, x10, ×10, *10)
+    - Different spellings (Thousand, thousand)
+    - Regional variations (μL vs uL)
+
+    Args:
+        biomarker_name: Name of the biomarker (e.g., 'CEA', 'Hemoglobin')
+        value: The lab value to convert
+        unit: The current unit of the value
+
+    Returns:
+        Tuple of (converted_value, standardized_unit)
+    """
+    # Skip if value is None, NA, or non-numeric
+    if value is None or value in ['NA', 'N/A', '', 'Pending']:
+        return (value, unit)
+
+    try:
+        numeric_value = float(value)
+    except (ValueError, TypeError):
+        return (value, unit)
+
+    # Normalize unit string for comparison (lowercase, remove spaces)
+    unit_normalized = unit.lower().strip().replace(' ', '') if unit else ''
+
+    # Replace common unicode variations with standard ASCII
+    unit_normalized = unit_normalized.replace('μ', 'u')  # Micro symbol
+    unit_normalized = unit_normalized.replace('×', 'x')  # Multiplication symbol
+
+    # Standard units expected by the frontend (from labNormalRanges.ts)
+    STANDARD_UNITS = {
+        'CEA': 'ng/mL',
+        'NSE': 'ng/mL',
+        'proGRP': 'pg/mL',
+        'CYFRA_21_1': 'ng/mL',
+        'CYFRA 21-1': 'ng/mL',
+        'WBC': '10^3/μL',
+        'Hemoglobin': 'g/dL',
+        'Platelets': '10^3/μL',
+        'ANC': '10^3/μL',
+        'Creatinine': 'mg/dL',
+        'ALT': 'U/L',
+        'AST': 'U/L',
+        'Total Bilirubin': 'mg/dL',
+    }
+
+    standard_unit = STANDARD_UNITS.get(biomarker_name)
+    if not standard_unit:
+        # No standard unit defined, return as-is
+        return (value, unit)
+
+    # If already in standard unit, return as-is (with normalization for comparison)
+    standard_unit_normalized = standard_unit.lower().replace(' ', '').replace('μ', 'u').replace('×', 'x')
+
+    # For thousands-based units (10^3/μL), check if the unit represents thousands format
+    # even if notation differs (e.g., 10*3/uL vs 10^3/μL)
+    if standard_unit in ['10^3/μL'] and is_unit_in_thousands(unit_normalized):
+        # Unit is already in thousands format (just different notation), no conversion needed
+        return (value, standard_unit)
+
+    if unit_normalized == standard_unit_normalized:
+        return (value, standard_unit)
+
+    # CONVERSION RULES
+    converted_value = numeric_value
+    converted_unit = standard_unit
+
+    # Hemoglobin: g/L → g/dL (divide by 10)
+    if biomarker_name == 'Hemoglobin':
+        # Check if unit is g/L (grams per liter) - need to convert to g/dL
+        if 'g/l' in unit_normalized and 'mg' not in unit_normalized and 'd' not in unit_normalized:
+            # g/L → g/dL (divide by 10)
+            converted_value = numeric_value / 10.0
+        elif 'g/dl' in unit_normalized:
+            # Already in g/dL - no conversion needed
+            converted_value = numeric_value
+        elif 'mg/dl' in unit_normalized:
+            # mg/dL → g/dL (divide by 1000)
+            converted_value = numeric_value / 1000.0
+        else:
+            # Unknown format - keep as is and log warning
+            converted_value = numeric_value
+            if unit_normalized:  # Only warn if unit is not empty
+                print(f"⚠️  Unknown unit format for {biomarker_name}: '{unit}' - keeping value as-is")
+
+    # WBC, Platelets, ANC: Various formats → 10^3/μL
+    elif biomarker_name in ['WBC', 'Platelets', 'ANC']:
+        # Use robust detection to check if unit is already in thousands format
+        if is_unit_in_thousands(unit_normalized):
+            # Already in thousands format (10^3, 10*3, K, etc.) - no conversion needed
+            converted_value = numeric_value
+        # If unit is in per microliter format (/μL or /uL), need to convert
+        elif '/ul' in unit_normalized or '/μl' in unit_normalized:
+            # Convert from cells/μL to 10^3/μL (divide by 1000)
+            converted_value = numeric_value / 1000.0
+        else:
+            # Unknown format - keep as is and log warning
+            converted_value = numeric_value
+            print(f"⚠️  Unknown unit format for {biomarker_name}: '{unit}' - keeping value as-is")
+
+    # Creatinine: μmol/L → mg/dL (divide by 88.4)
+    elif biomarker_name == 'Creatinine':
+        if 'μmol/l' in unit_normalized or 'umol/l' in unit_normalized:
+            converted_value = numeric_value / 88.4
+        elif 'mg/dl' in unit_normalized:
+            converted_value = numeric_value
+
+    # Total Bilirubin: μmol/L → mg/dL (divide by 17.1)
+    elif biomarker_name == 'Total Bilirubin':
+        if 'μmol/l' in unit_normalized or 'umol/l' in unit_normalized:
+            converted_value = numeric_value / 17.1
+        elif 'mg/dl' in unit_normalized:
+            converted_value = numeric_value
+
+    # Tumor markers (CEA, NSE, CYFRA 21-1): Usually already in ng/mL or pg/mL
+    # No common conversions needed, but handle edge cases
+    elif biomarker_name in ['CEA', 'NSE', 'CYFRA_21_1', 'CYFRA 21-1']:
+        if biomarker_name == 'proGRP':
+            # proGRP should be in pg/mL
+            if 'ng/ml' in unit_normalized:
+                converted_value = numeric_value * 1000.0  # ng/mL → pg/mL
+        else:
+            # CEA, NSE, CYFRA should be in ng/mL
+            if 'pg/ml' in unit_normalized:
+                converted_value = numeric_value / 1000.0  # pg/mL → ng/mL
+            elif 'μg/ml' in unit_normalized or 'ug/ml' in unit_normalized:
+                converted_value = numeric_value * 1000.0  # μg/mL → ng/mL
+
+    # ALT, AST: Should be in U/L (usually already correct)
+    elif biomarker_name in ['ALT', 'AST']:
+        if 'u/l' in unit_normalized or 'iu/l' in unit_normalized:
+            converted_value = numeric_value
+
+    # Round to 2 decimal places for display
+    converted_value = round(converted_value, 2)
+
+    return (converted_value, converted_unit)
 
 
 def is_empty_biomarker(biomarker_data: Dict) -> bool:
@@ -312,7 +496,7 @@ def build_trend_from_values(biomarker_entries: List[Dict]) -> List[Dict]:
     return trend
 
 
-def merge_biomarker_data(biomarker_list: List[Dict]) -> Dict:
+def merge_biomarker_data(biomarker_list: List[Dict], biomarker_name: str = None) -> Dict:
     """
     Aggregate biomarker entries from multiple documents into current + trend structure.
 
@@ -324,6 +508,7 @@ def merge_biomarker_data(biomarker_list: List[Dict]) -> Dict:
                        Each is either:
                        - New format: {value, unit, date, status, reference_range, source_context}
                        - Old format: {"current": {...}, "trend": [...]}
+        biomarker_name: Name of the biomarker (for unit conversion)
 
     Returns:
         Consolidated biomarker with structure:
@@ -368,16 +553,44 @@ def merge_biomarker_data(biomarker_list: List[Dict]) -> Dict:
     sorted_entries.sort(key=lambda x: x[0], reverse=True)
     most_recent_data = sorted_entries[0][1] if sorted_entries else {}
 
-    # Return unified structure
+    # Apply unit standardization to current value
+    current_value = most_recent_data.get("value")
+    current_unit = most_recent_data.get("unit")
+    if biomarker_name and current_value is not None:
+        standardized_value, standardized_unit = standardize_lab_unit(
+            biomarker_name, current_value, current_unit or ''
+        )
+    else:
+        standardized_value = current_value
+        standardized_unit = current_unit
+
+    # Apply unit standardization to trend values
+    standardized_trend = []
+    for trend_point in trend:
+        trend_value = trend_point.get("value")
+        if biomarker_name and trend_value is not None:
+            std_trend_value, _ = standardize_lab_unit(
+                biomarker_name, trend_value, current_unit or ''
+            )
+            standardized_trend.append({
+                "date": trend_point.get("date"),
+                "value": std_trend_value,
+                "status": trend_point.get("status"),
+                "source_context": trend_point.get("source_context")
+            })
+        else:
+            standardized_trend.append(trend_point)
+
+    # Return unified structure with standardized units
     return {
         "current": {
-            "value": most_recent_data.get("value"),
-            "unit": most_recent_data.get("unit"),
+            "value": standardized_value,
+            "unit": standardized_unit,
             "date": most_recent_data.get("date"),
             "status": most_recent_data.get("status"),
             "reference_range": most_recent_data.get("reference_range")
         },
-        "trend": trend
+        "trend": standardized_trend
     }
 
 
@@ -402,7 +615,7 @@ def consolidate_panel(panel_list: List[Dict], biomarker_names: List[str]) -> Dic
                 biomarker_entries.append(panel[biomarker_name])
 
         if biomarker_entries:
-            consolidated[biomarker_name] = merge_biomarker_data(biomarker_entries)
+            consolidated[biomarker_name] = merge_biomarker_data(biomarker_entries, biomarker_name)
 
     return consolidated
 
@@ -526,77 +739,142 @@ Return ONLY the JSON array, no other text."""
         print("⏳ Waiting 4 seconds before AI refinement to avoid rate limits...")
         time.sleep(4)
 
-        model = GenerativeModel("gemini-2.0-flash-exp")
+        model = GenerativeModel("gemini-2.5-pro")
 
         # Define the API call as a lambda function for exponential retry
+        # This now includes response validation and JSON parsing to enable retries on invalid responses
         def make_api_call():
-            return model.generate_content(
+            # VERBOSE DEBUG: Print prompt info
+            print(f"🔍 DEBUG: Sending prompt ({len(prompt)} chars, {len(raw_interpretations)} interpretations)")
+
+            response = model.generate_content(
                 prompt,
                 generation_config={
                     "temperature": 0.3,
                     "top_p": 0.95,
-                    "max_output_tokens": 1024
+                    "max_output_tokens": 4096,  # Increased to handle more comprehensive responses
+                    "response_mime_type": "application/json"  # Force JSON output
                 }
             )
 
-        # Execute with exponential retry (handles 429 rate limits automatically)
-        print("🔄 Calling Gemini API with exponential retry protection...")
-        response = exponential_retry(
+            # VERBOSE DEBUG: Check response object
+            print(f"🔍 DEBUG: Got response object type: {type(response)}")
+            print(f"🔍 DEBUG: Has 'text' attr: {hasattr(response, 'text')}")
+
+            # Check if response was blocked by safety filters
+            if hasattr(response, 'prompt_feedback'):
+                feedback = response.prompt_feedback
+                print(f"🔍 DEBUG: Has prompt_feedback: {feedback}")
+                if hasattr(feedback, 'block_reason') and feedback.block_reason:
+                    raise ValueError(f"Response blocked by safety filters: {feedback.block_reason}")
+
+            # Check candidates for finish_reason
+            if hasattr(response, 'candidates') and response.candidates:
+                print(f"🔍 DEBUG: Candidates count: {len(response.candidates)}")
+                for i, candidate in enumerate(response.candidates):
+                    if hasattr(candidate, 'finish_reason'):
+                        print(f"🔍 DEBUG: Candidate {i} finish_reason: {candidate.finish_reason}")
+
+            # Validate response has text content
+            if not hasattr(response, 'text'):
+                raise ValueError(f"Response object has no 'text' attribute")
+
+            # VERBOSE DEBUG: Check response.text before any processing
+            print(f"🔍 DEBUG: response.text type: {type(response.text)}")
+            print(f"🔍 DEBUG: response.text length: {len(response.text) if response.text else 0}")
+            print(f"🔍 DEBUG: response.text repr (first 200 chars): {repr(response.text[:200]) if response.text else 'None'}")
+
+            if not response.text:
+                raise ValueError(f"Gemini response.text is empty or None")
+
+            response_text = response.text.strip()
+            print(f"🔍 DEBUG: After strip() length: {len(response_text)}")
+
+            # Debug logging for empty responses
+            if not response_text:
+                print(f"⚠️  DEBUG: response.text exists but is empty after strip()")
+                raise ValueError("Gemini response is empty after strip()")
+
+            # Extract JSON from potential markdown code blocks
+            import re
+            json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+            match = re.search(json_pattern, response_text)
+
+            if match:
+                print(f"🔍 DEBUG: Found markdown code block, extracting...")
+                extracted = match.group(1).strip()
+                print(f"🔍 DEBUG: Extracted length: {len(extracted)}")
+                response_text = extracted
+
+            # Check again after extracting from code block
+            if not response_text:
+                raise ValueError("Gemini response is empty after markdown extraction")
+
+            print(f"🔍 DEBUG: Final response_text length before JSON parse: {len(response_text)}")
+            print(f"🔍 DEBUG: Final response_text (first 300 chars): {response_text[:300]}")
+
+            # Parse and validate JSON response
+            try:
+                refined_interpretations = json.loads(response_text)
+                if not isinstance(refined_interpretations, list):
+                    raise ValueError(f"Expected list, got {type(refined_interpretations).__name__}")
+                print(f"✅ DEBUG: Successfully parsed JSON with {len(refined_interpretations)} items")
+                return refined_interpretations
+            except json.JSONDecodeError as e:
+                # Enhanced error message with actual content for debugging
+                print(f"❌ DEBUG: JSON parsing failed: {e}")
+                print(f"❌ DEBUG: Response text length: {len(response_text)}")
+                print(f"❌ DEBUG: Response text (full): {response_text}")
+                raise ValueError(f"Invalid JSON response: {str(e)}")
+
+        # Execute with exponential retry (handles 429 rate limits and invalid responses)
+        # Changed max_retries to 6 to ensure we reach the 60-second maximum delay
+        # Delay progression: 2s, 4s, 8s, 16s, 32s, 60s (capped)
+        print("🔄 Calling Gemini API with exponential retry protection (up to 6 retries)...")
+        refined_interpretations = exponential_retry(
             func=make_api_call,
-            max_retries=5,
+            max_retries=6,
             base_delay=2.0,
             max_delay=60.0,
             exponential_base=2.0,
             jitter=True
         )
 
-        response_text = response.text.strip()
-
-        # Extract JSON from potential markdown code blocks
-        import re
-        json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
-        match = re.search(json_pattern, response_text)
-
-        if match:
-            response_text = match.group(1).strip()
-
-        # Parse the JSON response
-        refined_interpretations = json.loads(response_text)
-
-        if isinstance(refined_interpretations, list) and all(isinstance(item, str) for item in refined_interpretations):
-            # Remove any duplicates or near-duplicates from AI output
-            import re
-            seen = set()
-            seen_normalized = set()
-            deduplicated = []
-
-            for interp in refined_interpretations:
-                clean_interp = interp.strip()
-                if not clean_interp:
-                    continue
-
-                # Normalize to catch variations
-                normalized = re.sub(r'[^\w\s]', '', clean_interp.lower())
-                normalized = ' '.join(normalized.split())
-
-                if clean_interp.lower() not in seen and normalized not in seen_normalized:
-                    seen.add(clean_interp.lower())
-                    seen_normalized.add(normalized)
-                    deduplicated.append(clean_interp)
-
-            refined_interpretations = deduplicated
-
-            # Validate count (should be maximum 5 points)
-            count = len(refined_interpretations)
-            if count > 5:
-                print(f"⚠️ AI returned {count} unique points (expected maximum 5), trimming to 5")
-                refined_interpretations = refined_interpretations[:5]  # Keep top 5
-
-            print(f"✅ AI refinement successful: {len(refined_interpretations)} unique interpretations")
-            return refined_interpretations
-        else:
-            print(f"⚠️ AI refinement returned invalid format, using raw interpretations")
+        # Validate that all items in the list are strings
+        if not all(isinstance(item, str) for item in refined_interpretations):
+            print(f"⚠️ AI refinement returned non-string items, using raw interpretations")
             return raw_interpretations
+
+        # Remove any duplicates or near-duplicates from AI output
+        import re
+        seen = set()
+        seen_normalized = set()
+        deduplicated = []
+
+        for interp in refined_interpretations:
+            clean_interp = interp.strip()
+            if not clean_interp:
+                continue
+
+            # Normalize to catch variations
+            normalized = re.sub(r'[^\w\s]', '', clean_interp.lower())
+            normalized = ' '.join(normalized.split())
+
+            if clean_interp.lower() not in seen and normalized not in seen_normalized:
+                seen.add(clean_interp.lower())
+                seen_normalized.add(normalized)
+                deduplicated.append(clean_interp)
+
+        refined_interpretations = deduplicated
+
+        # Validate count (should be maximum 5 points)
+        count = len(refined_interpretations)
+        if count > 5:
+            print(f"⚠️ AI returned {count} unique points (expected maximum 5), trimming to 5")
+            refined_interpretations = refined_interpretations[:5]  # Keep top 5
+
+        print(f"✅ AI refinement successful: {len(refined_interpretations)} unique interpretations")
+        return refined_interpretations
 
     except Exception as e:
         print(f"❌ AI refinement failed: {str(e)}, using raw interpretations")
@@ -607,9 +885,17 @@ def postprocess_lab_data(raw_lab_data: List[Dict], use_ai_refinement: bool = Tru
     """
     Main postprocessing function to consolidate and clean lab data.
 
+    IMPORTANT: AI refinement should ONLY be used at the consolidated level (after all reports
+    are processed), NOT at the individual report level. This ensures:
+    - One AI call instead of N calls (faster, cheaper)
+    - AI sees all lab data across all reports for better synthesis
+    - Clinical interpretations synthesize trends across entire patient timeline
+
     Args:
         raw_lab_data: Raw output from llmresponsedetailed (list of batch results)
-        use_ai_refinement: Whether to use AI to refine clinical interpretations (default: True)
+        use_ai_refinement: Whether to use AI to refine clinical interpretations
+                          - Set to False for individual report processing
+                          - Set to True ONLY for final consolidated processing (default: True)
 
     Returns:
         Clean, consolidated lab data ready for UI
@@ -839,9 +1125,15 @@ def process_lab_data_for_ui(raw_lab_data: List[Dict], use_ai_refinement: bool = 
     """
     Complete pipeline: consolidate raw data and format for UI.
 
+    USAGE PATTERN:
+    - Individual report processing: use_ai_refinement=False (skip AI refinement per report)
+    - Consolidated processing: use_ai_refinement=True (refine interpretations across all reports)
+
     Args:
         raw_lab_data: Raw output from llmresponsedetailed
-        use_ai_refinement: Whether to use AI to refine clinical interpretations (default: True)
+        use_ai_refinement: Whether to use AI to refine clinical interpretations
+                          - False: Individual report processing (avoid redundant AI calls)
+                          - True: Consolidated processing (AI synthesizes across all reports)
 
     Returns:
         Clean, formatted data ready for UI rendering

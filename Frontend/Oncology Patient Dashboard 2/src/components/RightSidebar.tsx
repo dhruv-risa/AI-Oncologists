@@ -176,16 +176,9 @@ export function RightSidebar({ patientData }: RightSidebarProps) {
           <div className="flex-1">
             {targetMutation ? (
               <>
-                <div className="flex items-center gap-2 mb-1">
-                  <p className="text-sm text-emerald-950 font-semibold">{targetMutation.gene}</p>
-                </div>
-                <p className="text-xs text-emerald-700 mb-2">{targetMutation.details || 'Actionable target identified'}</p>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-1.5 flex-1 bg-emerald-100 rounded-full overflow-hidden">
-                    <div className="h-full w-full bg-emerald-500 rounded-full"></div>
-                  </div>
-                  <span className="text-xs text-emerald-700">Target</span>
-                </div>
+                <p className="text-xs text-emerald-700 font-semibold uppercase tracking-wider mb-1">Target Mutation</p>
+                <p className="text-base text-emerald-950 font-bold mb-1">{targetMutation.gene}</p>
+                <p className="text-xs text-emerald-600">{targetMutation.details || 'Actionable target identified'}</p>
               </>
             ) : (
               <>

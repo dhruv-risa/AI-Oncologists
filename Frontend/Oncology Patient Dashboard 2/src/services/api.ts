@@ -409,7 +409,15 @@ export interface PatientData {
     diagnosis_date: string;
     tnm_classification: string;
     ajcc_stage: string;
-    line_of_therapy?: string;
+    initial_staging?: {
+      tnm: string;
+      ajcc_stage: string;
+    };
+    current_staging?: {
+      tnm: string;
+      ajcc_stage: string;
+    };
+    line_of_therapy?: string | number;
     metastatic_sites: string[];
     ecog_status: string;
     disease_status: string;
