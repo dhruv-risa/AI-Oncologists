@@ -149,6 +149,15 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
     return true;
   };
 
+  // Helper function to check if cycles should be displayed
+  const shouldShowCycles = (treatment: any) => {
+    const displayText = treatment.cycles_data?.display_text;
+    if (!displayText || displayText === 'NA' || displayText === 'N/A' || displayText.trim() === '') {
+      return false;
+    }
+    return true;
+  };
+
   // Helper function to get discontinuation reason (only for discontinued treatments)
   const getDiscontinuationReason = (treatment: any) => {
     const status = treatment.header?.status_badge?.toLowerCase() || '';
@@ -315,19 +324,44 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
   // Process and nest adjuvant therapies
   const { mainLines: processedTreatments, localTherapies } = nestAdjuvantTherapies([...rawTreatmentHistory]);
 
-  // Sort treatment history: Current first, then by line number (highest first)
-  const treatmentHistory = processedTreatments.sort((a, b) => {
-    // Current treatments always come first
-    const aIsCurrent = a.header?.status_badge?.toLowerCase().includes('current') || false;
-    const bIsCurrent = b.header?.status_badge?.toLowerCase().includes('current') || false;
+  // Merge main lines and local therapies, then sort chronologically
+  const allTreatments = [
+    ...processedTreatments.map(t => ({ ...t, isLocalTherapy: false })),
+    ...localTherapies.map(t => ({ ...t, isLocalTherapy: true }))
+  ];
 
-    if (aIsCurrent && !bIsCurrent) return -1;
-    if (!aIsCurrent && bIsCurrent) return 1;
-
-    // Otherwise sort by line number (highest first)
+  // Sort all treatments: By date if available (most recent first), otherwise by line number (highest first)
+  const treatmentHistory = allTreatments.sort((a, b) => {
     const aLineNum = parseInt(a.header?.line_number) || 0;
     const bLineNum = parseInt(b.header?.line_number) || 0;
-    return bLineNum - aLineNum;
+    const aStartDate = a.dates?.start_date;
+    const bStartDate = b.dates?.start_date;
+
+    const aHasValidDate = aStartDate && aStartDate !== 'NA' && aStartDate !== 'Ongoing';
+    const bHasValidDate = bStartDate && bStartDate !== 'NA' && bStartDate !== 'Ongoing';
+
+    // If both have valid dates, sort by date (most recent first)
+    if (aHasValidDate && bHasValidDate) {
+      try {
+        const dateA = new Date(aStartDate);
+        const dateB = new Date(bStartDate);
+        return dateB.getTime() - dateA.getTime(); // Most recent first
+      } catch {
+        // If date parsing fails, fall back to line number
+        return bLineNum - aLineNum;
+      }
+    }
+
+    // If neither has valid dates, sort by line number (highest first)
+    if (!aHasValidDate && !bHasValidDate) {
+      return bLineNum - aLineNum;
+    }
+
+    // If only one has a valid date, prioritize the one with a date
+    if (aHasValidDate && !bHasValidDate) return -1;
+    if (!aHasValidDate && bHasValidDate) return 1;
+
+    return 0;
   });
 
   // Helper function to get response tag color
@@ -380,6 +414,16 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
     return 'bg-yellow-100 text-yellow-800';
   };
 
+  // Helper function to parse clinical details into bullet points
+  const parseClinicalDetails = (details: string) => {
+    if (!details) return [];
+    // Split by bullet point character (•) and clean up
+    return details
+      .split('•')
+      .map(item => item.trim())
+      .filter(item => item.length > 0);
+  };
+
   return (
     <div className="bg-white border border-t-0 border-gray-200 p-6">
       <div className="space-y-6 mb-6">
@@ -398,6 +442,101 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
             ) : (
               <>
                 {treatmentHistory.map((treatment, index) => {
+                  // Check if this is a local therapy card
+                  if (treatment.isLocalTherapy) {
+                    const { therapyType, site } = parseLocalTherapy(treatment.local_therapy);
+
+                    return (
+                      <div
+                        key={`local-${index}`}
+                        className="bg-white border border-purple-400 rounded-lg p-5 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <p className="text-gray-900 font-medium">
+                              {treatment.header.primary_drug_name || 'Local Therapy'}
+                            </p>
+                            <span className={`px-2 py-1 rounded text-xs ${getStatusBadgeStyle(treatment.header.status_badge)}`}>
+                              {treatment.header.status_badge}
+                            </span>
+                            <span className="px-2 py-1 bg-purple-600 text-white rounded text-xs font-medium">
+                              Local Therapy
+                            </span>
+                          </div>
+                          {shouldShowResponseBadge(treatment) && (
+                            <span className={`px-2.5 py-1 rounded-md text-xs ${getResponseColor(treatment.outcome?.response_tag || '')}`}>
+                              {treatment.outcome?.response_tag}
+                            </span>
+                          )}
+                        </div>
+
+                        {shouldShowDates(treatment) && (
+                          <p className="text-sm text-gray-600 mb-3">
+                            {formatDateDisplay(treatment)}
+                          </p>
+                        )}
+
+                        <div className="flex justify-between items-start gap-4 mb-3">
+                          {therapyType !== 'N/A' && (
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500 mb-1">Therapy Type</p>
+                              <p className="text-sm text-gray-900">
+                                {therapyType}
+                              </p>
+                            </div>
+                          )}
+                          <div className="flex-shrink-0 ml-auto" style={{ minWidth: '200px' }}>
+                            <p className="text-xs text-gray-500 mb-1">Site / Target Area</p>
+                            <p className="text-sm text-gray-900">
+                              {site}
+                            </p>
+                          </div>
+                        </div>
+
+                        {treatment.toxicities && treatment.toxicities.length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-xs text-gray-500 mb-1">Toxicities</p>
+                            <div className="flex flex-wrap gap-2">
+                              {treatment.toxicities.map((toxicity: any, idx: number) => (
+                                <span
+                                  key={idx}
+                                  className={`px-2 py-1 rounded text-xs ${getToxicityColor(toxicity.grade)}`}
+                                >
+                                  {toxicity.display_tag}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {shouldShowClinicalDetails(treatment) && (
+                          <div className="mb-3">
+                            <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
+                            <div className="space-y-1">
+                              {parseClinicalDetails(treatment.outcome.details).map((point, idx) => (
+                                <div key={idx} className="flex gap-2 items-start">
+                                  <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
+                                  <p className="text-sm text-gray-900 flex-1 leading-normal">{point}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {(() => {
+                          const reason = getDiscontinuationReason(treatment);
+                          return reason ? (
+                            <div>
+                              <p className="text-xs text-gray-500 mb-1">Reason for discontinuation</p>
+                              <p className="text-sm text-gray-900">{reason}</p>
+                            </div>
+                          ) : null;
+                        })()}
+                      </div>
+                    );
+                  }
+
+                  // Regular line of therapy card
                   const hasAdjuvants = treatment.adjuvant_therapies && treatment.adjuvant_therapies.length > 0;
                   const hasRegimenModifications = treatment.regimen_modifications && treatment.regimen_modifications.length > 0;
 
@@ -439,19 +578,21 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                         </p>
                       )}
 
-                      <div className="grid grid-cols-2 gap-4 mb-3">
-                        <div>
+                      <div className="flex justify-between items-start gap-4 mb-3">
+                        <div className="flex-1">
                           <p className="text-xs text-gray-500 mb-1">Regimen</p>
                           <p className="text-sm text-gray-900">
                             {treatment.systemic_regimen || treatment.regimen_details?.display_name || 'N/A'}
                           </p>
                         </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
-                          <p className="text-sm text-gray-900">
-                            {treatment.cycles_data?.display_text || 'N/A'}
-                          </p>
-                        </div>
+                        {shouldShowCycles(treatment) && (
+                          <div className="flex-shrink-0 ml-auto" style={{ minWidth: '200px' }}>
+                            <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
+                            <p className="text-sm text-gray-900">
+                              {treatment.cycles_data?.display_text}
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       {treatment.toxicities && treatment.toxicities.length > 0 && (
@@ -473,7 +614,14 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                       {shouldShowClinicalDetails(treatment) && (
                         <div className="mb-3">
                           <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
-                          <p className="text-sm text-gray-900 whitespace-pre-line">{treatment.outcome.details}</p>
+                          <div className="space-y-1">
+                            {parseClinicalDetails(treatment.outcome.details).map((point, idx) => (
+                              <div key={idx} className="flex gap-2 items-start">
+                                <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
+                                <p className="text-sm text-gray-900 flex-1 leading-normal">{point}</p>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -528,19 +676,21 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                                 </p>
                               )}
 
-                              <div className="grid grid-cols-2 gap-4 mb-3">
-                                <div>
+                              <div className="flex justify-between items-start gap-4 mb-3">
+                                <div className="flex-1">
                                   <p className="text-xs text-gray-500 mb-1">Regimen</p>
                                   <p className="text-sm text-gray-900">
                                     {modification.systemic_regimen || modification.regimen_details?.display_name || 'N/A'}
                                   </p>
                                 </div>
-                                <div>
-                                  <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
-                                  <p className="text-sm text-gray-900">
-                                    {modification.cycles_data?.display_text || 'N/A'}
-                                  </p>
-                                </div>
+                                {shouldShowCycles(modification) && (
+                                  <div className="flex-shrink-0 ml-auto" style={{ minWidth: '200px' }}>
+                                    <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
+                                    <p className="text-sm text-gray-900">
+                                      {modification.cycles_data?.display_text}
+                                    </p>
+                                  </div>
+                                )}
                               </div>
 
                               {modification.toxicities && modification.toxicities.length > 0 && (
@@ -562,7 +712,14 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                               {shouldShowClinicalDetails(modification) && (
                                 <div className="mb-3">
                                   <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
-                                  <p className="text-sm text-gray-900 whitespace-pre-line">{modification.outcome.details}</p>
+                                  <div className="space-y-1">
+                                    {parseClinicalDetails(modification.outcome.details).map((point, idx) => (
+                                      <div key={idx} className="flex gap-2 items-start">
+                                        <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
+                                        <p className="text-sm text-gray-900 flex-1 leading-normal">{point}</p>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               )}
 
@@ -616,19 +773,21 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                               </p>
                             )}
 
-                            <div className="grid grid-cols-2 gap-4 mb-3">
-                              <div>
+                            <div className="flex justify-between items-start gap-4 mb-3">
+                              <div className="flex-1">
                                 <p className="text-xs text-gray-500 mb-1">Regimen</p>
                                 <p className="text-sm text-gray-900">
                                   {adjuvant.systemic_regimen || adjuvant.regimen_details?.display_name || 'N/A'}
                                 </p>
                               </div>
-                              <div>
-                                <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
-                                <p className="text-sm text-gray-900">
-                                  {adjuvant.cycles_data?.display_text || 'N/A'}
-                                </p>
-                              </div>
+                              {shouldShowCycles(adjuvant) && (
+                                <div className="flex-shrink-0 ml-auto" style={{ minWidth: '200px' }}>
+                                  <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
+                                  <p className="text-sm text-gray-900">
+                                    {adjuvant.cycles_data?.display_text}
+                                  </p>
+                                </div>
+                              )}
                             </div>
 
                             {adjuvant.toxicities && adjuvant.toxicities.length > 0 && (
@@ -650,7 +809,14 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                             {shouldShowClinicalDetails(adjuvant) && (
                               <div className="mb-3">
                                 <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
-                                <p className="text-sm text-gray-900 whitespace-pre-line">{adjuvant.outcome.details}</p>
+                                <div className="space-y-1">
+                                  {parseClinicalDetails(adjuvant.outcome.details).map((point, idx) => (
+                                    <div key={idx} className="flex gap-2 items-start">
+                                      <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
+                                      <p className="text-sm text-gray-900 flex-1 leading-normal">{point}</p>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             )}
 
@@ -668,91 +834,6 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                       </div>
                     )}
                   </div>
-                  );
-                })}
-
-                {/* Local Therapy Standalone Cards */}
-                {localTherapies.map((therapy, index) => {
-                  const { therapyType, site } = parseLocalTherapy(therapy.local_therapy);
-
-                  return (
-                    <div
-                      key={`local-${index}`}
-                      className="bg-white border border-purple-400 rounded-lg p-5 shadow-sm"
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <p className="text-gray-900 font-medium">
-                            {therapy.header.primary_drug_name || 'Local Therapy'}
-                          </p>
-                          <span className={`px-2 py-1 rounded text-xs ${getStatusBadgeStyle(therapy.header.status_badge)}`}>
-                            {therapy.header.status_badge}
-                          </span>
-                          <span className="px-2 py-1 bg-purple-600 text-white rounded text-xs font-medium">
-                            Local Therapy
-                          </span>
-                        </div>
-                        {shouldShowResponseBadge(therapy) && (
-                          <span className={`px-2.5 py-1 rounded-md text-xs ${getResponseColor(therapy.outcome?.response_tag || '')}`}>
-                            {therapy.outcome?.response_tag}
-                          </span>
-                        )}
-                      </div>
-
-                      {shouldShowDates(therapy) && (
-                        <p className="text-sm text-gray-600 mb-3">
-                          {therapy.dates?.display_text}
-                        </p>
-                      )}
-
-                      <div className="grid grid-cols-2 gap-4 mb-3">
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">Therapy Type</p>
-                          <p className="text-sm text-gray-900">
-                            {therapyType}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">Site / Target Area</p>
-                          <p className="text-sm text-gray-900">
-                            {site}
-                          </p>
-                        </div>
-                      </div>
-
-                      {therapy.toxicities && therapy.toxicities.length > 0 && (
-                        <div className="mb-3">
-                          <p className="text-xs text-gray-500 mb-1">Toxicities</p>
-                          <div className="flex flex-wrap gap-2">
-                            {therapy.toxicities.map((toxicity: any, idx: number) => (
-                              <span
-                                key={idx}
-                                className={`px-2 py-1 rounded text-xs ${getToxicityColor(toxicity.grade)}`}
-                              >
-                                {toxicity.display_tag}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {shouldShowClinicalDetails(therapy) && (
-                        <div className="mb-3">
-                          <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
-                          <p className="text-sm text-gray-900 whitespace-pre-line">{therapy.outcome.details}</p>
-                        </div>
-                      )}
-
-                      {(() => {
-                        const reason = getDiscontinuationReason(therapy);
-                        return reason ? (
-                          <div>
-                            <p className="text-xs text-gray-500 mb-1">Reason for discontinuation</p>
-                            <p className="text-sm text-gray-900">{reason}</p>
-                          </div>
-                        ) : null;
-                      })()}
-                    </div>
                   );
                 })}
               </>

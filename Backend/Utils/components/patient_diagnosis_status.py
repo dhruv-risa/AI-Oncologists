@@ -231,7 +231,7 @@ Just the JSON object following the schema above.
 """
 
     # Initialize the model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")

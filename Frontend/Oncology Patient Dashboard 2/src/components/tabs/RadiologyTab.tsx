@@ -57,19 +57,28 @@ export function RadiologyTab() {
   const getResponseBadge = (response?: string) => {
     if (!response) return null;
 
-    const normalized = response.toLowerCase();
-    if (normalized.includes('partial response') || normalized.includes('pr')) {
-      return { text: 'PR', color: 'green' };
-    }
-    if (normalized.includes('complete response') || normalized.includes('cr')) {
-      return { text: 'CR', color: 'green' };
-    }
-    if (normalized.includes('progressive disease') || normalized.includes('pd')) {
+    const normalized = response.toLowerCase().trim();
+
+    // Check for progressive disease first to avoid matching "pr" in "progressive"
+    if (normalized.includes('progressive disease') || normalized.includes('progressive') ||
+        normalized.match(/\bpd\b/)) {
       return { text: 'PD', color: 'red' };
     }
-    if (normalized.includes('stable')) {
+    // Check for partial response (use word boundary to avoid matching in "progressive")
+    if (normalized.includes('partial response') || normalized.match(/\bpr\b/)) {
+      return { text: 'PR', color: 'green' };
+    }
+    // Check for complete response
+    if (normalized.includes('complete response') || normalized.match(/\bcr\b/)) {
+      return { text: 'CR', color: 'green' };
+    }
+    // Check for stable disease
+    if (normalized.includes('stable disease') || normalized.includes('stable') ||
+        normalized.match(/\bsd\b/)) {
       return { text: 'SD', color: 'gray' };
     }
+
+    // If response doesn't match any standard RECIST category, don't show a badge
     return null;
   };
 
@@ -463,6 +472,23 @@ export function RadiologyTab() {
                   return null;
                 }
 
+                // Check if this is a baseline study (no prior comparison OR all baseline values are "Not available")
+                const priorComparison = selectedReport.radiology_summary?.report_summary?.prior_comparison;
+
+                // Check if all baseline values are "Not available" or "NA"
+                const allBaselinesNA = recistData.lesions.every(lesion => {
+                  const baselineVal = lesion.current_treatment_data.baseline_val;
+                  return !baselineVal ||
+                         baselineVal === 'NA' ||
+                         baselineVal === 'N/A' ||
+                         baselineVal.toLowerCase() === 'not available';
+                });
+
+                const isBaselineStudy = !priorComparison ||
+                                       priorComparison === 'NA' ||
+                                       priorComparison.toLowerCase().includes('baseline') ||
+                                       allBaselinesNA;
+
                 return (
                   <div className="pt-4 border-t border-gray-200">
                     <div className="flex items-center justify-between mb-3">
@@ -473,8 +499,8 @@ export function RadiologyTab() {
                         <thead className="bg-gray-50">
                           <tr>
                             <th className="px-3 py-2 text-left text-xs text-gray-600">Lesion</th>
-                            <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={3}>
-                              <div className="flex flex-col">
+                            <th className="px-3 py-2 text-center text-xs text-gray-600 border-l border-gray-300" colSpan={isBaselineStudy ? 1 : 3}>
+                              <div className="flex flex-col items-center">
                                 <span className="font-semibold text-purple-700">
                                   Current Treatment ({getTreatmentAtDate(getReportDate(selectedReport))})
                                 </span>
@@ -486,19 +512,23 @@ export function RadiologyTab() {
                           </tr>
                           <tr className="border-t border-gray-300">
                             <th className="px-3 py-2 text-left text-xs text-gray-600"></th>
-                            <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">
-                              <div className="flex flex-col">
-                                <span>Baseline</span>
-                                <span className="text-xs text-gray-500 font-normal">(First study)</span>
-                              </div>
-                            </th>
-                            <th className="px-3 py-2 text-left text-xs text-gray-600">
-                              <div className="flex flex-col">
+                            {!isBaselineStudy && (
+                              <th className="px-3 py-2 text-left text-xs text-gray-600 border-l border-gray-200">
+                                <div className="flex flex-col">
+                                  <span>Baseline</span>
+                                  <span className="text-xs text-gray-500 font-normal">(First study)</span>
+                                </div>
+                              </th>
+                            )}
+                            <th className={`px-3 py-2 ${isBaselineStudy ? 'text-center border-l border-gray-200' : 'text-left'} text-xs text-gray-600`}>
+                              <div className={`flex flex-col ${isBaselineStudy ? 'items-center' : ''}`}>
                                 <span>Current</span>
                                 <span className="text-xs text-gray-500 font-normal">(Current study)</span>
                               </div>
                             </th>
-                            <th className="px-3 py-2 text-left text-xs text-gray-600">Change</th>
+                            {!isBaselineStudy && (
+                              <th className="px-3 py-2 text-left text-xs text-gray-600">Change</th>
+                            )}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
@@ -516,17 +546,21 @@ export function RadiologyTab() {
                             return (
                               <tr key={idx}>
                                 <td className="px-3 py-2 text-gray-900">{lesion.lesion_name}</td>
-                                <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
-                                  {formatValue(lesion.current_treatment_data.baseline_val)}
-                                </td>
-                                <td className="px-3 py-2 text-gray-600">
+                                {!isBaselineStudy && (
+                                  <td className="px-3 py-2 text-gray-600 border-l border-gray-200">
+                                    {formatValue(lesion.current_treatment_data.baseline_val)}
+                                  </td>
+                                )}
+                                <td className={`px-3 py-2 text-gray-600 ${isBaselineStudy ? 'text-center border-l border-gray-200' : ''}`}>
                                   {displayCurrentVal}
                                 </td>
-                                <td className="px-3 py-2">
-                                  <span className={getChangeColor(lesion.current_treatment_data.change_percentage)}>
-                                    {formatValue(lesion.current_treatment_data.change_percentage)}
-                                  </span>
-                                </td>
+                                {!isBaselineStudy && (
+                                  <td className="px-3 py-2">
+                                    <span className={getChangeColor(lesion.current_treatment_data.change_percentage)}>
+                                      {formatValue(lesion.current_treatment_data.change_percentage)}
+                                    </span>
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}
@@ -564,17 +598,21 @@ export function RadiologyTab() {
                                 <td className="px-3 py-2 text-gray-900">
                                   {recistData.sum_row.lesion_name}
                                 </td>
-                                <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
-                                  {baselineVal}
-                                </td>
-                                <td className="px-3 py-2 text-gray-900">
+                                {!isBaselineStudy && (
+                                  <td className="px-3 py-2 text-gray-900 border-l border-gray-200">
+                                    {baselineVal}
+                                  </td>
+                                )}
+                                <td className={`px-3 py-2 text-gray-900 ${isBaselineStudy ? 'text-center border-l border-gray-200' : ''}`}>
                                   {displayCurrentVal}
                                 </td>
-                                <td className="px-3 py-2">
-                                  <span className={getChangeColor(recistData.sum_row.current_treatment_data.change_percentage)}>
-                                    {changeVal}
-                                  </span>
-                                </td>
+                                {!isBaselineStudy && (
+                                  <td className="px-3 py-2">
+                                    <span className={getChangeColor(recistData.sum_row.current_treatment_data.change_percentage)}>
+                                      {changeVal}
+                                    </span>
+                                  </td>
+                                )}
                               </tr>
                             );
                           })()}

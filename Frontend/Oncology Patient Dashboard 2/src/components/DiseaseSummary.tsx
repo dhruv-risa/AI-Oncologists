@@ -38,20 +38,29 @@ export function DiseaseSummary({ patient }: DiseaseSummaryProps) {
     return parseDate(b.date_label).getTime() - parseDate(a.date_label).getTime();
   });
 
-  // Find first timeline entry with valid staging data
+  // Current Staging - Priority: diagnosis component > most recent timeline entry
+  const hasCurrentStagingFromDiagnosis = patient.diagnosis?.current_staging &&
+    (patient.diagnosis.current_staging.tnm !== 'NA' && patient.diagnosis.current_staging.tnm !== 'N/A' ||
+     patient.diagnosis.current_staging.ajcc_stage !== 'N/A' && patient.diagnosis.current_staging.ajcc_stage !== 'NA');
+
   const currentTimelineEntry = sortedTimeline.find(entry =>
     entry.tnm_status && entry.tnm_status !== 'NA' && entry.tnm_status !== 'N/A'
   );
 
-  const currentStaging = currentTimelineEntry
+  const currentStaging = hasCurrentStagingFromDiagnosis
     ? {
-        tnm: currentTimelineEntry.tnm_status || 'N/A',
-        ajcc_stage: currentTimelineEntry.stage_header || 'N/A'
+        tnm: patient.diagnosis.current_staging.tnm || 'N/A',
+        ajcc_stage: patient.diagnosis.current_staging.ajcc_stage || 'N/A'
       }
-    : {
-        tnm: patient.diagnosis_header?.current_staging?.tnm || 'N/A',
-        ajcc_stage: patient.diagnosis_header?.current_staging?.ajcc_stage || 'N/A'
-      };
+    : currentTimelineEntry
+      ? {
+          tnm: currentTimelineEntry.tnm_status || 'N/A',
+          ajcc_stage: currentTimelineEntry.stage_header || 'N/A'
+        }
+      : {
+          tnm: 'N/A',
+          ajcc_stage: 'N/A'
+        };
 
   // Format TNM and Stage for display with better messaging
   const formatStageDisplay = (stage: string) => {
@@ -102,7 +111,18 @@ export function DiseaseSummary({ patient }: DiseaseSummaryProps) {
 
   // Use metastatic sites from diagnosis_header to match the diagnosis header display
   const metastaticSites = patient.diagnosis_header?.metastatic_sites || [];
-  const rawEcogStatus = patient.diagnosis?.ecog_status || 'N/A';
+
+  // ECOG Status - check both diagnosis and comorbidities sources
+  // Priority: diagnosis.ecog_status → comorbidities.ecog_performance_status.score
+  let rawEcogStatus = patient.diagnosis?.ecog_status || 'N/A';
+
+  // If not found in diagnosis, try comorbidities
+  if (rawEcogStatus === 'N/A' || rawEcogStatus === 'NA' || rawEcogStatus === 'Not applicable') {
+    if (patient.comorbidities?.ecog_performance_status?.score) {
+      rawEcogStatus = patient.comorbidities.ecog_performance_status.score;
+    }
+  }
+
   const rawDiseaseStatus = patient.diagnosis?.disease_status || 'N/A';
 
   // Check if ECOG status is available (not NA/N/A/Not applicable)

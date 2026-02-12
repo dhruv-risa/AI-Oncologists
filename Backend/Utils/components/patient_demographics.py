@@ -26,10 +26,49 @@ import datetime
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 sys.path.append(PROJECT_ROOT)
 
-from Backend.Utils.components import parser
+from Utils.components import parser
 
 # Initialize Vertex AI
 vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+
+
+def normalize_patient_name(name):
+    """
+    Normalize patient name to have proper capitalization:
+    First letter uppercase, rest lowercase for each part of the name.
+
+    Handles formats like:
+    - "COSTANZO, ROBERT" -> "Costanzo, Robert"
+    - "john doe" -> "John Doe"
+    - "SMITH-JONES, MARY ANNE" -> "Smith-Jones, Mary Anne"
+
+    Args:
+        name (str): The patient name to normalize
+
+    Returns:
+        str: Normalized name with proper capitalization
+    """
+    if not name or not isinstance(name, str):
+        return name
+
+    # Split by comma first to handle "Last, First" format
+    parts = name.split(',')
+    normalized_parts = []
+
+    for part in parts:
+        # Handle each part (could be first name, last name, etc.)
+        # Split by spaces and hyphens but keep the separators
+        words = []
+        for word in part.strip().split():
+            # Handle hyphenated names like "Smith-Jones"
+            if '-' in word:
+                hyphenated = '-'.join([w.capitalize() for w in word.split('-')])
+                words.append(hyphenated)
+            else:
+                words.append(word.capitalize())
+        normalized_parts.append(' '.join(words))
+
+    return ', '.join(normalized_parts)
 
 
 def extract_demographics_with_gemini(pdf_input):
@@ -110,7 +149,7 @@ IMPORTANT:
 """
 
     # Initialize the model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
@@ -141,6 +180,11 @@ IMPORTANT:
             response_text = response_text.strip()
 
         extracted_data = json.loads(response_text)
+
+        # Normalize patient name to proper capitalization
+        if 'Patient Name' in extracted_data and extracted_data['Patient Name']:
+            extracted_data['Patient Name'] = normalize_patient_name(extracted_data['Patient Name'])
+
         return extracted_data
 
     except (json.JSONDecodeError, AttributeError) as e:
@@ -196,7 +240,13 @@ def extract_patient_demographics(pdf_url, use_gemini=True):
         # Parse the response
         try:
             response_data = json.loads(response.text)
-            return response_data.get('response', response_data)
+            extracted_data = response_data.get('response', response_data)
+
+            # Normalize patient name to proper capitalization
+            if 'Patient Name' in extracted_data and extracted_data['Patient Name']:
+                extracted_data['Patient Name'] = normalize_patient_name(extracted_data['Patient Name'])
+
+            return extracted_data
         except json.JSONDecodeError:
             raise Exception(f"Failed to parse response: {response.text}")
 

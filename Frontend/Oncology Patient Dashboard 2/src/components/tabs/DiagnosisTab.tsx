@@ -101,8 +101,14 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
   const hasMore = visibleTimelineCount < totalTimelineEntries;
   const canShowLess = visibleTimelineCount > 5;
 
-  // Derive initial and current staging from timeline (timeline is sorted most recent first)
-  // Find oldest timeline entry with valid staging data for initial staging
+  // Derive initial and current staging from diagnosis component (FIRST PRIORITY)
+  // Fall back to timeline entries if diagnosis staging is not available
+
+  // Initial Staging - Priority: diagnosis component > oldest timeline entry
+  const hasInitialStagingFromDiagnosis = patientData.diagnosis?.initial_staging &&
+    (patientData.diagnosis.initial_staging.tnm !== 'NA' ||
+     patientData.diagnosis.initial_staging.ajcc_stage !== 'N/A');
+
   const initialTimelineEntry = diagnosisTimeline.length > 0
     ? [...diagnosisTimeline].reverse().find(entry =>
         (entry.tnm_status && entry.tnm_status !== 'NA' && entry.tnm_status !== 'N/A') ||
@@ -110,30 +116,50 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
       )
     : null;
 
-  const initialStaging = initialTimelineEntry
-    ? {
-        tnm: initialTimelineEntry.tnm_status || 'NA',
-        ajcc_stage: initialTimelineEntry.stage_header || 'N/A'
-      }
-    : diagnosisHeader?.initial_staging || { tnm: 'NA', ajcc_stage: 'N/A' };
+  const initialStaging = hasInitialStagingFromDiagnosis
+    ? patientData.diagnosis.initial_staging
+    : initialTimelineEntry
+      ? {
+          tnm: initialTimelineEntry.tnm_status || 'NA',
+          ajcc_stage: initialTimelineEntry.stage_header || 'N/A'
+        }
+      : { tnm: 'NA', ajcc_stage: 'N/A' };
 
-  // Find most recent timeline entry with valid staging data for current staging
+  // Current Staging - Priority: diagnosis component > most recent timeline entry
+  const hasCurrentStagingFromDiagnosis = patientData.diagnosis?.current_staging &&
+    (patientData.diagnosis.current_staging.tnm !== 'NA' ||
+     patientData.diagnosis.current_staging.ajcc_stage !== 'N/A');
+
   const currentTimelineEntry = diagnosisTimeline.find(entry =>
     (entry.tnm_status && entry.tnm_status !== 'NA' && entry.tnm_status !== 'N/A') ||
     (entry.stage_header && entry.stage_header !== 'N/A')
   );
 
-  const currentStaging = currentTimelineEntry
-    ? {
-        tnm: currentTimelineEntry.tnm_status || 'NA',
-        ajcc_stage: currentTimelineEntry.stage_header || 'N/A'
-      }
-    : diagnosisHeader?.current_staging || { tnm: 'NA', ajcc_stage: 'N/A' };
+  const currentStaging = hasCurrentStagingFromDiagnosis
+    ? patientData.diagnosis.current_staging
+    : currentTimelineEntry
+      ? {
+          tnm: currentTimelineEntry.tnm_status || 'NA',
+          ajcc_stage: currentTimelineEntry.stage_header || 'N/A'
+        }
+      : { tnm: 'NA', ajcc_stage: 'N/A' };
 
   // Format metastatic sites for display
   const metastaticSitesDisplay = diagnosisHeader?.metastatic_sites?.length > 0
     ? diagnosisHeader.metastatic_sites.join(', ')
     : 'None';
+
+  // Helper function to normalize disease status
+  const normalizeRECISTStatus = (status: string | undefined) => {
+    if (!status) return 'Not assessed';
+
+    // Replace "Active disease" with "Progressive disease"
+    if (status.toLowerCase().includes('active disease')) {
+      return status.replace(/active disease/gi, 'Progressive disease');
+    }
+
+    return status;
+  };
 
   // Format dates
   const formatDate = (dateString: string) => {
@@ -215,6 +241,35 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
     return { therapyType, site };
   };
 
+  // Helper function to format duration in years and months
+  const formatDuration = (durationString: string) => {
+    if (!durationString || durationString === 'N/A') return durationString;
+
+    // Extract the number of months from the string (e.g., "97 months" -> 97)
+    const monthsMatch = durationString.match(/(\d+)\s*months?/i);
+    if (!monthsMatch) return durationString; // Return as-is if can't parse
+
+    const totalMonths = parseInt(monthsMatch[1]);
+
+    // If less than 12 months, return as-is
+    if (totalMonths < 12) return durationString;
+
+    // Convert to years and months
+    const years = Math.floor(totalMonths / 12);
+    const months = totalMonths % 12;
+
+    // Build the formatted string
+    const yearText = years === 1 ? '1 year' : `${years} years`;
+    const monthText = months === 1 ? '1 month' : `${months} months`;
+
+    if (months === 0) {
+      return yearText;
+    }
+
+    return `${yearText} ${monthText}`;
+  };
+
+
   return (
     <div className="bg-white border border-t-0 border-gray-200 rounded-b-lg shadow-sm p-6">
       <div className="grid grid-cols-3 gap-x-8 gap-y-5 mb-8">
@@ -254,7 +309,7 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
         />
         <DataField
           label="RECIST status"
-          value={diagnosisHeader?.recurrence_status || 'N/A'}
+          value={normalizeRECISTStatus(patientData?.diagnosis?.disease_status)}
         />
       </div>
 
@@ -337,7 +392,7 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
                         <span className="text-amber-900 font-semibold text-sm uppercase tracking-wide">Relapse</span>
                         {event.relapse_info?.remission_duration && (
                           <span className="text-amber-800 text-xs font-medium ml-2">
-                            • After {event.relapse_info.remission_duration} remission
+                            • After {formatDuration(event.relapse_info.remission_duration)} remission
                           </span>
                         )}
                       </div>
@@ -404,25 +459,31 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
 
                           {/* Relapse Details (instead of Disease Findings) */}
                           <div className="flex-1 space-y-2 self-stretch">
-                            <p className="text-xs text-gray-500 mb-1">Relapse Details</p>
+                            <p className="text-xs text-gray-500 mb-1 font-semibold">Relapse Details</p>
                             {event.relapse_info ? (
                               <div className="space-y-1">
                                 {event.relapse_info.relapse_pattern && (
                                   <div className="flex gap-2 items-start">
                                     <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
-                                    <p className="text-xs text-gray-900 flex-1 leading-normal">{event.relapse_info.relapse_pattern}</p>
+                                    <p className="text-xs text-gray-900 flex-1 leading-normal">
+                                      <span className="font-semibold">Relapse Pattern:</span> {event.relapse_info.relapse_pattern}
+                                    </p>
                                   </div>
                                 )}
                                 {event.relapse_info.comparison_to_initial && (
                                   <div className="flex gap-2 items-start">
                                     <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
-                                    <p className="text-xs text-gray-900 flex-1 leading-normal">{event.relapse_info.comparison_to_initial}</p>
+                                    <p className="text-xs text-gray-900 flex-1 leading-normal">
+                                      <span className="font-semibold">Comparison to Initial:</span> {event.relapse_info.comparison_to_initial}
+                                    </p>
                                   </div>
                                 )}
                                 {event.relapse_info.relapse_detected_by && (
                                   <div className="flex gap-2 items-start">
                                     <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
-                                    <p className="text-xs text-gray-900 flex-1 leading-normal">{event.relapse_info.relapse_detected_by}</p>
+                                    <p className="text-xs text-gray-900 flex-1 leading-normal">
+                                      <span className="font-semibold">Detected By:</span> {event.relapse_info.relapse_detected_by}
+                                    </p>
                                   </div>
                                 )}
                               </div>
@@ -464,7 +525,7 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
                             </span>
                             {event.relapse_info?.remission_duration && (
                               <p className="text-xs text-gray-600 mt-1 italic">
-                                After {event.relapse_info.remission_duration} remission
+                                After {formatDuration(event.relapse_info.remission_duration)} remission
                               </p>
                             )}
                           </div>
@@ -539,7 +600,7 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
                       {/* Disease Findings */}
                       <div className="flex-1 space-y-2 self-stretch">
                         <div>
-                          <p className="text-xs text-gray-500 mb-1">Key Findings</p>
+                          <p className="text-xs text-gray-500 mb-1 font-semibold">Key Findings</p>
                           {event.key_findings && event.key_findings.length > 0 ? (
                             <div className="space-y-1">
                               {parseKeyFindings(event.key_findings).map((finding, idx) => (
@@ -605,16 +666,16 @@ export function DiagnosisTab({ patientData }: DiagnosisTabProps) {
               {/* Check if there's a relapse duration from backend */}
               {diagnosisFooter.duration_since_relapse && diagnosisFooter.duration_since_relapse !== 'N/A' ? (
                 <>
-                  <span className="font-semibold">Duration since relapse:</span> {diagnosisFooter.duration_since_relapse}
+                  <span className="font-semibold">Duration since relapse:</span> {formatDuration(diagnosisFooter.duration_since_relapse)}
                   {diagnosisFooter.duration_since_progression && diagnosisFooter.duration_since_progression !== 'N/A' && (
-                    <> | <span className="font-semibold">Duration since progression:</span> {diagnosisFooter.duration_since_progression}</>
+                    <> | <span className="font-semibold">Duration since progression:</span> {formatDuration(diagnosisFooter.duration_since_progression)}</>
                   )}
                 </>
               ) : (
                 <>
-                  <span className="font-semibold">Duration since diagnosis:</span> {diagnosisFooter.duration_since_diagnosis || 'N/A'}
+                  <span className="font-semibold">Duration since diagnosis:</span> {formatDuration(diagnosisFooter.duration_since_diagnosis || 'N/A')}
                   {diagnosisFooter.duration_since_progression && diagnosisFooter.duration_since_progression !== 'N/A' && (
-                    <> | <span className="font-semibold">Duration since progression:</span> {diagnosisFooter.duration_since_progression}</>
+                    <> | <span className="font-semibold">Duration since progression:</span> {formatDuration(diagnosisFooter.duration_since_progression)}</>
                   )}
                 </>
               )}

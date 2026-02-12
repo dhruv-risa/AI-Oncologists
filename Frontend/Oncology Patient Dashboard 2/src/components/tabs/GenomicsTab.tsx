@@ -107,7 +107,7 @@ export function GenomicsTab() {
   } else {
     biomarkers.push({
       name: 'PD-L1 Expression',
-      value: 'Not mentioned in document',
+      value: 'Not measured',
       available: false,
       highlight: true,
       color: 'purple'
@@ -129,7 +129,7 @@ export function GenomicsTab() {
   } else {
     biomarkers.push({
       name: 'TMB',
-      value: 'Not mentioned in document',
+      value: 'Not measured',
       available: false,
       highlight: false,
       color: 'blue'
@@ -153,7 +153,7 @@ export function GenomicsTab() {
   } else {
     biomarkers.push({
       name: 'MSI Status',
-      value: 'Not mentioned in document',
+      value: 'Not measured',
       available: false,
       highlight: false,
       color: 'gray'
@@ -330,7 +330,7 @@ export function GenomicsTab() {
                   </p>
                 ) : (
                   <p className="text-sm text-emerald-800 leading-relaxed mt-2">
-                    PD-L1 expression status not mentioned in available documents. Consider immunotherapy evaluation based on clinical context.
+                    PD-L1 expression not measured. Consider immunotherapy evaluation based on clinical context.
                   </p>
                 )}
               </div>
@@ -353,7 +353,7 @@ export function GenomicsTab() {
                  genomicInfo.immunotherapy_markers.pd_l1.value &&
                  genomicInfo.immunotherapy_markers.pd_l1.value !== 'null'
                   ? ` PD-L1 expression (${genomicInfo.immunotherapy_markers.pd_l1.value}) may support immunotherapy strategies.`
-                  : ` PD-L1 expression status not mentioned in available documents.`
+                  : ` PD-L1 expression not measured.`
                 }
               </p>
             </div>
