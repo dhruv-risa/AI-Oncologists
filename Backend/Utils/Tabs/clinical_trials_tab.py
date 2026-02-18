@@ -856,7 +856,10 @@ Return ONLY the JSON array, no other text.
         # Fix common JSON escape issues from LLM responses
         # Replace unescaped backslashes that aren't valid escape sequences
         response_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', response_text)
-        
+
+        # Remove trailing commas before closing brackets/braces (common LLM error)
+        response_text = re.sub(r',(\s*[}\]])', r'\1', response_text)
+
         # Try to parse JSON
         try:
             results = json.loads(response_text)

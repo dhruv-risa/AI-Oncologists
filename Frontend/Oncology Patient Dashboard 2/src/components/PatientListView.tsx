@@ -30,12 +30,11 @@ interface PatientListViewProps {
 }
 
 export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListViewProps) {
-  const { cachedPatients, loadCachedPatients, fetchPatientData, fetchDemoPatientData, loading, error, clearError } = usePatient();
+  const { cachedPatients, loadCachedPatients, fetchPatientData, loading, error, clearError } = usePatient();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchMRN, setSearchMRN] = useState('');
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [loadingPatients, setLoadingPatients] = useState(false);
-  const demoMode = true; // Always use demo mode
 
   // Load cached patients on mount
   useEffect(() => {
@@ -172,19 +171,12 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
     }
 
     try {
-      if (demoMode) {
-        // Use demo mode - bypasses FHIR API
-        await fetchDemoPatientData(searchMRN.trim());
-      } else {
-        // Normal mode - uses FHIR API
-        await fetchPatientData(searchMRN.trim());
-      }
+      // Use FHIR API to fetch patient data
+      await fetchPatientData(searchMRN.trim());
       setSearchMRN('');
       setShowAddPatient(false);
-      // Reload cached patients to include the new one (only in normal mode)
-      if (!demoMode) {
-        await loadCachedPatients();
-      }
+      // Reload cached patients to include the new one
+      await loadCachedPatients();
     } catch (err) {
       console.error('Failed to add patient:', err);
     }

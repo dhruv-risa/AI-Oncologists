@@ -36,9 +36,9 @@ extracted_instructions_summary = (
 description_summary = {
     "report_summary": {
         "study_type": "String - The modality and body part (e.g., 'CT Chest with contrast')",
-        "study_date": "String - Date of the current scan (e.g., 'December 8, 2024')",
+        "study_date": "String - Date of the current scan in MM/DD/YYYY format (e.g., '12/08/2024')",
         "overall_response": "String - The summary response status (e.g., 'Partial Response (PR)')",
-        "prior_comparison": "String - Date of the prior scan used for comparison (e.g., 'September 10, 2024')"
+        "prior_comparison": "String - Date of the prior scan used for comparison in MM/DD/YYYY format (e.g., '09/10/2024')"
     }
 }
 
@@ -200,7 +200,7 @@ DETAILED EXTRACTION RULES & EXAMPLES
 2. STUDY DATE EXTRACTION
    Rule: Extract the date when the current imaging study was performed
 
-   Format: Use natural date format (e.g., "December 8, 2024" or "12/08/2024")
+   Format: Use MM/DD/YYYY format ONLY (e.g., "12/08/2024")
 
    Location: Look in:
    - Report header section
@@ -208,9 +208,9 @@ DETAILED EXTRACTION RULES & EXAMPLES
    - "Date of Service" field
 
    Examples:
-   - "Exam Date: 12/08/2024" → "December 8, 2024"
-   - "Study performed on: 08-Dec-2024" → "December 8, 2024"
-   - "Date of Service: 2024-12-08" → "December 8, 2024"
+   - "Exam Date: 12/08/2024" → "12/08/2024"
+   - "Study performed on: 08-Dec-2024" → "12/08/2024"
+   - "Date of Service: 2024-12-08" → "12/08/2024"
 
 3. OVERALL RESPONSE ASSESSMENT
    Rule: Extract the radiologist's overall assessment of disease status following RECIST criteria
@@ -238,15 +238,17 @@ DETAILED EXTRACTION RULES & EXAMPLES
 4. PRIOR COMPARISON DATE
    Rule: Extract the date of the specific prior imaging study used for comparison
 
+   Format: Use MM/DD/YYYY format ONLY (e.g., "09/10/2024")
+
    Location: Look for:
    - "Comparison" section in report header
    - "Prior study dated:" phrase
    - "Compared to [date]" in findings
 
    Examples:
-   - "Comparison: CT Chest dated 09/10/2024" → "September 10, 2024"
-   - "Prior study from 2024-09-10 for comparison" → "September 10, 2024"
-   - "Compared to exam dated 10-Sep-2024" → "September 10, 2024"
+   - "Comparison: CT Chest dated 09/10/2024" → "09/10/2024"
+   - "Prior study from 2024-09-10 for comparison" → "09/10/2024"
+   - "Compared to exam dated 10-Sep-2024" → "09/10/2024"
 
    Special Cases:
    - If multiple prior studies mentioned, use the one explicitly stated as the comparison
@@ -257,9 +259,9 @@ QUALITY CHECKS BEFORE SUBMISSION
 ========================
 
 1. ✓ Study type includes modality, body region, and contrast details
-2. ✓ Study date is in readable format (Month DD, YYYY or MM/DD/YYYY)
+2. ✓ Study date is in MM/DD/YYYY format (e.g., 12/08/2024)
 3. ✓ Overall response is mapped to RECIST category with abbreviation
-4. ✓ Prior comparison date is in the same format as study date
+4. ✓ Prior comparison date is in MM/DD/YYYY format (e.g., 09/10/2024)
 5. ✓ All fields are populated (use "Not specified" for truly missing data)
 6. ✓ No extraneous text or explanations in the values
 

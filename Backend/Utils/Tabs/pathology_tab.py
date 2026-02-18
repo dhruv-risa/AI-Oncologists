@@ -39,7 +39,7 @@ extracted_instructions = (
     "3. PROCEDURE & SITE:\n"
     "   - Procedure Type: Classify strictly as 'Surgical Resection' (lobectomy, wedge, mastectomy) OR 'Biopsy/FNA' (core needle, fluid cytology).\n"
     "   - Site: The specific anatomical origin (e.g., 'Upper Lobe, Right Lung').\n\n"
-    "4. DATES (Strict ISO 8601: YYYY-MM-DD):\n"
+    "4. DATES (Strict MM/DD/YYYY format):\n"
     "   - Biopsy_Date: Use 'Date of Collection' or 'Date of Procedure'. If missing, use 'Date Received'.\n"
     "   - Surgery_Date: Only populate if Procedure Type is 'Surgical Resection'. Otherwise, strictly return 'Not applicable'.\n\n"
     "5. PROGNOSTIC DETAILS:\n"
@@ -63,8 +63,8 @@ description = {
         },
         "details": {
             "biopsy_site": "String. Anatomical location only (e.g., 'Right Adrenal Gland')",
-            "biopsy_date": "String (YYYY-MM-DD). The collection date.",
-            "surgery_date": "String (YYYY-MM-DD) or 'Not applicable'.",
+            "biopsy_date": "String (MM/DD/YYYY). The collection date.",
+            "surgery_date": "String (MM/DD/YYYY) or 'Not applicable'.",
             "tumor_grade": "String. Histologic grade (e.g., 'Grade 2' or 'Poorly Differentiated').",
             "margin_status": "String. (e.g., 'Negative for malignancy', 'Focally involved')."
         }
@@ -433,8 +433,8 @@ DETAILED EXTRACTION RULES & EXAMPLES
    - "Left breast, upper outer quadrant" → "Left Breast, Upper Outer Quadrant"
    - "Right adrenal gland" → "Right Adrenal Gland"
 
-6. DATE EXTRACTION (CRITICAL - ISO 8601 FORMAT)
-   Rule: Use YYYY-MM-DD format strictly
+6. DATE EXTRACTION (CRITICAL - MM/DD/YYYY FORMAT)
+   Rule: Use MM/DD/YYYY format strictly
 
    Biopsy_Date:
    - Priority 1: "Date of Collection" or "Date of Procedure"
@@ -445,8 +445,8 @@ DETAILED EXTRACTION RULES & EXAMPLES
    - If procedure is Biopsy/FNA, use "Not applicable"
 
    Examples:
-   - "Date of Procedure: 01/15/2024" → "2024-01-15"
-   - "Received: January 15, 2024" → "2024-01-15"
+   - "Date of Procedure: 01/15/2024" → "01/15/2024"
+   - "Received: January 15, 2024" → "01/15/2024"
 
 7. TUMOR GRADE
    Rule: Look for grade or differentiation terms
@@ -471,7 +471,7 @@ QUALITY CHECKS BEFORE SUBMISSION
 ========================
 
 1. ✓ All required fields populated (use "Not applicable" for missing, not null)
-2. ✓ All dates in YYYY-MM-DD format
+2. ✓ All dates in MM/DD/YYYY format
 3. ✓ Diagnosis is a list of strings, not a single paragraph
 4. ✓ procedure_category is exactly "Surgical Resection" OR "Biopsy/FNA"
 5. ✓ Alert banner headline is 5 words or less

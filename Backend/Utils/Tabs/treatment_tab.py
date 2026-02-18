@@ -47,8 +47,8 @@ extracted_instructions_lot = (
     "  6. This allows the UI to show the dosage change as a visible event while maintaining the correct line number."
     ""
     "EXAMPLE: If a patient receives 'Carboplatin + Pemetrexed' at 500mg from Jan-Mar, then the dose is reduced to 400mg from Apr-Jun:"
-    "- First entry: line_number=1, dates='Jan-Mar', systemic_regimen='Carboplatin + Pemetrexed', outcome.details='• Received standard dose initially\\n• Developed Grade 3 diarrhea\\n• Required dose reduction', reason_for_discontinuation='' (empty, not discontinued)"
-    "- Second entry: line_number=1, dates='Apr-Jun', systemic_regimen='Carboplatin + Pemetrexed', outcome.details='• Dose reduced to 400mg\\n• Improved tolerance with minimal toxicity\\n• Disease remained stable', reason_for_discontinuation='' (empty unless actually discontinued)"
+    "- First entry: line_number=1, dates='01/15/2026 -> 03/31/2026', systemic_regimen='Carboplatin + Pemetrexed', outcome.details='• Received standard dose initially\\n• Developed Grade 3 diarrhea\\n• Required dose reduction', reason_for_discontinuation='' (empty, not discontinued)"
+    "- Second entry: line_number=1, dates='04/01/2026 -> 06/30/2026', systemic_regimen='Carboplatin + Pemetrexed', outcome.details='• Dose reduced to 400mg\\n• Improved tolerance with minimal toxicity\\n• Disease remained stable', reason_for_discontinuation='' (empty unless actually discontinued)"
     ""
     "For each entry, extract:"
     "1. Line Title: "
@@ -56,7 +56,7 @@ extracted_instructions_lot = (
     "   - For the main modality, use the primary drug name (e.g., 'Carboplatin', 'Osimertinib')."
     "   - IMPORTANT: If this entry has ONLY local therapy (radiation/surgery) and NO systemic regimen, set line_number to null."
     "2. Status: 'Current', 'Past', or 'Planned'. "
-    "3. Dates: Exact start and end dates in DD MMM YYYY format (e.g., '27 Jan 2026', '13 Jan 2026'). For display_text, format as 'DD MMM YYYY -> DD MMM YYYY' or 'DD MMM YYYY -> Ongoing'. For Radiation, look for 'completed' dates."
+    "3. Dates: Exact start and end dates in MM/DD/YYYY format (e.g., '01/27/2026', '01/13/2026'). For display_text, format as 'MM/DD/YYYY -> MM/DD/YYYY' or 'MM/DD/YYYY -> Ongoing'. For Radiation, look for 'completed' dates."
     "4. TREATMENT SPLIT (CRITICAL - READ CAREFULLY):"
     "   You must separate systemic drug treatments from local modalities to ensure accurate Line of Therapy counting."
     "   - systemic_regimen: Extract ONLY drug-based anti-cancer therapies."
@@ -99,9 +99,9 @@ description_lot = {
                 "status_badge": "Current, Past, or Planned"
             },
             "dates": {
-                "start_date": "YYYY-MM-DD",
-                "end_date": "YYYY-MM-DD or 'Ongoing'",
-                "display_text": "Formatted string like '27 Jan 2026 -> Ongoing' or '13 Jan 2026 -> 23 Jan 2026' (format: DD MMM YYYY -> DD MMM YYYY or DD MMM YYYY -> Ongoing)"
+                "start_date": "MM/DD/YYYY",
+                "end_date": "MM/DD/YYYY or 'Ongoing'",
+                "display_text": "Formatted string like '01/27/2026 -> Ongoing' or '01/13/2026 -> 01/23/2026' (format: MM/DD/YYYY -> MM/DD/YYYY or MM/DD/YYYY -> Ongoing)"
             },
             "systemic_regimen": "String. Drug names ONLY, separated by + (e.g., 'Carboplatin + Pemetrexed', 'Osimertinib', 'Carboplatin + Pemetrexed + Pembrolizumab'). DO NOT include dosages, routes, or schedules. Set to null if only surgery/radiation.",
             "local_therapy": "String. Focal treatments ONLY. Include Radiation (e.g., 'WBRT 30Gy', 'SBRT to lung') or Surgery (e.g., 'Right upper lobectomy'). Set to null if none occurred.",
@@ -130,7 +130,7 @@ extracted_instructions_timeline = (
     "Extract a high-level chronological timeline of major cancer-related events from the clinical notes. "
     "Scope: Include Systemic Therapies, Surgeries, Radiation, and significant diagnostic/imaging events. "
     "For each event, extract:"
-    "1. Date Display: A concise date string. Use 'Mon YYYY' for single events (e.g., 'Jan 2025') or a range 'Mon-Mon YYYY' for continuous treatments (e.g., 'Jun-Sep 2024'). "
+    "1. Date Display: A concise date string in MM/DD/YYYY format (e.g., '01/15/2025') or a range 'MM/DD/YYYY - MM/DD/YYYY' for continuous treatments (e.g., '06/01/2024 - 09/30/2024')."
     "2. TREATMENT SPLIT (CRITICAL):"
     "   - systemic_regimen: Extract ONLY drug-based anti-cancer therapies."
     "     * Include: Chemotherapy, Immunotherapy, Targeted Therapy."
@@ -177,10 +177,10 @@ extracted_instructions_timeline = (
 description_timeline = {
     "timeline_events": [
         {
-            "date_display": "String for the left column (e.g., 'Jan 2025', 'Dec 2025')",
+            "date_display": "String for the left column in MM/DD/YYYY format (e.g., '01/15/2025', '12/08/2025')",
             "systemic_regimen": "String. Drug-based treatments ONLY. Include Chemo, Immuno, Targeted therapy (e.g., 'Carboplatin + Pemetrexed + Pembrolizumab', 'Osimertinib'). Set to null if only surgery/radiation/imaging.",
             "local_therapy": "String. Focal treatments ONLY with detailed description. For Radiation: include type and site (e.g., 'Whole brain radiation with hippocampal sparing for 10 brain metastases', 'SBRT to lung lesion'). For Surgery: include procedure and site (e.g., 'Right upper lobectomy with mediastinal lymph node dissection', 'Wedge resection of lung nodule'). Set to null if none occurred.",
-            "details": "String. Context-specific clinical details based on event type: For Systemic - cycle info, response, intent (e.g., 'Cycle 1 initiated, next cycle scheduled for Feb 17, 2026'). For Radiation - dose, fractionation, extent (e.g., '30 Gy in 10 fractions, palliative intent'). For Surgery - pathology findings, molecular results (e.g., 'Biopsy confirmed poorly differentiated NSCLC, KRAS G12C mutated'). For Imaging - key findings, disease extent (e.g., 'Brain MRI revealed at least 5 metastatic lesions, simulation identified 10 lesions'). Make it clinically meaningful and specific.",
+            "details": "String. Context-specific clinical details based on event type: For Systemic - cycle info, response, intent (e.g., 'Cycle 1 initiated, next cycle scheduled for 02/17/2026'). For Radiation - dose, fractionation, extent (e.g., '30 Gy in 10 fractions, palliative intent'). For Surgery - pathology findings, molecular results (e.g., 'Biopsy confirmed poorly differentiated NSCLC, KRAS G12C mutated'). For Imaging - key findings, disease extent (e.g., 'Brain MRI revealed at least 5 metastatic lesions, simulation identified 10 lesions'). Make it clinically meaningful and specific.",
             "event_type": "String. Category for display (e.g., 'Systemic', 'Radiation', 'Surgery', 'Imaging'). This helps the UI show appropriate styling/icons."
         }
     ]

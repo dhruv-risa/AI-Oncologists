@@ -50,7 +50,7 @@ def biomarker_schema():
     return {
         "value": "Float or 'Pending' or null - The most recent value for this biomarker in this document",
         "unit": "String - The unit of measurement (e.g., 'g/dL', 'Thousand/uL')",
-        "date": "YYYY-MM-DD - Date of the measurement (use Lab Resulted date)",
+        "date": "MM/DD/YYYY - Date of the measurement (use Lab Resulted date)",
         "status": "String (e.g., 'Normal', 'High', 'Low') - Status based on reference range",
         "reference_range": "String - The reference range for this biomarker",
         "source_context": "String - Brief description of source (e.g., 'Lab Report Page 1')"
@@ -144,7 +144,7 @@ CRITICAL EXTRACTION RULES
 1. DATE RULE (MANDATORY)
    - Use ONLY "Lab Resulted" or "Resulted" dates for lab values
    - Ignore specimen collection dates unless no resulted date exists
-   - Date format: YYYY-MM-DD
+   - Date format: MM/DD/YYYY
 
 2. VALUE EXTRACTION RULE
    - Extract the MOST RECENT measurement for each biomarker from THIS document
@@ -196,7 +196,7 @@ OUTPUT SCHEMA (STRICT)
     "CEA": {
       "value": <float or "Pending" or null>,
       "unit": "<string>",
-      "date": "YYYY-MM-DD",
+      "date": "MM/DD/YYYY",
       "status": "<Normal|High|Low|Pending>",
       "reference_range": "<string>",
       "source_context": "<string>"
@@ -244,7 +244,7 @@ FINAL VALIDATION
 
 Before returning output:
 - Ensure ALL target biomarkers are present in the output (even if null)
-- Ensure dates are in YYYY-MM-DD format
+- Ensure dates are in MM/DD/YYYY format
 - Ensure all numeric values are preserved exactly as shown
 - Ensure schema consistency with all required fields
 

@@ -100,7 +100,7 @@ def exponential_retry(
 
 def normalize_date(date_str: str) -> str:
     """
-    Normalize various date formats to YYYY-MM-DD format.
+    Normalize various date formats to YYYY-MM-DD format (for internal processing).
 
     Args:
         date_str: Date string in various formats
@@ -141,6 +141,30 @@ def normalize_date(date_str: str) -> str:
     return date_str
 
 
+def format_date_for_display(date_str: str) -> str:
+    """
+    Convert date from YYYY-MM-DD format to MM/DD/YYYY format for display.
+
+    Args:
+        date_str: Date string in YYYY-MM-DD format
+
+    Returns:
+        Date string in MM/DD/YYYY format, or original string if parsing fails
+    """
+    if not date_str or not isinstance(date_str, str):
+        return date_str
+
+    date_str = date_str.strip()
+
+    # Try to parse YYYY-MM-DD format
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.strftime("%m/%d/%Y")
+    except (ValueError, AttributeError):
+        # If it fails, return original
+        return date_str
+
+
 def is_empty_biomarker(biomarker_data: Dict) -> bool:
     """
     Check if a biomarker entry contains only NA/empty values.
@@ -172,6 +196,10 @@ def get_source_priority(source_context: str) -> int:
         return 99  # Unknown source - lowest priority
 
     source_upper = str(source_context).upper()
+
+    # Check for FHIR API data (highest priority - direct from lab system)
+    if 'FHIR_API' in source_upper or 'FHIR API' in source_upper:
+        return 0  # Highest priority - direct from FHIR Observation API
 
     # Check for document type markers
     if 'LAB_REPORT' in source_upper:
@@ -689,18 +717,30 @@ def format_for_ui(consolidated_data: Dict) -> Dict:
         # Determine if data is available
         has_data = current.get("value") not in [None, "NA", ""]
 
+        # Format dates for display (MM/DD/YYYY)
+        current_date = current.get("date")
+        formatted_current_date = format_date_for_display(current_date) if current_date else None
+
+        # Format trend dates
+        formatted_trend = []
+        for trend_entry in trend:
+            formatted_entry = trend_entry.copy()
+            if "date" in formatted_entry:
+                formatted_entry["date"] = format_date_for_display(formatted_entry["date"])
+            formatted_trend.append(formatted_entry)
+
         return {
             "name": name,
             "has_data": has_data,
             "current": {
                 "value": current.get("value"),
                 "unit": current.get("unit"),
-                "date": current.get("date"),
+                "date": formatted_current_date,
                 "status": current.get("status"),
                 "reference_range": current.get("reference_range"),
                 "is_abnormal": current.get("status") in ["High", "Low", "Critical"]
             },
-            "trend": trend,
+            "trend": formatted_trend,
             "trend_direction": calculate_trend_direction(trend) if len(trend) >= 2 else None
         }
 
@@ -766,7 +806,7 @@ def format_for_ui(consolidated_data: Dict) -> Dict:
 
 
 def get_most_recent_date(data: Dict) -> str:
-    """Get the most recent date across all biomarkers."""
+    """Get the most recent date across all biomarkers (in MM/DD/YYYY format)."""
     all_dates = []
 
     for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]:
@@ -786,8 +826,10 @@ def get_most_recent_date(data: Dict) -> str:
                 all_dates.append(date)
 
     if all_dates:
+        # Sort in YYYY-MM-DD format (for proper chronological ordering)
         all_dates.sort(reverse=True)
-        return all_dates[0]
+        # Return most recent date formatted as MM/DD/YYYY
+        return format_date_for_display(all_dates[0])
 
     return None
 
