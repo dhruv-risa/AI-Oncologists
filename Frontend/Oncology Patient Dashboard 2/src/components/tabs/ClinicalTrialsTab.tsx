@@ -46,10 +46,10 @@ function ReviewModal({
 
     const isPatient = type === 'patient';
 
-    // Patient = purple-indigo tones, Clinician = violet-purple tones
+    // Patient = dark blue tones, Clinician = maroon tones
     const colors = isPatient
-        ? { border: '#c7d2fe', headerBg: '#eef2ff', headerText: '#3730a3', accent: '#4f46e5', light: '#e0e7ff' }
-        : { border: '#ddd6fe', headerBg: '#f5f3ff', headerText: '#5b21b6', accent: '#7c3aed', light: '#ede9fe' };
+        ? { border: '#93c5fd', headerBg: '#eff6ff', headerText: '#1e3a5f', accent: '#1d4ed8', light: '#dbeafe' }
+        : { border: '#e8a0a0', headerBg: '#fdf2f2', headerText: '#7f1d1d', accent: '#991b1b', light: '#fde8e8' };
 
     return (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -259,6 +259,14 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
     // Search/filter state
     const [filterText, setFilterText] = useState('');
 
+    // Computation progress state (progressive loading)
+    const [computationStatus, setComputationStatus] = useState<
+        'not_started' | 'computing' | 'completed' | 'stale' | 'error' | null
+    >(null);
+    const [progress, setProgress] = useState({ total: 0, completed: 0, eligible: 0, error: 0 });
+    const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const prevCompletedRef = useRef<number>(0);
+
     // ── Data fetching ─────────────────────────────────────────────────
     const fetchCachedTrials = async () => {
         if (!currentPatient?.mrn) return false;
@@ -323,6 +331,50 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
         }
     };
 
+    // ── Polling for progressive loading ──────────────────────────────
+    const stopPolling = () => {
+        if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+        }
+    };
+
+    const pollProgress = async () => {
+        if (!currentPatient?.mrn) return;
+        try {
+            const resp = await apiService.getEligibilityProgress(currentPatient.mrn);
+            if (!resp.success) return;
+
+            setComputationStatus(resp.status);
+            setProgress({
+                total: resp.trials_total,
+                completed: resp.trials_completed,
+                eligible: resp.trials_eligible,
+                error: resp.trials_error,
+            });
+
+            // If new trials completed since last poll, refetch results
+            if (resp.trials_completed > prevCompletedRef.current) {
+                prevCompletedRef.current = resp.trials_completed;
+                await fetchCachedTrials();
+            }
+
+            // Stop polling on terminal states
+            if (resp.status === 'completed' || resp.status === 'error' || resp.status === 'not_started') {
+                stopPolling();
+            }
+        } catch {
+            // Don't stop polling on transient network errors
+        }
+    };
+
+    const startPolling = () => {
+        stopPolling();
+        prevCompletedRef.current = 0;
+        pollProgress(); // Immediate first poll
+        pollingRef.current = setInterval(pollProgress, 10000); // 10s interval
+    };
+
     const fetchTrials = async (forceRealTime = false) => {
         if (!currentPatient?.mrn) return;
         setLoading(true);
@@ -330,6 +382,25 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
 
         if (useCached && !forceRealTime) {
             const hasCached = await fetchCachedTrials();
+
+            // Check computation status regardless
+            try {
+                const resp = await apiService.getEligibilityProgress(currentPatient.mrn);
+                setComputationStatus(resp.status);
+                setProgress({
+                    total: resp.trials_total,
+                    completed: resp.trials_completed,
+                    eligible: resp.trials_eligible,
+                    error: resp.trials_error,
+                });
+                if (resp.status === 'computing') {
+                    prevCompletedRef.current = resp.trials_completed;
+                    startPolling();
+                }
+            } catch {
+                // Non-fatal
+            }
+
             if (hasCached) { setLoading(false); return; }
         }
 
@@ -350,6 +421,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
 
     useEffect(() => {
         if (currentPatient?.mrn) fetchTrials();
+        return () => stopPolling();
     }, [currentPatient?.mrn]);
 
     // Auto-expand and scroll to a specific trial when navigated from trial detail view
@@ -568,8 +640,8 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                                 {resolvedBy === 'patient' ? 'Patient Reviewed' : 'Clinician Reviewed'}
                                             </span>
                                         ) : needsReview && reviewType === 'patient' ? (
-                                            <div className="bg-green-50 border border-green-200 rounded px-2 py-1.5 max-w-xs">
-                                                <div className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-0.5">
+                                            <div className="rounded px-2 py-1.5 max-w-xs" style={{ backgroundColor: '#eff6ff', border: '1px solid #93c5fd' }}>
+                                                <div className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mb-0.5" style={{ color: '#1e3a5f' }}>
                                                     <ClipboardCheck className="w-3 h-3" />
                                                     Patient Can Answer
                                                 </div>
@@ -578,8 +650,8 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                                 </p>
                                             </div>
                                         ) : needsReview && reviewType === 'clinician' ? (
-                                            <div className="bg-blue-50 border border-blue-200 rounded px-2 py-1.5 max-w-xs">
-                                                <div className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-0.5">
+                                            <div className="rounded px-2 py-1.5 max-w-xs" style={{ backgroundColor: '#fdf2f2', border: '1px solid #e8a0a0' }}>
+                                                <div className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mb-0.5" style={{ color: '#7f1d1d' }}>
                                                     <ClipboardCheck className="w-3 h-3" />
                                                     Clinician Review
                                                 </div>
@@ -607,9 +679,9 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                     </td>
                                     <td className="px-3 py-2 text-center">
                                         {needsReview && reviewType === 'patient' ? (
-                                            <ClipboardCheck className="w-4 h-4 text-green-500 mx-auto" title="Patient Can Answer" />
+                                            <ClipboardCheck className="w-4 h-4 mx-auto" style={{ color: '#1d4ed8' }} title="Patient Can Answer" />
                                         ) : needsReview && reviewType === 'clinician' ? (
-                                            <ClipboardCheck className="w-4 h-4 text-blue-500 mx-auto" title="Clinician Review" />
+                                            <ClipboardCheck className="w-4 h-4 mx-auto" style={{ color: '#991b1b' }} title="Clinician Review" />
                                         ) : needsReview && (reviewType === 'testing' || !reviewType) ? (
                                             <FlaskConical className="w-4 h-4 text-purple-500 mx-auto" title="Testing Needed" />
                                         ) : isResolved ? (
@@ -713,12 +785,95 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                 </div>
             )}
 
+            {/* Computation Progress Banner */}
+            {computationStatus === 'computing' && (
+                <div className="mb-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                            <span className="text-sm font-medium text-blue-800">
+                                Analyzing eligibility for clinical trials...
+                            </span>
+                        </div>
+                        <span className="text-sm font-mono text-blue-600">
+                            {progress.completed}/{progress.total}
+                        </span>
+                    </div>
+                    <div className="w-full bg-blue-100 rounded-full h-2">
+                        <div
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
+                            style={{ width: `${progress.total > 0 ? (progress.completed / progress.total) * 100 : 0}%` }}
+                        />
+                    </div>
+                    <div className="flex items-center justify-between mt-2 text-xs text-blue-600">
+                        <span>{progress.eligible} eligible trial{progress.eligible !== 1 ? 's' : ''} found so far</span>
+                        <span>
+                            ~{Math.max(1, Math.ceil(((progress.total - progress.completed) * 17) / 60))} min remaining
+                        </span>
+                    </div>
+                </div>
+            )}
+
+            {computationStatus === 'stale' && (
+                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600" />
+                        <span className="text-sm text-amber-800">
+                            A previous analysis was interrupted. Results may be incomplete ({progress.completed}/{progress.total} trials analyzed).
+                        </span>
+                    </div>
+                    <button
+                        onClick={() => {
+                            apiService.computeEligibility({ patientMrn: currentPatient?.mrn, background: true });
+                            setComputationStatus('computing');
+                            startPolling();
+                        }}
+                        className="px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-100 border border-amber-300 rounded-lg hover:bg-amber-200 transition-colors"
+                    >
+                        Resume Analysis
+                    </button>
+                </div>
+            )}
+
+            {computationStatus === 'error' && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-500" />
+                        <span className="text-sm text-red-700">
+                            Eligibility analysis encountered an error. Partial results shown below.
+                        </span>
+                    </div>
+                    <button
+                        onClick={() => {
+                            apiService.computeEligibility({ patientMrn: currentPatient?.mrn, background: true });
+                            setComputationStatus('computing');
+                            startPolling();
+                        }}
+                        className="px-3 py-1.5 text-sm font-medium text-red-700 bg-red-100 border border-red-300 rounded-lg hover:bg-red-200 transition-colors"
+                    >
+                        Retry Analysis
+                    </button>
+                </div>
+            )}
+
             {/* Empty */}
             {!loading && !error && trials.length === 0 && (
                 <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
                     <FlaskConical className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                    <p className="text-gray-600 font-medium">No matching clinical trials found</p>
-                    <p className="text-gray-400 text-sm mt-1">Try refreshing or check back later</p>
+                    {computationStatus === 'computing' ? (
+                        <>
+                            <p className="text-gray-600 font-medium">Analyzing clinical trials...</p>
+                            <p className="text-gray-400 text-sm mt-1">
+                                Results will appear here as they are computed.
+                                {progress.completed > 0 && ` ${progress.completed} trials analyzed so far.`}
+                            </p>
+                        </>
+                    ) : (
+                        <>
+                            <p className="text-gray-600 font-medium">No matching clinical trials found</p>
+                            <p className="text-gray-400 text-sm mt-1">Try refreshing or check back later</p>
+                        </>
+                    )}
                 </div>
             )}
 
@@ -744,6 +899,11 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                         <div className="bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200 rounded-lg px-4 py-3 flex-shrink-0">
                             <p className="text-violet-800 font-medium text-sm">
                                 {trials.length} trial{trials.length !== 1 ? 's' : ''} analyzed
+                                {computationStatus === 'computing' && progress.total > 0 && (
+                                    <span className="text-violet-500 font-normal ml-1">
+                                        (analyzing {progress.total - progress.completed} more...)
+                                    </span>
+                                )}
                             </p>
                         </div>
                         <div className="relative flex-1 max-w-md">
@@ -857,7 +1017,8 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                         {rc.patient > 0 && (
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); setReviewModal({ type: 'patient', trialNctId: trial.nct_id }); }}
-                                                className="flex items-center gap-1 text-violet-600 hover:text-violet-800 hover:underline cursor-pointer"
+                                                className="flex items-center gap-1 hover:underline cursor-pointer"
+                                                style={{ color: '#1d4ed8' }}
                                             >
                                                 <ClipboardCheck className="w-3.5 h-3.5" />
                                                 <span>{rc.patient} Patient Review Needed</span>
@@ -868,7 +1029,8 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                         {rc.clinician > 0 && (
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); setReviewModal({ type: 'clinician', trialNctId: trial.nct_id }); }}
-                                                className="flex items-center gap-1 text-violet-600 hover:text-violet-800 hover:underline cursor-pointer"
+                                                className="flex items-center gap-1 hover:underline cursor-pointer"
+                                                style={{ color: '#991b1b' }}
                                             >
                                                 <ClipboardCheck className="w-3.5 h-3.5" />
                                                 <span>{rc.clinician} Clinician Review Needed</span>

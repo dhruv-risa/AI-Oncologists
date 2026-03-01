@@ -239,20 +239,28 @@ class BatchEligibilityEngine:
 
             print(f"\nProcessing patient {patient_mrn}...")
 
-            # Process trials in parallel for this patient
-            batch_results = self._process_patient_trials_batch(
-                patient_mrn, patient_data, trials
-            )
+            # Start progress tracking
+            self.data_pool.start_computation_progress(patient_mrn, len(trials))
 
-            results.extend(batch_results)
-            processed += len(trials)
-            errors += len(trials) - len(batch_results)
+            try:
+                # Process trials in parallel — results stored incrementally per-trial
+                batch_results = self._process_patient_trials_batch(
+                    patient_mrn, patient_data, trials
+                )
 
-            # Store batch results
-            if batch_results:
-                self.data_pool.bulk_store_eligibility(batch_results)
+                results.extend(batch_results)
+                processed += len(trials)
+                errors += len(trials) - len(batch_results)
 
-            print(f"   Completed: {len(batch_results)}/{len(trials)} trials")
+                # Mark computation complete
+                self.data_pool.complete_computation_progress(patient_mrn)
+            except Exception as e:
+                print(f"   Error processing patient {patient_mrn}: {e}")
+                self.data_pool.complete_computation_progress(patient_mrn, error_message=str(e))
+                processed += len(trials)
+                errors += len(trials)
+
+            print(f"   Completed: {len(batch_results) if 'batch_results' in dir() else 0}/{len(trials)} trials")
             print(f"   Progress: {processed}/{total_combinations} ({100*processed/total_combinations:.1f}%)")
 
         elapsed = time.time() - start_time
@@ -332,7 +340,7 @@ class BatchEligibilityEngine:
                             if c.get("met") is True
                         ][:5]  # Limit to 5
 
-                        results.append({
+                        result_dict = {
                             "trial_nct_id": nct_id,
                             "patient_mrn": patient_mrn,
                             "status": eligibility_info.get("status", "Unknown"),
@@ -340,9 +348,27 @@ class BatchEligibilityEngine:
                             "criteria_results": criteria_results,
                             "key_matching_criteria": key_matching,
                             "key_exclusion_reasons": key_exclusions
-                        })
+                        }
+                        results.append(result_dict)
+
+                        # Store immediately to DB (progressive loading)
+                        self.data_pool.store_eligibility(nct_id, patient_mrn, result_dict)
+
+                        # Update progress counter
+                        is_eligible = eligibility_info.get("status") in (
+                            "LIKELY_ELIGIBLE", "POTENTIALLY_ELIGIBLE"
+                        )
+                        self.data_pool.increment_computation_progress(
+                            patient_mrn, is_eligible=is_eligible
+                        )
+                    else:
+                        # Trial returned None (skipped by pre-filter)
+                        self.data_pool.increment_computation_progress(patient_mrn)
                 except Exception as e:
                     print(f"      Error processing {nct_id}: {e}")
+                    self.data_pool.increment_computation_progress(
+                        patient_mrn, is_error=True
+                    )
                     continue
 
         return results

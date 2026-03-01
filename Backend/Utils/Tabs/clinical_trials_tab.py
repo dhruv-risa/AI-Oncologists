@@ -2293,23 +2293,116 @@ def mark_consent_criteria(criteria_results: List[Dict]) -> List[Dict]:
 # the centres" has pv=Unknown but doesn't need a lab test — the patient knows).
 
 
+def _pre_classify_unknown(r: Dict) -> Optional[str]:
+    """
+    Pre-classify an unknown criterion using keyword patterns.
+    Returns review_type ("patient", "clinician", "testing") if high-confidence,
+    or None if ambiguous (needs LLM).
+    Also sets suggested_test or clinician_action when possible.
+    """
+    text = (r.get("criterion_text", "") or "").lower()
+    # Only use criterion_text — original_criterion_text can bleed across criteria
+    pv = (r.get("patient_value", "") or "").strip().lower()
+    has_data = pv and pv not in ("unknown", "n/a", "none", "not available",
+                                  "not found", "not documented", "not provided",
+                                  "not recorded", "error analyzing")
+
+    # ── PATIENT patterns (high confidence) ──
+    PATIENT_KEYWORDS = [
+        # Legal / administrative
+        "dpa", "power of attorney", "legal representative", "legally authorized",
+        "social security", "insurance", "health coverage", "health plan",
+        "guardian", "guardianship", "court protection",
+        # Consent-adjacent
+        "willing", "willingness", "agree to", "consent", "assent",
+        "able to comply", "comply with", "adhere to",
+        "able to understand", "understand and sign", "read and understand",
+        # Personal / lifestyle
+        "contraception", "contraceptive", "birth control",
+        "substance use", "alcohol", "smoking", "tobacco",
+        "breastfeeding", "nursing", "pregnant", "pregnancy",
+        "sexually active", "sexual abstinence",
+        # Enrollment / logistics
+        "other study", "another trial", "another study", "concurrent study",
+        "enrolled in", "participating in",
+        "travel", "reside", "live within", "located within",
+        "available for follow", "attend visit",
+        # Language / communication
+        "speak english", "read english", "fluent", "language",
+        # Identity / demographics
+        "affiliated with", "affiliation", "nationality", "citizen",
+    ]
+    if any(kw in text for kw in PATIENT_KEYWORDS):
+        return "patient"
+
+    # ── TESTING patterns (specific orderable tests) ──
+    TESTING_MAP = {
+        "echocardiogram": "Echocardiogram (ECHO)",
+        "echo ": "Echocardiogram (ECHO)",
+        "lvef": "Echocardiogram (ECHO)",
+        "ejection fraction": "Echocardiogram (ECHO)",
+        "cardiac function": "Echocardiogram (ECHO)",
+        "qtc": "12-lead ECG",
+        "qt interval": "12-lead ECG",
+        "electrocardiogram": "12-lead ECG",
+        "ekg": "12-lead ECG",
+        "ecg": "12-lead ECG",
+        "hepatitis b": "Hepatitis B Panel (HBsAg, anti-HBc, HBV DNA)",
+        "hepatitis c": "Hepatitis C Panel (anti-HCV, HCV RNA)",
+        "hbsag": "Hepatitis B Panel (HBsAg, anti-HBc, HBV DNA)",
+        "hiv": "HIV-1/2 Antigen/Antibody Test",
+        "pulmonary function": "Pulmonary Function Test (PFT)",
+        "fev1": "Pulmonary Function Test (PFT)",
+        "dlco": "Pulmonary Function Test (PFT)",
+        "spirometry": "Pulmonary Function Test (PFT)",
+        "bone marrow": "Bone Marrow Biopsy",
+        "ngs": "Next-Generation Sequencing (NGS Panel)",
+        "genomic profiling": "Next-Generation Sequencing (NGS Panel)",
+        "mutation status": "Next-Generation Sequencing (NGS Panel)",
+        "molecular profiling": "Next-Generation Sequencing (NGS Panel)",
+        "pd-l1": "PD-L1 IHC Assay",
+        "msi": "Microsatellite Instability (MSI) Testing",
+        "microsatellite": "Microsatellite Instability (MSI) Testing",
+        "mmr": "Mismatch Repair (MMR) IHC",
+        "brain mri": "MRI Brain with Contrast",
+        "brain metastas": "MRI Brain with Contrast",
+        "cns metastas": "MRI Brain with Contrast",
+        "urine protein": "Urinalysis with Protein/Creatinine Ratio",
+        "proteinuria": "Urinalysis with Protein/Creatinine Ratio",
+        "thyroid function": "Thyroid Function Panel (TSH, Free T4)",
+        "tsh": "Thyroid Function Panel (TSH, Free T4)",
+        "coagulation": "Coagulation Panel (PT, INR, aPTT)",
+        "inr": "Coagulation Panel (PT, INR, aPTT)",
+        "pt/inr": "Coagulation Panel (PT, INR, aPTT)",
+    }
+    if not has_data:
+        for keyword, test_name in TESTING_MAP.items():
+            if keyword in text:
+                r["suggested_test"] = test_name
+                return "testing"
+
+    # ── CLINICIAN: has real data but couldn't decide ──
+    if has_data:
+        pv_display = r.get("patient_value", "Unknown")
+        r["clinician_action"] = f"Patient has: {pv_display}. Review if this meets the criterion."
+        return "clinician"
+
+    # ── AMBIGUOUS: needs LLM ──
+    return None
+
+
 def classify_unknown_criteria_with_llm(criteria_results: List[Dict]) -> List[Dict]:
     """
-    Stage 2: Use a separate LLM call to classify unknown (met=null) criteria
-    into review_type buckets: patient / clinician / testing.
+    Stage 2: Classify unknown (met=null) criteria into review_type buckets.
 
-    The LLM sees each unknown criterion along with its patient_value from Stage 1
-    and decides:
-      - "patient": The patient themselves can answer this (willingness, lifestyle,
-        demographics, enrollment status, personal preferences)
-      - "clinician": Data exists (patient_value is not Unknown) but needs clinical
-        judgment to make the final call. LLM provides clinician_action.
-      - "testing": No data exists — a specific lab test, scan, or procedure is needed.
-        LLM provides suggested_test.
+    Uses a two-pass approach:
+    1. Pre-classify obvious items with keyword patterns (no LLM needed)
+    2. Send only ambiguous items to Stage 2 LLM
+
+    This reduces LLM calls significantly — many trials need zero Stage 2 calls.
     """
     # Collect unknown criteria (skip consent — already classified)
     unknowns = []
-    unknown_indices = []
     for i, r in enumerate(criteria_results):
         if r.get("consent_needed", False):
             r["review_type"] = "patient"
@@ -2317,14 +2410,29 @@ def classify_unknown_criteria_with_llm(criteria_results: List[Dict]) -> List[Dic
         if r.get("met") is not None:
             continue
         unknowns.append(r)
-        unknown_indices.append(i)
 
     if not unknowns:
         return criteria_results
 
-    # Build the Stage 2 classification prompt
+    # Pass 1: Pre-classify with keywords
+    needs_llm = []
+    for r in unknowns:
+        review_type = _pre_classify_unknown(r)
+        if review_type:
+            r["review_type"] = review_type
+        else:
+            needs_llm.append(r)
+
+    pre_classified = len(unknowns) - len(needs_llm)
+    print(f"  Stage 2 pre-filter: {pre_classified}/{len(unknowns)} classified by keywords, {len(needs_llm)} need LLM")
+
+    # If all classified by keywords, skip LLM entirely
+    if not needs_llm:
+        return criteria_results
+
+    # Pass 2: Send only ambiguous items to Stage 2 LLM
     criteria_block = ""
-    for idx, r in enumerate(unknowns):
+    for idx, r in enumerate(needs_llm):
         criteria_block += (
             f"{idx + 1}. criterion_text: \"{r.get('criterion_text', '')}\"\n"
             f"   patient_value: \"{r.get('patient_value', 'Unknown')}\"\n"
@@ -2410,8 +2518,8 @@ Return ONLY the JSON array, no other text.
         # Apply classifications back to the original criteria
         for cls in classifications:
             idx = cls.get("index", 0) - 1  # Convert to 0-based
-            if 0 <= idx < len(unknowns):
-                r = unknowns[idx]
+            if 0 <= idx < len(needs_llm):
+                r = needs_llm[idx]
                 review_type = cls.get("review_type", "testing")
                 if review_type not in ("patient", "clinician", "testing"):
                     review_type = "testing"
@@ -2440,7 +2548,7 @@ Return ONLY the JSON array, no other text.
     except Exception as e:
         print(f"Stage 2 classification LLM error: {e}")
         # Fallback: simple heuristic if LLM fails
-        for r in unknowns:
+        for r in needs_llm:
             pv = (r.get("patient_value", "") or "").strip().lower()
             if not pv or pv in ("unknown", "n/a", "none", "not available", "not found"):
                 r["review_type"] = "testing"
@@ -2488,8 +2596,6 @@ def classify_unknown_criteria(criteria_results: List[Dict]) -> List[Dict]:
     ]
 
     for r in criteria_results:
-        if r.get("review_type"):
-            continue  # Already classified (by Stage 2 or previous run)
         is_consent = r.get("consent_needed", False)
         is_unknown = r.get("met") is None
         if not is_unknown and not is_consent:
@@ -2499,17 +2605,18 @@ def classify_unknown_criteria(criteria_results: List[Dict]) -> List[Dict]:
             continue
 
         text = (r.get("criterion_text", "") or "").lower()
-        original_text = (r.get("original_criterion_text", "") or "").lower()
-        combined_text = text + " " + original_text
 
         pv = (r.get("patient_value", "") or "").strip().lower()
         has_data = pv and pv not in ("unknown", "n/a", "none", "not available",
                                      "not found", "not documented", "not provided",
                                      "not recorded", "error analyzing")
 
-        # Check if criterion is administrative/personal → patient bucket
-        if any(pat in combined_text for pat in PATIENT_PATTERNS):
+        # Patient keywords always win (even if previously classified as clinician/testing)
+        # Only match on criterion_text — original_criterion_text can bleed across criteria
+        if any(pat in text for pat in PATIENT_PATTERNS):
             r["review_type"] = "patient"
+        elif r.get("review_type"):
+            continue  # Already classified by Stage 2 — don't override
         elif has_data:
             r["review_type"] = "clinician"
         else:
