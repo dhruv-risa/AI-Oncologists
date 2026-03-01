@@ -34,7 +34,7 @@ class BatchEligibilityEngine:
     Engine for batch computation of eligibility matrix.
     """
 
-    def __init__(self, max_workers: int = 10):
+    def __init__(self, max_workers: int = 3):
         """
         Initialize the batch engine.
 
