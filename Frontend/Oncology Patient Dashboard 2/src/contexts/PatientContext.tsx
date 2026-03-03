@@ -68,7 +68,7 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     try {
       console.log(`Fetching demo data for MRN: ${mrn}...`);
-      const demoData = await apiService.getDemoPatientData(mrn);
+      const demoData = await apiService.getPatientData(mrn);
 
       console.log('Demo data loaded:', demoData);
 

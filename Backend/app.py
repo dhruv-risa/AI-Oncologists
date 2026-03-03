@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add project root to path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
@@ -33,7 +34,6 @@ from Backend.bytes_extractor import (
 )
 from Backend.drive_uploader import upload_and_share_pdf_bytes
 from Backend.data_pool import get_data_pool
-from Backend.demo_data_loader import list_available_demo_mrns, get_raw_demo_urls
 from Backend.Utils.Tabs.pathology_tab import pathology_info
 from Backend.Utils.Tabs.radiology_tab import extract_radiology_details_from_report
 from Backend.Utils.components.patient_demographics import extract_patient_demographics
@@ -183,6 +183,9 @@ class LabDataResponse(BaseModel):
     lab_info: Optional[dict] = None
     metadata: Optional[dict] = None
     validation_summary: Optional[dict] = None
+    fhir_metadata: Optional[dict] = None
+    fhir_observations_count: Optional[int] = None
+    total_data_sources: Optional[int] = None
     error: Optional[str] = None
 
 
@@ -239,480 +242,6 @@ async def health_check():
 
 
 # ============================================================================
-# Demo Mode Routes (Using demo_data.json instead of FHIR API)
-# ============================================================================
-
-@app.get("/api/demo/mrns", tags=["Demo"])
-async def list_demo_mrns():
-    """
-    List all available MRNs in demo mode.
-    Returns MRNs that have data in demo_data.json.
-    """
-    try:
-        mrns = list_available_demo_mrns()
-        return {
-            "success": True,
-            "mrns": mrns,
-            "count": len(mrns)
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error loading demo MRNs: {str(e)}"
-        )
-
-
-@app.post("/api/demo/patient", tags=["Demo"])
-async def get_demo_patient_data(request: MRNRequest):
-    """
-    Get patient data from demo_data.json (bypasses FHIR API).
-    Runs FULL extraction pipeline using pre-configured Google Drive URLs.
-
-    This endpoint:
-    1. Gets predefined document URLs from demo_data.json
-    2. Runs the same extraction pipelines as /api/patient/all
-    3. Extracts all patient data using AI (demographics, diagnosis, treatment, labs, genomics, pathology, radiology)
-    4. Stores data in the data pool
-    5. Returns complete patient data
-
-    For demo purposes only - uses pre-configured Google Drive links
-    from demo_data.json instead of fetching from FHIR API.
-    """
-    try:
-        logger.info("="*80)
-        logger.info(f"🎬 STARTING DEMO MODE EXTRACTION for MRN: {request.mrn}")
-        logger.info("="*80)
-
-        # Check if patient data already exists in pool
-        cached_data = data_pool.get_patient_data(request.mrn)
-        if cached_data is not None:
-            logger.info(f"✅ Returning cached demo data for MRN: {request.mrn}")
-            return cached_data
-
-        # Get predefined URLs from demo_data.json
-        demo_urls = get_raw_demo_urls(request.mrn)
-
-        logger.info(f"📂 Loaded demo URLs for MRN {request.mrn}:")
-        logger.info(f"   - MD Notes: {len(demo_urls.get('md_notes', []))} files")
-        logger.info(f"   - Pathology: {len(demo_urls.get('pathology', []))} files")
-        logger.info(f"   - Radiology: {len(demo_urls.get('radiology', []))} files")
-        logger.info(f"   - Genomics: {len(demo_urls.get('genomics', []))} files")
-        logger.info(f"   - Lab Results: {len(demo_urls.get('lab_results', []))} files")
-
-        # Get MD note URL (latest for extractions)
-        md_note_urls = demo_urls.get('md_notes', [])
-        if not md_note_urls:
-            raise ValueError(f"No MD notes found for MRN {request.mrn} in demo data")
-
-        latest_md_note_url = md_note_urls[0]  # Most recent MD note
-
-        # Helper function to extract patient data from MD notes
-        def extract_demo_patient_data(md_note_url):
-            """Extract demographics, diagnosis, comorbidities, treatment, and diagnosis tab from MD notes"""
-            logger.info("📋 Extracting patient data from MD notes...")
-
-            # Extract demographics
-            demographics = extract_patient_demographics(pdf_url=md_note_url)
-
-            # Extract diagnosis status
-            diagnosis = extract_diagnosis_status(pdf_url=md_note_url)
-
-            # Extract comorbidities
-            comorbidities = extract_comorbidities_status(pdf_url=md_note_url)
-
-            # Extract treatment information
-            treatment_lot, treatment_timeline = extract_treatment_tab_info(pdf_url=md_note_url)
-
-            # Extract diagnosis tab information
-            diagnosis_header, diagnosis_evolution_timeline, diagnosis_footer = diagnosis_extraction(pdf_input=md_note_url)
-
-            return {
-                'success': True,
-                'mrn': request.mrn,
-                'demographics': demographics,
-                'diagnosis': diagnosis,
-                'comorbidities': comorbidities,
-                'treatment_tab_info_LOT': treatment_lot,
-                'treatment_tab_info_timeline': treatment_timeline,
-                'diagnosis_header': diagnosis_header,
-                'diagnosis_evolution_timeline': diagnosis_evolution_timeline,
-                'diagnosis_footer': diagnosis_footer
-            }
-
-        # Helper function to extract lab data
-        def extract_demo_lab_data(lab_urls):
-            """Extract lab information from lab result documents"""
-            logger.info(f"🧪 Extracting lab data from {len(lab_urls)} documents...")
-
-            if not lab_urls:
-                logger.warning("   ⚠️  No lab result URLs provided")
-                return {
-                    'success': True,
-                    'lab_info': None
-                }
-
-            try:
-                # Import lab extraction functions
-                from Backend.Utils.Tabs.lab_tab import extract_with_gemini
-                from Backend.Utils.Tabs.lab_postprocessor import process_lab_data_for_ui
-                from Backend.Utils.pdf_url_handler import get_pdf_bytes_from_url
-
-                # Extract data from each lab report URL
-                all_extractions = []
-
-                for idx, url in enumerate(lab_urls):
-                    try:
-                        logger.info(f"   Processing lab report {idx + 1}/{len(lab_urls)}...")
-
-                        # Convert URL to bytes first
-                        pdf_bytes = get_pdf_bytes_from_url(url)
-
-                        # Extract from the PDF bytes
-                        extraction = extract_with_gemini(pdf_input=pdf_bytes)
-                        all_extractions.append(extraction)
-
-                    except Exception as e:
-                        logger.error(f"   ❌ Error extracting lab report {idx + 1}: {str(e)}")
-                        continue
-
-                if not all_extractions:
-                    logger.warning("   ⚠️  No lab data could be extracted")
-                    return {
-                        'success': True,
-                        'lab_info': None
-                    }
-
-                # Add delay after extractions to avoid rate limiting
-                import time
-                logger.info("   ⏳ Waiting 3 seconds to avoid API rate limits...")
-                time.sleep(3)
-
-                # Aggregate extractions into UI-ready format
-                logger.info(f"   📊 Aggregating {len(all_extractions)} lab extractions...")
-                lab_info = process_lab_data_for_ui(all_extractions)
-
-                logger.info(f"   ✅ Lab extraction complete!")
-                return {
-                    'success': True,
-                    'lab_info': lab_info
-                }
-
-            except Exception as e:
-                logger.error(f"   ❌ Error in lab extraction pipeline: {str(e)}")
-                return {
-                    'success': False,
-                    'lab_info': None,
-                    'error': str(e)
-                }
-
-        # Helper function to extract genomics data
-        def extract_demo_genomics_data(genomics_urls):
-            """
-            Extract genomics information from genomics documents.
-
-            If multiple genomics files are provided, they will be combined into
-            a single PDF before extraction to ensure comprehensive analysis of
-            all genomic alterations across multiple reports.
-
-            Args:
-                genomics_urls (list): List of Google Drive URLs for genomics reports
-
-            Returns:
-                dict: Contains success status and genomic_info with mutations and markers
-            """
-            logger.info(f"🧬 Extracting genomics data from {len(genomics_urls)} documents...")
-
-            if not genomics_urls:
-                logger.warning("   ⚠️  No genomics URLs provided")
-                return {
-                    'success': True,
-                    'genomic_info': None
-                }
-
-            try:
-                # Import required functions
-                from Backend.Utils.Tabs.genomics_tab import extract_genomic_info_with_gemini
-                from Backend.Utils.pdf_url_handler import get_pdf_bytes_from_url
-                from Backend.bytes_extractor import combine_pdf_bytes_and_upload
-
-                # If only one genomics file, extract directly
-                if len(genomics_urls) == 1:
-                    logger.info(f"   Processing single genomics report from URL...")
-                    extraction = extract_genomic_info_with_gemini(pdf_input=genomics_urls[0])
-                else:
-                    # Multiple genomics files - combine them before extraction
-                    logger.info(f"   Downloading {len(genomics_urls)} genomics reports...")
-                    pdf_bytes_list = []
-
-                    for idx, url in enumerate(genomics_urls, 1):
-                        try:
-                            logger.info(f"      [{idx}/{len(genomics_urls)}] Downloading: {url[:50]}...")
-                            pdf_bytes = get_pdf_bytes_from_url(url)
-                            pdf_bytes_list.append(pdf_bytes)
-                            logger.info(f"         ✓ Downloaded ({len(pdf_bytes)} bytes)")
-                        except Exception as e:
-                            logger.error(f"         ❌ Failed to download: {str(e)}")
-                            continue
-
-                    if not pdf_bytes_list:
-                        raise ValueError("Failed to download any genomics reports")
-
-                    logger.info(f"   Combining {len(pdf_bytes_list)} genomics reports into single PDF...")
-
-                    # Combine PDFs and upload to Drive
-                    combine_result = combine_pdf_bytes_and_upload(
-                        pdf_bytes_list=pdf_bytes_list,
-                        output_file_name=f"{request.mrn}_genomics_combined.pdf",
-                        folder_id=None
-                    )
-
-                    logger.info(f"   ✓ Combined PDF uploaded to Drive")
-                    logger.info(f"      URL: {combine_result['shareable_url']}")
-                    logger.info(f"      Size: {len(combine_result['combined_pdf_bytes'])} bytes")
-
-                    # Extract from combined PDF bytes (no need to re-download)
-                    logger.info(f"   Extracting genomic information from combined PDF...")
-                    extraction = extract_genomic_info_with_gemini(
-                        pdf_input=combine_result['combined_pdf_bytes']
-                    )
-
-                # Transform the extraction to match frontend expected format
-                if extraction and 'driver_mutations' in extraction:
-                    # Convert driver_mutations dict to list of detected mutations
-                    detected_driver_mutations = []
-
-                    for gene, data in extraction['driver_mutations'].items():
-                        detected_driver_mutations.append({
-                            'gene': gene,
-                            'status': data.get('status', 'Not detected'),
-                            'details': data.get('details'),
-                            'is_target': data.get('is_target', False)
-                        })
-
-                    genomic_info = {
-                        'detected_driver_mutations': detected_driver_mutations,
-                        'immunotherapy_markers': extraction.get('immunotherapy_markers', {}),
-                        'additional_genomic_alterations': extraction.get('additional_genomic_alterations', [])
-                    }
-
-                    logger.info(f"   ✅ Genomics extraction complete!")
-                    logger.info(f"      - Detected driver mutations: {len(detected_driver_mutations)}")
-                    logger.info(f"      - Additional alterations: {len(genomic_info['additional_genomic_alterations'])}")
-
-                    return {
-                        'success': True,
-                        'genomic_info': genomic_info
-                    }
-                else:
-                    logger.warning("   ⚠️  No genomics data extracted")
-                    return {
-                        'success': True,
-                        'genomic_info': None
-                    }
-
-            except Exception as e:
-                logger.error(f"   ❌ Error in genomics extraction: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return {
-                    'success': False,
-                    'genomic_info': None,
-                    'error': str(e)
-                }
-
-        # Helper function to extract pathology data
-        def extract_demo_pathology_data(pathology_urls):
-            """Extract pathology information from pathology reports (no classification needed for demo)"""
-            logger.info(f"🔬 Extracting pathology data from {len(pathology_urls)} reports...")
-
-            pathology_reports = []
-
-            for idx, url in enumerate(pathology_urls):
-                try:
-                    logger.info(f"   Processing pathology report {idx + 1}/{len(pathology_urls)}...")
-
-                    # Extract pathology information directly from URL
-                    pathology_summary, pathology_markers = pathology_info(pdf_url=url, use_gemini_api=True)
-
-                    # Get metadata for this URL
-                    from Backend.drive_uploader import get_file_metadata_from_url
-                    metadata = get_file_metadata_from_url(url)
-
-                    # Build report object with special handling for classified reports
-                    report_obj = {
-                        'drive_url': url,
-                        'file_id': metadata.get('drive_url', '').split('/d/')[1].split('/')[0] if '/d/' in metadata.get('drive_url', '') else '',
-                        'date': metadata.get('date', ''),
-                        'document_type': 'Pathology Report',
-                        'description': metadata.get('name', f'Pathology Report {idx + 1}'),
-                        'document_id': f"path_{idx + 1}",
-                        'pathology_summary': pathology_summary,
-                        'pathology_markers': pathology_markers
-                    }
-
-                    # If pathology_summary contains special report type (GENOMIC_ALTERATIONS or NO_TEST_PERFORMED)
-                    # add report_type and classification to top level for easier frontend access
-                    if isinstance(pathology_summary, dict) and 'report_type' in pathology_summary:
-                        report_obj['report_type'] = pathology_summary['report_type']
-                        if 'classification' in pathology_summary:
-                            report_obj['classification'] = pathology_summary['classification']
-
-                    pathology_reports.append(report_obj)
-
-                except Exception as e:
-                    logger.error(f"   ❌ Error extracting pathology report {idx + 1}: {str(e)}")
-                    # Add placeholder for failed extraction
-                    pathology_reports.append({
-                        'drive_url': url,
-                        'file_id': '',
-                        'date': '',
-                        'document_type': 'Pathology Report',
-                        'description': f'Pathology Report {idx + 1}',
-                        'document_id': f"path_{idx + 1}",
-                        'pathology_summary': None,
-                        'pathology_markers': None,
-                        'extraction_error': str(e)
-                    })
-
-            # Sort reports by date (most recent first)
-            pathology_reports = sort_reports_by_date(pathology_reports, descending=True)
-            logger.info(f"✅ Sorted {len(pathology_reports)} pathology reports by date (most recent first)")
-
-            # Use first report (most recent) for overall summary/markers (if available)
-            pathology_summary = pathology_reports[0]['pathology_summary'] if pathology_reports and pathology_reports[0]['pathology_summary'] else None
-            pathology_markers = pathology_reports[0]['pathology_markers'] if pathology_reports and pathology_reports[0]['pathology_markers'] else None
-
-            return {
-                'success': True,
-                'pathology_summary': pathology_summary,
-                'pathology_markers': pathology_markers,
-                'pathology_reports': pathology_reports
-            }
-
-        # Helper function to extract radiology data
-        def extract_demo_radiology_data(radiology_urls):
-            """Extract radiology information from radiology reports (pre-combined with MD notes)"""
-            logger.info(f"📊 Extracting radiology data from {len(radiology_urls)} reports...")
-
-            detailed_reports = []
-
-            for idx, url in enumerate(radiology_urls):
-                try:
-                    logger.info(f"   Processing radiology report {idx + 1}/{len(radiology_urls)}...")
-
-                    # Extract radiology details (using URL with MD notes appended)
-                    # For demo, we assume the URL already has MD notes or extract from standalone
-                    radiology_summary, radiology_imp_RECIST = extract_radiology_details_from_report(
-                        radiology_url=url,
-                        use_gemini_api=True
-                    )
-
-                    # Get metadata
-                    from Backend.drive_uploader import get_file_metadata_from_url
-                    metadata = get_file_metadata_from_url(url)
-
-                    detailed_reports.append({
-                        'drive_url': url,
-                        'drive_url_with_MD': url,  # Same URL for demo
-                        'drive_file_id': metadata.get('drive_url', '').split('/d/')[1].split('/')[0] if '/d/' in metadata.get('drive_url', '') else '',
-                        'drive_file_id_with_MD': metadata.get('drive_url', '').split('/d/')[1].split('/')[0] if '/d/' in metadata.get('drive_url', '') else '',
-                        'date': metadata.get('date', ''),
-                        'document_type': 'Radiology Report',
-                        'description': metadata.get('name', f'Radiology Report {idx + 1}'),
-                        'document_id': f"rad_{idx + 1}",
-                        'radiology_summary': radiology_summary,
-                        'radiology_imp_RECIST': radiology_imp_RECIST
-                    })
-
-                except Exception as e:
-                    logger.error(f"   ❌ Error extracting radiology report {idx + 1}: {str(e)}")
-                    continue
-
-            # Sort reports by date (most recent first)
-            detailed_reports = sort_reports_by_date(detailed_reports, descending=True)
-            logger.info(f"✅ Sorted {len(detailed_reports)} radiology reports by date (most recent first)")
-
-            return detailed_reports
-
-        # Run extractions SEQUENTIALLY
-        logger.info("⚡ Starting sequential extraction pipelines...")
-
-        # Extract patient data
-        logger.info("📋 Step 1/5: Extracting patient data...")
-        patient_result = extract_demo_patient_data(latest_md_note_url)
-        logger.info("✅ Patient data extraction completed!")
-
-        # Extract lab data
-        logger.info("🧪 Step 2/5: Extracting lab data...")
-        lab_result = extract_demo_lab_data(demo_urls.get('lab_results', []))
-        logger.info("✅ Lab data extraction completed!")
-
-        # Extract genomics data
-        logger.info("🧬 Step 3/5: Extracting genomics data...")
-        genomics_result = extract_demo_genomics_data(demo_urls.get('genomics', []))
-        logger.info("✅ Genomics data extraction completed!")
-
-        # Extract pathology data
-        logger.info("🔬 Step 4/5: Extracting pathology data...")
-        pathology_result = extract_demo_pathology_data(demo_urls.get('pathology', []))
-        logger.info("✅ Pathology data extraction completed!")
-
-        # Extract radiology data
-        logger.info("📸 Step 5/5: Extracting radiology data...")
-        radiology_reports = extract_demo_radiology_data(demo_urls.get('radiology', []))
-        logger.info("✅ Radiology data extraction completed!")
-
-        logger.info("✅ All sequential extractions completed!")
-
-        # Combine all results
-        result = patient_result
-        result['lab_info'] = lab_result.get('lab_info')
-        result['lab_reports'] = lab_result.get('lab_reports', [])  # Lab documents for Documents tab
-        result['genomic_info'] = genomics_result.get('genomic_info')
-        result['genomics_reports'] = genomics_result.get('genomics_reports', [])  # Genomics documents for Documents tab
-        result['pathology_summary'] = pathology_result.get('pathology_summary')
-        result['pathology_markers'] = pathology_result.get('pathology_markers')
-        result['pathology_reports'] = pathology_result.get('pathology_reports', [])
-        result['radiology_reports'] = radiology_reports
-
-        # Log summary
-        logger.info("="*80)
-        logger.info(f"📊 Demo Extraction Summary for MRN {request.mrn}:")
-        logger.info(f"   ✓ Demographics extracted")
-        logger.info(f"   ✓ Diagnosis status extracted")
-        logger.info(f"   ✓ Comorbidities extracted")
-        logger.info(f"   ✓ Treatment data extracted")
-        logger.info(f"   ✓ Diagnosis tab extracted")
-        logger.info(f"   ✓ Pathology reports: {len(result['pathology_reports'])}")
-        logger.info(f"   ✓ Radiology reports: {len(radiology_reports)}")
-        logger.info("="*80)
-
-        # Store in data pool
-        data_pool.store_patient_data(mrn=request.mrn, data=result)
-        logger.info(f"💾 Demo data cached for MRN: {request.mrn}")
-
-        return result
-
-    except ValueError as e:
-        logger.error(f"❌ Demo data not found: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        import traceback
-        logger.error("="*80)
-        logger.error(f"❌ ERROR in demo mode extraction:")
-        logger.error("="*80)
-        traceback.print_exc()
-        logger.error("="*80)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error extracting demo patient data: {str(e)}"
-        )
-
-
-# ============================================================================
 # MRN Selection Routes
 # ============================================================================
 
@@ -766,47 +295,142 @@ async def get_patient_data(request: MRNRequest):
             print(f"Returning cached data for MRN: {request.mrn}")
             return cached_data
 
-        # If not in cache, fetch fresh data IN BATCHES OF 3
+        # If not in cache, fetch fresh data in PARALLEL
         logger.info("="*80)
-        logger.info(f"🚀 STARTING SEQUENTIAL EXTRACTION for MRN: {request.mrn}")
+        logger.info(f"🚀 STARTING PARALLEL EXTRACTION for MRN: {request.mrn}")
         logger.info("="*80)
-        logger.info("Sequential processing of extraction pipelines:")
+        logger.info("⚡ Running 4 extraction pipelines concurrently:")
         logger.info("   1️⃣  Patient Data Pipeline (Demographics, Diagnosis, Treatment, etc.)")
         logger.info("   2️⃣  Lab Results Pipeline")
         logger.info("   3️⃣  Genomics Pipeline")
         logger.info("   4️⃣  Pathology Pipeline")
         logger.info("="*80)
 
-        # Step 1: Extract patient data
-        logger.info(f"📋 Step 1/4: Extracting patient data for MRN: {request.mrn}...")
-        result = extract_patient_data(request.mrn, False)
-        logger.info(f"✅ Patient data extraction completed for MRN: {request.mrn}")
+        # Define extraction tasks
+        def extract_patient_task():
+            try:
+                logger.info(f"📋 Starting patient data extraction for MRN: {request.mrn}...")
+                result = extract_patient_data(request.mrn, False)
+                logger.info(f"✅ Patient data extraction completed")
+                return ('patient', result, None)
+            except Exception as e:
+                logger.error(f"❌ Patient data extraction failed: {str(e)}")
+                return ('patient', None, str(e))
 
-        # Step 2: Extract lab results
-        logger.info(f"🧪 Step 2/4: Extracting lab results for MRN: {request.mrn}...")
-        lab_result = lab_tab_info(request.mrn, False)
-        logger.info(f"✅ Lab results extraction completed for MRN: {request.mrn}")
+        def extract_lab_task():
+            try:
+                logger.info(f"🧪 Starting lab results extraction for MRN: {request.mrn}...")
+                lab_result = lab_tab_info(request.mrn, False)
+                logger.info(f"✅ Lab results extraction completed")
+                return ('lab', lab_result, None)
+            except Exception as e:
+                logger.error(f"❌ Lab results extraction failed: {str(e)}")
+                return ('lab', None, str(e))
 
-        # Step 3: Extract genomics data
-        logger.info(f"🧬 Step 3/4: Extracting genomics data for MRN: {request.mrn}...")
-        genomics_result = genomics_tab_info(request.mrn, False)
-        logger.info(f"✅ Genomics data extraction completed for MRN: {request.mrn}")
+        def extract_genomics_task():
+            try:
+                logger.info(f"🧬 Starting genomics extraction for MRN: {request.mrn}...")
+                genomics_result = genomics_tab_info(request.mrn, False)
+                logger.info(f"✅ Genomics extraction completed")
+                return ('genomics', genomics_result, None)
+            except Exception as e:
+                logger.error(f"❌ Genomics extraction failed: {str(e)}")
+                return ('genomics', None, str(e))
 
-        # Step 4: Extract pathology data
-        logger.info(f"🔬 Step 4/4: Extracting pathology data for MRN: {request.mrn}...")
-        pathology_result = pathology_tab_info_pipeline(request.mrn, False, True)  # use_gemini_api=True
-        logger.info(f"✅ Pathology data extraction completed for MRN: {request.mrn}")
+        def extract_pathology_task():
+            try:
+                logger.info(f"🔬 Starting pathology extraction for MRN: {request.mrn}...")
+                pathology_result = pathology_tab_info_pipeline(request.mrn, False, True)
+                logger.info(f"✅ Pathology extraction completed")
+                return ('pathology', pathology_result, None)
+            except Exception as e:
+                logger.error(f"❌ Pathology extraction failed: {str(e)}")
+                return ('pathology', None, str(e))
+
+        # Execute all tasks in parallel
+        tasks = [
+            extract_patient_task,
+            extract_lab_task,
+            extract_genomics_task,
+            extract_pathology_task
+        ]
+
+        # Store results
+        result = None
+        lab_result = None
+        genomics_result = None
+        pathology_result = None
+        errors = []
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Submit all tasks
+            future_to_task = {executor.submit(task): task.__name__ for task in tasks}
+
+            # Collect results as they complete
+            for future in as_completed(future_to_task):
+                task_name = future_to_task[future]
+                try:
+                    data_type, data, error = future.result()
+
+                    if error:
+                        errors.append(f"{data_type}: {error}")
+                        logger.error(f"⚠️  {data_type} extraction had errors: {error}")
+                    else:
+                        # Assign results to appropriate variables
+                        if data_type == 'patient':
+                            result = data
+                        elif data_type == 'lab':
+                            lab_result = data
+                        elif data_type == 'genomics':
+                            genomics_result = data
+                        elif data_type == 'pathology':
+                            pathology_result = data
+
+                except Exception as e:
+                    logger.error(f"⚠️  Task {task_name} failed unexpectedly: {str(e)}")
+                    errors.append(f"{task_name}: {str(e)}")
+
+        # Check if we got the essential patient data
+        if result is None:
+            raise Exception(f"Failed to extract patient data. Errors: {', '.join(errors)}")
 
         logger.info("="*80)
-        logger.info(f"✅ ALL SEQUENTIAL EXTRACTIONS COMPLETED for MRN: {request.mrn}")
+        logger.info(f"✅ ALL PARALLEL EXTRACTIONS COMPLETED for MRN: {request.mrn}")
+        if errors:
+            logger.warning(f"⚠️  Some extractions had errors: {', '.join(errors)}")
         logger.info("="*80)
 
-        result['lab_info'] = lab_result.get('lab_info')
-        result['lab_reports'] = lab_result.get('lab_reports', [])  # Lab documents for Documents tab
-        result['genomic_info'] = genomics_result.get('genomic_info')
-        result['genomics_reports'] = genomics_result.get('genomics_reports', [])  # Genomics documents for Documents tab
-        result['pathology_summary'] = pathology_result.get('pathology_summary')
-        result['pathology_markers'] = pathology_result.get('pathology_markers')
+        # Check if patient data extraction succeeded
+        if not result.get('success', False):
+            # If patient data extraction failed, return error response with all required fields
+            logger.error(f"❌ Patient data extraction failed: {result.get('error', 'Unknown error')}")
+            return {
+                'success': False,
+                'mrn': request.mrn,
+                'pdf_url': None,
+                'demographics': None,
+                'diagnosis': None,
+                'comorbidities': None,
+                'treatment_tab_info_LOT': None,
+                'treatment_tab_info_timeline': None,
+                'diagnosis_header': None,
+                'diagnosis_evolution_timeline': None,
+                'diagnosis_footer': None,
+                'lab_info': None,
+                'pathology_summary': None,
+                'pathology_markers': None,
+                'pathology_reports': [],
+                'radiology_reports': [],
+                'error': result.get('error', 'Patient data extraction failed')
+            }
+
+        # Merge results (handle None values gracefully)
+        result['lab_info'] = lab_result.get('lab_info') if lab_result else None
+        result['lab_reports'] = lab_result.get('lab_reports', []) if lab_result else []
+        result['genomic_info'] = genomics_result.get('genomic_info') if genomics_result else None
+        result['genomics_reports'] = genomics_result.get('genomics_reports', []) if genomics_result else []
+        result['pathology_summary'] = pathology_result.get('pathology_summary') if pathology_result else None
+        result['pathology_markers'] = pathology_result.get('pathology_markers') if pathology_result else None
 
         # Use pathology data already extracted by pathology_tab_info_pipeline (no duplicate extraction)
         print(f"Using pathology reports already extracted by pathology_tab_info_pipeline for MRN: {request.mrn}")
@@ -816,8 +440,8 @@ async def get_patient_data(request: MRNRequest):
         genomic_alterations_reports = []
         no_test_performed_reports = []
 
-        # Get the typical pathology reports from the pipeline result
-        typical_reports = pathology_result.get('typical_pathology_reports', [])
+        # Get the typical pathology reports from the pipeline result (handle None)
+        typical_reports = pathology_result.get('typical_pathology_reports', []) if pathology_result else []
         for report in typical_reports:
             detailed_pathology_reports.append({
                 "drive_url": report.get('drive_url'),
@@ -830,8 +454,8 @@ async def get_patient_data(request: MRNRequest):
                 "pathology_markers": report.get('pathology_markers')
             })
 
-        # Get genomic pathology reports from pipeline result
-        genomic_reports = pathology_result.get('genomic_pathology_reports', [])
+        # Get genomic pathology reports from pipeline result (handle None)
+        genomic_reports = pathology_result.get('genomic_pathology_reports', []) if pathology_result else []
         for report in genomic_reports:
             genomic_alterations_reports.append({
                 "drive_url": report.get('drive_url', ''),
@@ -2197,8 +1821,8 @@ async def test_patient_all_tabs(request: MRNRequest):
                 "pathology_markers": report.get('pathology_markers')
             })
 
-        # Get genomic pathology reports from pipeline result
-        genomic_reports = pathology_result.get('genomic_pathology_reports', [])
+        # Get genomic pathology reports from pipeline result (handle None)
+        genomic_reports = pathology_result.get('genomic_pathology_reports', []) if pathology_result else []
         for report in genomic_reports:
             genomic_alterations_reports.append({
                 "drive_url": report.get('drive_url', ''),

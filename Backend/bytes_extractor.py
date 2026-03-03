@@ -320,9 +320,9 @@ def extract_lab_results_data_md_notes_combined(
     for entry in document_bundle["entry"]:
         resource = entry.get("resource", {})
 
-        # Filter: Check if document type is "Lab Results"
+        # Filter: Check if document type is "Lab Results" or starts with "Lab Results"
         document_type = resource.get("type", {}).get("text", "")
-        if document_type != "Lab Results":
+        if not document_type.startswith("Lab Results"):
             continue
 
         # Filter: Check content type is application/pdf
@@ -435,7 +435,7 @@ def extract_report_with_MD(
     include_md_notes: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Extract pathology/radiology reports documents with date-based filtering.
+    Extract pathology/radiology/molecular reports documents with date-based filtering.
 
     Gets the most recent report document (where type.text contains the report_type
     and contentType="application/pdf"), then fetches all reports
@@ -445,7 +445,7 @@ def extract_report_with_MD(
         mrn (str): Patient's Medical Record Number
         loinc_code (str, optional): LOINC code for document type (e.g., "60568-3" for pathology reports)
         content_type (str): MIME type to filter (default: "application/pdf")
-        report_type (str): Type of report to extract (default: "pathology")
+        report_type (str): Type of report to extract (options: "pathology", "radiology", "molecular")
         include_md_notes (bool): Whether to include MD notes with the reports (default: True)
 
     Returns:
@@ -473,9 +473,15 @@ def extract_report_with_MD(
     for entry in document_bundle["entry"]:
         resource = entry.get("resource", {})
 
-        # Filter: Check if document type contains "Pathology"
+        # Filter: Check if document type matches the report_type
         document_type = resource.get("type", {}).get("text", "")
-        if report_type not in document_type.lower():
+
+        # For molecular results, match only "Molecular Results" (not "Molecular Tests")
+        if report_type == "molecular":
+            if not document_type.startswith("Molecular Results"):
+                continue
+        # For other types (pathology, radiology), use contains match
+        elif report_type not in document_type.lower():
             continue
 
         # Filter: Check content type is application/pdf

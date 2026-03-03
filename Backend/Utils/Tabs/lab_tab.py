@@ -16,6 +16,11 @@ if BACKEND_DIR not in sys.path:
 
 from Utils.Tabs.llmparser import llmresponsedetailed
 from Utils.Tabs.lab_postprocessor import process_lab_data_for_ui
+from Utils.Tabs.fhir_lab_integration import (
+    fetch_fhir_observations,
+    convert_fhir_observations_to_lab_schema,
+    merge_lab_data_with_fhir
+)
 from Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
 
 # Setup logger
@@ -50,7 +55,7 @@ def biomarker_schema():
     return {
         "value": "Float or 'Pending' or null - The most recent value for this biomarker in this document",
         "unit": "String - The unit of measurement (e.g., 'g/dL', 'Thousand/uL')",
-        "date": "YYYY-MM-DD - Date of the measurement (use Lab Resulted date)",
+        "date": "MM/DD/YYYY - Date of the measurement (use Lab Resulted date)",
         "status": "String (e.g., 'Normal', 'High', 'Low') - Status based on reference range",
         "reference_range": "String - The reference range for this biomarker",
         "source_context": "String - Brief description of source (e.g., 'Lab Report Page 1')"
@@ -360,18 +365,25 @@ Just the JSON object following the schema above.
         logger.error(f"💾 Saved raw response to: {error_file}")
         raise
 
-def extract_lab_info(pdf_url=None, pdf_bytes=None, return_raw=False, use_gemini=True):
+def extract_lab_info(pdf_url=None, pdf_bytes=None, return_raw=False, use_gemini=True,
+                     patient_id=None, onco_emr_token=None):
     """
-    Extract and process lab information from PDF.
+    Extract and process lab information from PDF, optionally merging with FHIR Observation API data.
 
     Args:
         pdf_url: URL to the PDF containing lab reports (optional if pdf_bytes provided)
         pdf_bytes: PDF content as bytes (optional if pdf_url provided)
         return_raw: If True, returns raw unprocessed data. If False (default), returns UI-ready data.
         use_gemini: If True (default), uses Gemini pipeline. If False, uses legacy llmresponsedetailed (requires pdf_url).
+        patient_id: FHIR patient ID for fetching lab observations from FHIR API (optional)
+        onco_emr_token: OncoEMR access token for FHIR API authentication (optional)
 
     Returns:
         Processed lab data ready for UI consumption (or raw data if return_raw=True)
+
+    Note:
+        If patient_id and onco_emr_token are provided, lab data will be fetched from FHIR
+        Observation API and merged with PDF-extracted data before postprocessing.
     """
     if pdf_bytes is None and pdf_url is None:
         raise ValueError("Either pdf_url or pdf_bytes must be provided")
@@ -424,12 +436,46 @@ def extract_lab_info(pdf_url=None, pdf_bytes=None, return_raw=False, use_gemini=
 
     log_extraction_output(logger, "Lab Raw Data", raw_data)
 
+    # Convert raw_data to list format for merging
+    # (Postprocessor handles both dict and list, but FHIR merge needs list)
+    if isinstance(raw_data, dict):
+        llm_data_list = [raw_data]
+    else:
+        llm_data_list = raw_data if isinstance(raw_data, list) else [raw_data]
+
+    # Fetch and merge FHIR Observation data if credentials provided
+    if patient_id and onco_emr_token:
+        logger.info("🔍 FHIR Integration enabled - fetching lab observations from FHIR API...")
+        try:
+            # Fetch FHIR observations
+            fhir_entries = fetch_fhir_observations(
+                patient_id=patient_id,
+                onco_emr_token=onco_emr_token,
+                category="laboratory"
+            )
+
+            if fhir_entries:
+                # Convert FHIR data to lab schema
+                fhir_lab_data = convert_fhir_observations_to_lab_schema(fhir_entries)
+
+                # Merge with LLM data
+                llm_data_list = merge_lab_data_with_fhir(llm_data_list, fhir_lab_data)
+                logger.info(f"✅ FHIR data merged successfully - total documents: {len(llm_data_list)}")
+            else:
+                logger.info("ℹ️  No FHIR observations found for this patient")
+
+        except Exception as e:
+            logger.error(f"⚠️  FHIR integration failed: {e}")
+            logger.info("ℹ️  Continuing with PDF-extracted data only")
+    else:
+        logger.info("ℹ️  FHIR integration disabled - using PDF-extracted data only")
+
     if return_raw:
-        return raw_data
+        return llm_data_list
 
     # Postprocess the data for UI (without AI refinement - done at consolidated level)
     logger.info("🔄 Postprocessing lab data for UI...")
-    processed_data = process_lab_data_for_ui(raw_data, use_ai_refinement=False)
+    processed_data = process_lab_data_for_ui(llm_data_list, use_ai_refinement=False)
 
     log_extraction_output(logger, "Lab Processed Data", processed_data)
     log_extraction_complete(logger, "Lab Tab", processed_data.keys() if isinstance(processed_data, dict) else None)

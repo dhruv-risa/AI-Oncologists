@@ -590,17 +590,6 @@ class ApiService {
     });
   }
 
-  // Demo mode endpoints (bypasses FHIR API, uses demo_data.json)
-  async getDemoMRNs(): Promise<{ success: boolean; mrns: string[]; count: number }> {
-    return this.request<{ success: boolean; mrns: string[]; count: number }>('/api/demo/mrns');
-  }
-
-  async getDemoPatientData(mrn: string): Promise<any> {
-    return this.request<any>('/api/demo/patient', {
-      method: 'POST',
-      body: JSON.stringify({ mrn }),
-    });
-  }
 }
 
 // Export singleton instance

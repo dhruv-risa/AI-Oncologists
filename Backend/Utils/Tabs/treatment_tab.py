@@ -2,18 +2,24 @@
 
 import sys
 import os
+import json
+import re
 import requests
+import vertexai
+from vertexai.generative_models import GenerativeModel, Part
 
 # Add Backend to path for imports
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from Backend.Utils.Tabs.llmparser import llmresponsedetailed
 from Backend.Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
 
 # Setup logger
 logger = setup_logger(__name__)
+
+# Initialize Vertex AI
+vertexai.init(project="prior-auth-portal-dev", location="us-central1")
 
 extracted_instructions_lot = (
     "Extract structured treatment data for a 'Lines of Therapy' timeline UI from the provided clinical notes. "
@@ -47,8 +53,8 @@ extracted_instructions_lot = (
     "  6. This allows the UI to show the dosage change as a visible event while maintaining the correct line number."
     ""
     "EXAMPLE: If a patient receives 'Carboplatin + Pemetrexed' at 500mg from Jan-Mar, then the dose is reduced to 400mg from Apr-Jun:"
-    "- First entry: line_number=1, dates='Jan-Mar', systemic_regimen='Carboplatin + Pemetrexed', outcome.details='• Received standard dose initially\\n• Developed Grade 3 diarrhea\\n• Required dose reduction', reason_for_discontinuation='' (empty, not discontinued)"
-    "- Second entry: line_number=1, dates='Apr-Jun', systemic_regimen='Carboplatin + Pemetrexed', outcome.details='• Dose reduced to 400mg\\n• Improved tolerance with minimal toxicity\\n• Disease remained stable', reason_for_discontinuation='' (empty unless actually discontinued)"
+    "- First entry: line_number=1, dates='01/15/2026 -> 03/31/2026', systemic_regimen='Carboplatin + Pemetrexed', outcome.details='• Received standard dose initially\\n• Developed Grade 3 diarrhea\\n• Required dose reduction', reason_for_discontinuation='' (empty, not discontinued)"
+    "- Second entry: line_number=1, dates='04/01/2026 -> 06/30/2026', systemic_regimen='Carboplatin + Pemetrexed', outcome.details='• Dose reduced to 400mg\\n• Improved tolerance with minimal toxicity\\n• Disease remained stable', reason_for_discontinuation='' (empty unless actually discontinued)"
     ""
     "For each entry, extract:"
     "1. Line Title: "
@@ -56,7 +62,7 @@ extracted_instructions_lot = (
     "   - For the main modality, use the primary drug name (e.g., 'Carboplatin', 'Osimertinib')."
     "   - IMPORTANT: If this entry has ONLY local therapy (radiation/surgery) and NO systemic regimen, set line_number to null."
     "2. Status: 'Current', 'Past', or 'Planned'. "
-    "3. Dates: Exact start and end dates in DD MMM YYYY format (e.g., '27 Jan 2026', '13 Jan 2026'). For display_text, format as 'DD MMM YYYY -> DD MMM YYYY' or 'DD MMM YYYY -> Ongoing'. For Radiation, look for 'completed' dates."
+    "3. Dates: Exact start and end dates in MM/DD/YYYY format (e.g., '01/27/2026', '01/13/2026'). For display_text, format as 'MM/DD/YYYY -> MM/DD/YYYY' or 'MM/DD/YYYY -> Ongoing'. For Radiation, look for 'completed' dates."
     "4. TREATMENT SPLIT (CRITICAL - READ CAREFULLY):"
     "   You must separate systemic drug treatments from local modalities to ensure accurate Line of Therapy counting."
     "   - systemic_regimen: Extract ONLY drug-based anti-cancer therapies."
@@ -99,9 +105,9 @@ description_lot = {
                 "status_badge": "Current, Past, or Planned"
             },
             "dates": {
-                "start_date": "YYYY-MM-DD",
-                "end_date": "YYYY-MM-DD or 'Ongoing'",
-                "display_text": "Formatted string like '27 Jan 2026 -> Ongoing' or '13 Jan 2026 -> 23 Jan 2026' (format: DD MMM YYYY -> DD MMM YYYY or DD MMM YYYY -> Ongoing)"
+                "start_date": "MM/DD/YYYY",
+                "end_date": "MM/DD/YYYY or 'Ongoing'",
+                "display_text": "Formatted string like '01/27/2026 -> Ongoing' or '01/13/2026 -> 01/23/2026' (format: MM/DD/YYYY -> MM/DD/YYYY or MM/DD/YYYY -> Ongoing)"
             },
             "systemic_regimen": "String. Drug names ONLY, separated by + (e.g., 'Carboplatin + Pemetrexed', 'Osimertinib', 'Carboplatin + Pemetrexed + Pembrolizumab'). DO NOT include dosages, routes, or schedules. Set to null if only surgery/radiation.",
             "local_therapy": "String. Focal treatments ONLY. Include Radiation (e.g., 'WBRT 30Gy', 'SBRT to lung') or Surgery (e.g., 'Right upper lobectomy'). Set to null if none occurred.",
@@ -130,7 +136,7 @@ extracted_instructions_timeline = (
     "Extract a high-level chronological timeline of major cancer-related events from the clinical notes. "
     "Scope: Include Systemic Therapies, Surgeries, Radiation, and significant diagnostic/imaging events. "
     "For each event, extract:"
-    "1. Date Display: A concise date string. Use 'Mon YYYY' for single events (e.g., 'Jan 2025') or a range 'Mon-Mon YYYY' for continuous treatments (e.g., 'Jun-Sep 2024'). "
+    "1. Date Display: A concise date string in MM/DD/YYYY format (e.g., '01/15/2025') or a range 'MM/DD/YYYY - MM/DD/YYYY' for continuous treatments (e.g., '06/01/2024 - 09/30/2024')."
     "2. TREATMENT SPLIT (CRITICAL):"
     "   - systemic_regimen: Extract ONLY drug-based anti-cancer therapies."
     "     * Include: Chemotherapy, Immunotherapy, Targeted Therapy."
@@ -177,25 +183,216 @@ extracted_instructions_timeline = (
 description_timeline = {
     "timeline_events": [
         {
-            "date_display": "String for the left column (e.g., 'Jan 2025', 'Dec 2025')",
+            "date_display": "String for the left column in MM/DD/YYYY format (e.g., '01/15/2025', '12/08/2025')",
             "systemic_regimen": "String. Drug-based treatments ONLY. Include Chemo, Immuno, Targeted therapy (e.g., 'Carboplatin + Pemetrexed + Pembrolizumab', 'Osimertinib'). Set to null if only surgery/radiation/imaging.",
             "local_therapy": "String. Focal treatments ONLY with detailed description. For Radiation: include type and site (e.g., 'Whole brain radiation with hippocampal sparing for 10 brain metastases', 'SBRT to lung lesion'). For Surgery: include procedure and site (e.g., 'Right upper lobectomy with mediastinal lymph node dissection', 'Wedge resection of lung nodule'). Set to null if none occurred.",
-            "details": "String. Context-specific clinical details based on event type: For Systemic - cycle info, response, intent (e.g., 'Cycle 1 initiated, next cycle scheduled for Feb 17, 2026'). For Radiation - dose, fractionation, extent (e.g., '30 Gy in 10 fractions, palliative intent'). For Surgery - pathology findings, molecular results (e.g., 'Biopsy confirmed poorly differentiated NSCLC, KRAS G12C mutated'). For Imaging - key findings, disease extent (e.g., 'Brain MRI revealed at least 5 metastatic lesions, simulation identified 10 lesions'). Make it clinically meaningful and specific.",
+            "details": "String. Context-specific clinical details based on event type: For Systemic - cycle info, response, intent (e.g., 'Cycle 1 initiated, next cycle scheduled for 02/17/2026'). For Radiation - dose, fractionation, extent (e.g., '30 Gy in 10 fractions, palliative intent'). For Surgery - pathology findings, molecular results (e.g., 'Biopsy confirmed poorly differentiated NSCLC, KRAS G12C mutated'). For Imaging - key findings, disease extent (e.g., 'Brain MRI revealed at least 5 metastatic lesions, simulation identified 10 lesions'). Make it clinically meaningful and specific.",
             "event_type": "String. Category for display (e.g., 'Systemic', 'Radiation', 'Surgery', 'Imaging'). This helps the UI show appropriate styling/icons."
         }
     ]
 }
 
+def extract_lot_with_gemini(pdf_input):
+    """
+    Extract Lines of Therapy data using Vertex AI Gemini SDK.
+
+    Args:
+        pdf_input: Either bytes (PDF content) or URL/path to the PDF file
+
+    Returns:
+        Dictionary containing extracted LOT data
+    """
+    # Handle both bytes and file path/URL inputs
+    if isinstance(pdf_input, bytes):
+        logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
+        pdf_bytes = pdf_input
+    elif pdf_input.startswith("http"):
+        # Handle Google Drive URLs
+        logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
+        if "drive.google.com" in pdf_input:
+            match = re.search(r'/file/d/([^/]+)', pdf_input)
+            if match:
+                file_id = match.group(1)
+                download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            else:
+                raise ValueError("Could not extract file ID from Google Drive URL")
+        else:
+            download_url = pdf_input
+
+        response = requests.get(download_url, allow_redirects=True)
+        response.raise_for_status()
+        pdf_bytes = response.content
+        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+    else:
+        # Assume it's a file path
+        logger.info(f"📤 Reading PDF from path: {pdf_input}")
+        with open(pdf_input, "rb") as f:
+            pdf_bytes = f.read()
+
+    # Build prompt from extraction instructions and description
+    GEMINI_PROMPT = f"""
+{extracted_instructions_lot}
+
+OUTPUT SCHEMA (STRICT):
+{json.dumps(description_lot, indent=2)}
+
+OUTPUT FORMAT:
+Return VALID JSON ONLY.
+No explanations.
+No markdown code blocks.
+No commentary.
+Just the JSON object following the schema above.
+"""
+
+    logger.info("🤖 Generating treatment LOT extraction with Vertex AI Gemini...")
+
+    # Initialize the model
+    model = GenerativeModel("gemini-2.5-pro")
+
+    # Wrap PDF bytes in Part object
+    doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
+
+    # Make API request
+    try:
+        response = model.generate_content(
+            [doc_part, GEMINI_PROMPT],
+            generation_config={
+                "temperature": 0,
+                "top_p": 1
+            }
+        )
+        logger.info("✅ Gemini treatment LOT extraction complete")
+    except Exception as e:
+        logger.error(f"❌ API request failed: {e}")
+        raise
+
+    # Parse JSON response
+    try:
+        response_text = response.text.strip()
+        logger.info(f"📄 Extracted response text ({len(response_text)} chars)")
+
+        # Use regex to extract JSON from markdown code blocks
+        json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+        match = re.search(json_pattern, response_text)
+
+        if match:
+            response_text = match.group(1).strip()
+            logger.info("🔍 Extracted JSON from markdown code block")
+
+        # Parse the JSON
+        extracted_data = json.loads(response_text)
+        logger.info(f"✅ Successfully parsed JSON with {len(extracted_data)} top-level keys")
+
+        return extracted_data
+
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Failed to parse JSON: {e}")
+        logger.error(f"📄 Response text preview: {response_text[:500]}")
+        raise
+
+
+def extract_timeline_with_gemini(pdf_input):
+    """
+    Extract Treatment Timeline data using Vertex AI Gemini SDK.
+
+    Args:
+        pdf_input: Either bytes (PDF content) or URL/path to the PDF file
+
+    Returns:
+        Dictionary containing extracted timeline data
+    """
+    # Handle both bytes and file path/URL inputs
+    if isinstance(pdf_input, bytes):
+        logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
+        pdf_bytes = pdf_input
+    elif pdf_input.startswith("http"):
+        # Handle Google Drive URLs
+        logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
+        if "drive.google.com" in pdf_input:
+            match = re.search(r'/file/d/([^/]+)', pdf_input)
+            if match:
+                file_id = match.group(1)
+                download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            else:
+                raise ValueError("Could not extract file ID from Google Drive URL")
+        else:
+            download_url = pdf_input
+
+        response = requests.get(download_url, allow_redirects=True)
+        response.raise_for_status()
+        pdf_bytes = response.content
+        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+    else:
+        # Assume it's a file path
+        logger.info(f"📤 Reading PDF from path: {pdf_input}")
+        with open(pdf_input, "rb") as f:
+            pdf_bytes = f.read()
+
+    # Build prompt from extraction instructions and description
+    GEMINI_PROMPT = f"""
+{extracted_instructions_timeline}
+
+OUTPUT SCHEMA (STRICT):
+{json.dumps(description_timeline, indent=2)}
+
+OUTPUT FORMAT:
+Return VALID JSON ONLY.
+No explanations.
+No markdown code blocks.
+No commentary.
+Just the JSON object following the schema above.
+"""
+
+    logger.info("🤖 Generating treatment timeline extraction with Vertex AI Gemini...")
+
+    model = GenerativeModel("gemini-2.5-pro")
+    doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
+
+    try:
+        response = model.generate_content(
+            [doc_part, GEMINI_PROMPT],
+            generation_config={
+                "temperature": 0,
+                "top_p": 1
+            }
+        )
+        logger.info("✅ Gemini treatment timeline extraction complete")
+    except Exception as e:
+        logger.error(f"❌ API request failed: {e}")
+        raise
+
+    try:
+        response_text = response.text.strip()
+        logger.info(f"📄 Extracted response text ({len(response_text)} chars)")
+
+        json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+        match = re.search(json_pattern, response_text)
+
+        if match:
+            response_text = match.group(1).strip()
+            logger.info("🔍 Extracted JSON from markdown code block")
+
+        extracted_data = json.loads(response_text)
+        logger.info(f"✅ Successfully parsed JSON with {len(extracted_data)} top-level keys")
+
+        return extracted_data
+
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Failed to parse JSON: {e}")
+        logger.error(f"📄 Response text preview: {response_text[:500]}")
+        raise
+
+
 def extract_treatment_tab_info(pdf_url):
     log_extraction_start(logger, "Treatment Tab (2 components)", pdf_url)
 
     logger.info("🔄 Extracting treatment lines of therapy (1/2)...")
-    patient_treatment_lot = llmresponsedetailed(pdf_url, extraction_instructions=extracted_instructions_lot, description=description_lot)
+    patient_treatment_lot = extract_lot_with_gemini(pdf_url)
     log_extraction_output(logger, "Treatment LOT", patient_treatment_lot)
     log_extraction_complete(logger, "Treatment LOT", patient_treatment_lot.keys() if isinstance(patient_treatment_lot, dict) else None)
 
     logger.info("🔄 Extracting treatment timeline (2/2)...")
-    patient_treatment_timeline = llmresponsedetailed(pdf_url, extraction_instructions=extracted_instructions_timeline, description=description_timeline)
+    patient_treatment_timeline = extract_timeline_with_gemini(pdf_url)
     log_extraction_output(logger, "Treatment Timeline", patient_treatment_timeline)
     log_extraction_complete(logger, "Treatment Timeline", patient_treatment_timeline.keys() if isinstance(patient_treatment_timeline, dict) else None)
 

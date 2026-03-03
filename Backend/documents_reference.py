@@ -59,7 +59,7 @@ def generate_bearer_token(
 ## The code for Astera = tPvNbDprUnrXIJlDXyxs
 def generate_onco_emr_token(
     bearer_token: str,
-    url: str = "https://apis.risalabs.ai/pa-order-creation/commons/emr/get-flatiron-token/3GKbZtgpPru1vJGCkxwR"
+    url: str = "https://apis.risalabs.ai/pa-order-creation/commons/emr/get-flatiron-token/tPvNbDprUnrXIJlDXyxs"
 ) -> str:
     """
     Generate OncoEMR token using bearer token.
