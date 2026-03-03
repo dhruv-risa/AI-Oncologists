@@ -2246,6 +2246,267 @@ async def refresh_single_trial_eligibility(mrn: str, nct_id: str):
 
 
 # ============================================================================
+# Patient Review Link Endpoints
+# ============================================================================
+
+@app.post("/api/patients/{mrn}/trials/{nct_id}/send-patient-review", tags=["Clinical Trials"])
+async def send_patient_review(mrn: str, nct_id: str):
+    """
+    Generate a shareable patient review link for a specific trial.
+
+    Extracts patient-review criteria from the eligibility data,
+    creates a token, and returns a URL that can be shared with the patient.
+    """
+    import json
+    import sqlite3
+    import uuid
+
+    try:
+        # 1. Fetch eligibility data
+        conn = sqlite3.connect(data_pool.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT criteria_results
+            FROM eligibility_matrix
+            WHERE trial_nct_id = ? AND patient_mrn = ?
+        """, (nct_id, mrn))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No eligibility data found for patient {mrn} and trial {nct_id}"
+            )
+
+        criteria_results = json.loads(row[0]) if row[0] else {}
+
+        # 2. Filter for patient-review criteria that haven't been resolved
+        patient_criteria = []
+        for ctype in ["inclusion", "exclusion"]:
+            for c in criteria_results.get(ctype, []):
+                if (c.get("review_type") == "patient" and
+                        not c.get("manually_resolved")):
+                    patient_criteria.append({
+                        "criterion_number": c.get("criterion_number"),
+                        "criterion_type": ctype,
+                        "criterion_text": c.get("criterion_text", ""),
+                    })
+
+        if not patient_criteria:
+            return {
+                "success": False,
+                "message": "No unresolved patient-review criteria found for this trial"
+            }
+
+        # 3. Generate token and store
+        token = str(uuid.uuid4())
+        data_pool.create_review_token(
+            token=token,
+            patient_mrn=mrn,
+            trial_nct_id=nct_id,
+            criteria_snapshot=json.dumps(patient_criteria)
+        )
+
+        # 4. Build review URL (use frontend origin for Vite dev server)
+        review_url = f"http://localhost:3000/review/{token}"
+
+        return {
+            "success": True,
+            "token": token,
+            "review_url": review_url,
+            "criteria_count": len(patient_criteria)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.get("/api/review/{token}", tags=["Patient Review"])
+async def get_patient_review(token: str):
+    """
+    Public endpoint: Get patient review data for a token.
+
+    Returns the criteria questions the patient needs to answer.
+    """
+    import json
+
+    try:
+        token_data = data_pool.get_review_token(token)
+        if not token_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Review link not found or expired"
+            )
+
+        if token_data["status"] == "completed":
+            return {
+                "status": "completed",
+                "message": "You have already submitted your responses. Thank you!"
+            }
+
+        # Get trial title
+        trial = data_pool.get_trial(token_data["trial_nct_id"])
+        trial_title = trial.get("title", "Clinical Trial") if trial else "Clinical Trial"
+
+        # Get patient first name for greeting (stored in demographics.Patient Name)
+        patient_data = data_pool.get_patient_data(token_data["patient_mrn"])
+        patient_first_name = ""
+        if patient_data:
+            demographics = patient_data.get("demographics", {})
+            full_name = demographics.get("Patient Name", "") if isinstance(demographics, dict) else ""
+            if full_name:
+                # Name format: "Last, First M" → extract first name
+                parts = full_name.split(",")
+                if len(parts) > 1:
+                    patient_first_name = parts[1].strip().split()[0]
+                else:
+                    patient_first_name = full_name.split()[0]
+
+        criteria = json.loads(token_data["criteria_snapshot"])
+
+        return {
+            "status": "pending",
+            "trial_nct_id": token_data["trial_nct_id"],
+            "trial_title": trial_title,
+            "patient_first_name": patient_first_name,
+            "criteria": criteria
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+class PatientReviewSubmission(BaseModel):
+    responses: List[CriterionResolution]
+
+
+@app.post("/api/review/{token}/submit", tags=["Patient Review"])
+async def submit_patient_review(token: str, request: PatientReviewSubmission):
+    """
+    Public endpoint: Submit patient review responses.
+
+    Applies the patient's Yes/No answers to the eligibility criteria
+    and recalculates the eligibility score in real-time.
+    """
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    try:
+        # 1. Validate token
+        token_data = data_pool.get_review_token(token)
+        if not token_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Review link not found or expired"
+            )
+
+        if token_data["status"] == "completed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This review has already been submitted"
+            )
+
+        mrn = token_data["patient_mrn"]
+        nct_id = token_data["trial_nct_id"]
+
+        # 2. Apply resolutions using the same logic as resolve-criteria
+        conn = sqlite3.connect(data_pool.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT criteria_results
+            FROM eligibility_matrix
+            WHERE trial_nct_id = ? AND patient_mrn = ?
+        """, (nct_id, mrn))
+        row = cursor.fetchone()
+
+        if not row:
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Eligibility data no longer exists"
+            )
+
+        criteria_results = json.loads(row[0]) if row[0] else {}
+
+        # Apply each resolution
+        applied = 0
+        for resolution in request.responses:
+            criteria_list = criteria_results.get(resolution.criterion_type, [])
+            for criterion in criteria_list:
+                if criterion.get("criterion_number") == resolution.criterion_number:
+                    if "original_met" not in criterion:
+                        criterion["original_met"] = criterion.get("met")
+                    criterion["met"] = resolution.resolved_met
+                    criterion["manually_resolved"] = True
+                    criterion["resolved_by"] = "patient"
+                    criterion["resolved_at"] = datetime.now().isoformat()
+                    criterion["confidence"] = "manual_review"
+                    applied += 1
+                    break
+
+        # 3. Recalculate eligibility
+        from Backend.Utils.Tabs.clinical_trials_tab import (
+            calculate_eligibility_score, classify_unknown_criteria, add_suggested_tests
+        )
+        all_criteria = criteria_results.get("inclusion", []) + criteria_results.get("exclusion", [])
+        all_criteria = classify_unknown_criteria(all_criteria)
+        all_criteria = add_suggested_tests(all_criteria)
+        eligibility = calculate_eligibility_score(all_criteria)
+
+        # 4. Update database
+        cursor.execute("""
+            UPDATE eligibility_matrix
+            SET criteria_results = ?,
+                eligibility_status = ?,
+                eligibility_percentage = ?,
+                computed_at = ?
+            WHERE trial_nct_id = ? AND patient_mrn = ?
+        """, (
+            json.dumps(criteria_results),
+            eligibility["status"],
+            eligibility["percentage"],
+            datetime.now().isoformat(),
+            nct_id, mrn
+        ))
+        conn.commit()
+        conn.close()
+
+        # 5. Mark token as completed
+        data_pool.complete_review_token(token, json.dumps([
+            {"criterion_number": r.criterion_number,
+             "criterion_type": r.criterion_type,
+             "resolved_met": r.resolved_met}
+            for r in request.responses
+        ]))
+
+        return {
+            "success": True,
+            "message": "Thank you for your responses! Your care team will review the updated eligibility.",
+            "resolutions_applied": applied
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+# ============================================================================
 # Admin Routes for Batch Operations
 # ============================================================================
 

@@ -143,6 +143,23 @@ class DataPool:
             )
         """)
 
+        # Create patient review tokens table - stores shareable review links
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS patient_review_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token TEXT NOT NULL UNIQUE,
+                patient_mrn TEXT NOT NULL,
+                trial_nct_id TEXT NOT NULL,
+                criteria_snapshot TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                responses TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                FOREIGN KEY (patient_mrn) REFERENCES patient_data_pool(mrn),
+                FOREIGN KEY (trial_nct_id) REFERENCES trials_cache(nct_id)
+            )
+        """)
+
         # Create indexes for faster queries
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_trials_status ON trials_cache(status)
@@ -964,6 +981,74 @@ class DataPool:
         except Exception as e:
             print(f"Error getting computation progress: {e}")
             return None
+
+    # ── Patient Review Tokens ──────────────────────────────────────────────
+
+    def create_review_token(self, token: str, patient_mrn: str, trial_nct_id: str,
+                            criteria_snapshot: str) -> bool:
+        """Create a new patient review token with criteria snapshot."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO patient_review_tokens
+                (token, patient_mrn, trial_nct_id, criteria_snapshot, status)
+                VALUES (?, ?, ?, ?, 'pending')
+            """, (token, patient_mrn, trial_nct_id, criteria_snapshot))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error creating review token: {e}")
+            return False
+
+    def get_review_token(self, token: str):
+        """Get review token data."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT token, patient_mrn, trial_nct_id, criteria_snapshot,
+                       status, responses, created_at, completed_at
+                FROM patient_review_tokens
+                WHERE token = ?
+            """, (token,))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return {
+                    "token": row[0],
+                    "patient_mrn": row[1],
+                    "trial_nct_id": row[2],
+                    "criteria_snapshot": row[3],
+                    "status": row[4],
+                    "responses": row[5],
+                    "created_at": row[6],
+                    "completed_at": row[7]
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting review token: {e}")
+            return None
+
+    def complete_review_token(self, token: str, responses: str) -> bool:
+        """Mark a review token as completed with patient responses."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE patient_review_tokens
+                SET status = 'completed',
+                    responses = ?,
+                    completed_at = ?
+                WHERE token = ? AND status = 'pending'
+            """, (responses, datetime.now().isoformat(), token))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error completing review token: {e}")
+            return False
 
     def get_eligible_patients_for_trial(self, nct_id: str, status_filter: str = None,
                                         limit: int = 100, offset: int = 0) -> List[Dict]:

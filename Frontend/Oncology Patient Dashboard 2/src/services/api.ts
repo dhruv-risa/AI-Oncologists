@@ -771,6 +771,33 @@ class ApiService {
     );
   }
 
+  // Patient Review: Generate a shareable review link
+  async sendPatientReview(mrn: string, nctId: string): Promise<SendPatientReviewResponse> {
+    return this.request<SendPatientReviewResponse>(
+      `/api/patients/${mrn}/trials/${nctId}/send-patient-review`,
+      { method: 'POST' }
+    );
+  }
+
+  // Patient Review: Get review page data (public)
+  async getPatientReview(token: string): Promise<PatientReviewData> {
+    return this.request<PatientReviewData>(`/api/review/${token}`);
+  }
+
+  // Patient Review: Submit patient responses (public)
+  async submitPatientReview(
+    token: string,
+    responses: CriterionResolutionPayload[]
+  ): Promise<PatientReviewSubmitResponse> {
+    return this.request<PatientReviewSubmitResponse>(
+      `/api/review/${token}/submit`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ responses }),
+      }
+    );
+  }
+
   // Admin: Sync trials from ClinicalTrials.gov
   async syncTrials(options?: { maxPerQuery?: number; background?: boolean }): Promise<AdminResponse> {
     const params = new URLSearchParams();
@@ -911,6 +938,33 @@ export interface EligibilityProgressResponse {
   updated_at?: string;
   completed_at?: string;
   error_message?: string;
+}
+
+export interface SendPatientReviewResponse {
+  success: boolean;
+  token?: string;
+  review_url?: string;
+  criteria_count?: number;
+  message?: string;
+}
+
+export interface PatientReviewData {
+  status: 'pending' | 'completed';
+  trial_nct_id?: string;
+  trial_title?: string;
+  patient_first_name?: string;
+  criteria?: Array<{
+    criterion_number: number;
+    criterion_type: string;
+    criterion_text: string;
+  }>;
+  message?: string;
+}
+
+export interface PatientReviewSubmitResponse {
+  success: boolean;
+  message: string;
+  resolutions_applied: number;
 }
 
 export interface AdminResponse {

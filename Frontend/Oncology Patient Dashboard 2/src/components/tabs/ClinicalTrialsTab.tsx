@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { FlaskConical, CheckCircle, XCircle, HelpCircle, Phone, Mail, MapPin, ExternalLink, RefreshCw, AlertCircle, Database, Search, ClipboardCheck, User, Stethoscope, X, Loader2 } from 'lucide-react';
+import { FlaskConical, CheckCircle, XCircle, HelpCircle, Phone, Mail, MapPin, ExternalLink, RefreshCw, AlertCircle, Database, Search, ClipboardCheck, User, Stethoscope, X, Loader2, Send, Copy, Check } from 'lucide-react';
 import { usePatient } from '../../contexts/PatientContext';
 import { apiService, ClinicalTrial, CriterionResult, ClinicalTrialsResponse, CriterionResolutionPayload } from '../../services/api';
 
@@ -255,6 +255,11 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
 
     // Per-trial refresh state
     const [refreshingTrials, setRefreshingTrials] = useState<Set<string>>(new Set());
+
+    // Patient review link modal state
+    const [linkModal, setLinkModal] = useState<{ nctId: string; url: string } | null>(null);
+    const [sendingLink, setSendingLink] = useState(false);
+    const [copied, setCopied] = useState(false);
 
     // Search/filter state
     const [filterText, setFilterText] = useState('');
@@ -541,6 +546,45 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
             console.error('Failed to save resolutions:', err);
         } finally {
             setSaving(false);
+        }
+    };
+
+    // ── Send patient review link ──────────────────────────────────────
+    const handleSendToPatient = async (nctId: string) => {
+        if (!currentPatient?.mrn) return;
+        setSendingLink(true);
+        try {
+            const response = await apiService.sendPatientReview(currentPatient.mrn, nctId);
+            if (response.success && response.review_url) {
+                setLinkModal({ nctId, url: response.review_url });
+                setCopied(false);
+            } else {
+                alert(response.message || 'No patient-review criteria to send.');
+            }
+        } catch (err) {
+            console.error('Failed to generate review link:', err);
+            alert('Failed to generate review link.');
+        } finally {
+            setSendingLink(false);
+        }
+    };
+
+    const handleCopyLink = async () => {
+        if (!linkModal) return;
+        try {
+            await navigator.clipboard.writeText(linkModal.url);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch {
+            // Fallback for older browsers
+            const input = document.createElement('input');
+            input.value = linkModal.url;
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            document.body.removeChild(input);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
         }
     };
 
@@ -1015,14 +1059,26 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
 
                                         {/* Patient Review Needed */}
                                         {rc.patient > 0 && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); setReviewModal({ type: 'patient', trialNctId: trial.nct_id }); }}
-                                                className="flex items-center gap-1 hover:underline cursor-pointer"
-                                                style={{ color: '#1d4ed8' }}
-                                            >
-                                                <ClipboardCheck className="w-3.5 h-3.5" />
-                                                <span>{rc.patient} Patient Review Needed</span>
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); setReviewModal({ type: 'patient', trialNctId: trial.nct_id }); }}
+                                                    className="flex items-center gap-1 hover:underline cursor-pointer"
+                                                    style={{ color: '#1d4ed8' }}
+                                                >
+                                                    <ClipboardCheck className="w-3.5 h-3.5" />
+                                                    <span>{rc.patient} Patient Review Needed</span>
+                                                </button>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleSendToPatient(trial.nct_id); }}
+                                                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium hover:opacity-80 cursor-pointer"
+                                                    style={{ backgroundColor: '#dbeafe', color: '#1d4ed8' }}
+                                                    title="Generate a shareable link for the patient"
+                                                    disabled={sendingLink}
+                                                >
+                                                    <Send className="w-3 h-3" />
+                                                    <span>Send to Patient</span>
+                                                </button>
+                                            </div>
                                         )}
 
                                         {/* Clinician Review Needed */}
@@ -1156,6 +1212,55 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                     criteria={getTestingCriteria()}
                     onClose={() => setTestingModal(null)}
                 />
+            )}
+
+            {/* Patient Review Link Modal */}
+            {linkModal && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setLinkModal(null)}>
+                    <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 p-6" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: '#dbeafe' }}>
+                                    <Send className="w-4 h-4" style={{ color: '#1d4ed8' }} />
+                                </div>
+                                <h3 className="text-lg font-semibold text-gray-900">Patient Review Link</h3>
+                            </div>
+                            <button onClick={() => setLinkModal(null)} className="text-gray-400 hover:text-gray-600">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <p className="text-sm text-gray-600 mb-4">
+                            Share this link with the patient to collect their responses for trial <span className="font-medium">{linkModal.nctId}</span>.
+                            Their answers will automatically update the eligibility assessment.
+                        </p>
+
+                        <div className="flex items-center gap-2 mb-4">
+                            <input
+                                type="text"
+                                readOnly
+                                value={linkModal.url}
+                                className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 font-mono"
+                                onClick={e => (e.target as HTMLInputElement).select()}
+                            />
+                            <button
+                                onClick={handleCopyLink}
+                                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors"
+                                style={{ backgroundColor: copied ? '#059669' : '#1d4ed8' }}
+                            >
+                                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                                {copied ? 'Copied!' : 'Copy Link'}
+                            </button>
+                        </div>
+
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                            <p className="text-xs text-blue-700">
+                                The patient will see a simple mobile-friendly page with Yes/No questions about their eligibility criteria.
+                                Once submitted, the trial eligibility will be recalculated automatically.
+                            </p>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
