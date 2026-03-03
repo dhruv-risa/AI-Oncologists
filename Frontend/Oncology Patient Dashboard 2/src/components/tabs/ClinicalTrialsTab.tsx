@@ -271,6 +271,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
     const [progress, setProgress] = useState({ total: 0, completed: 0, eligible: 0, error: 0 });
     const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const prevCompletedRef = useRef<number>(0);
+    const computationStartRef = useRef<number | null>(null);
 
     // ── Data fetching ─────────────────────────────────────────────────
     const fetchCachedTrials = async () => {
@@ -324,7 +325,29 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                         locations: []
                     };
                 });
-                setTrials(transformedTrials);
+                // Sort: LIKELY_ELIGIBLE first, then POTENTIALLY_ELIGIBLE, then NOT_ELIGIBLE; within each group by percentage desc
+                const statusOrder: Record<string, number> = { 'LIKELY_ELIGIBLE': 0, 'POTENTIALLY_ELIGIBLE': 1, 'NOT_ELIGIBLE': 2 };
+                transformedTrials.sort((a: any, b: any) => {
+                    const aOrder = statusOrder[a.eligibility.status] ?? 2;
+                    const bOrder = statusOrder[b.eligibility.status] ?? 2;
+                    if (aOrder !== bOrder) return aOrder - bOrder;
+                    return (b.eligibility.percentage || 0) - (a.eligibility.percentage || 0);
+                });
+                // Merge new trials into existing list to avoid flash/jump on re-render
+                setTrials(prev => {
+                    if (prev.length === 0) return transformedTrials;
+                    const existingMap = new Map(prev.map(t => [t.nct_id, t]));
+                    const merged = transformedTrials.map((t: any) => {
+                        const existing = existingMap.get(t.nct_id);
+                        // Update data but preserve identity if unchanged
+                        if (existing && existing.eligibility.percentage === t.eligibility.percentage
+                            && existing.eligibility.status === t.eligibility.status) {
+                            return existing;
+                        }
+                        return t;
+                    });
+                    return merged;
+                });
                 setCachedCount(response.total);
                 setSearchQueries(['Saved eligibility analysis']);
                 return true;
@@ -376,6 +399,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
     const startPolling = () => {
         stopPolling();
         prevCompletedRef.current = 0;
+        computationStartRef.current = Date.now();
         pollProgress(); // Immediate first poll
         pollingRef.current = setInterval(pollProgress, 10000); // 10s interval
     };
@@ -850,9 +874,14 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                         />
                     </div>
                     <div className="flex items-center justify-between mt-2 text-xs text-blue-600">
-                        <span>{progress.eligible} eligible trial{progress.eligible !== 1 ? 's' : ''} found so far</span>
+                        <span>{trials.filter(t => t.eligibility.status === 'LIKELY_ELIGIBLE' || t.eligibility.status === 'POTENTIALLY_ELIGIBLE').length} eligible trial{trials.filter(t => t.eligibility.status === 'LIKELY_ELIGIBLE' || t.eligibility.status === 'POTENTIALLY_ELIGIBLE').length !== 1 ? 's' : ''} found so far</span>
                         <span>
-                            ~{Math.max(1, Math.ceil(((progress.total - progress.completed) * 17) / 60))} min remaining
+                            {(() => {
+                                const elapsed = computationStartRef.current ? (Date.now() - computationStartRef.current) / 1000 : 0;
+                                const secPerTrial = progress.completed > 0 && elapsed > 0 ? elapsed / progress.completed : 10;
+                                const remaining = Math.max(1, Math.ceil(((progress.total - progress.completed) * secPerTrial) / 60));
+                                return `~${remaining} min remaining`;
+                            })()}
                         </span>
                     </div>
                 </div>

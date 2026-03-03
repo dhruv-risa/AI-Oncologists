@@ -574,14 +574,23 @@ async def get_demo_patient_data(request: MRNRequest):
                     # Extract pathology information directly from URL
                     pathology_summary, pathology_markers = pathology_info(pdf_url=url, use_gemini_api=True)
 
-                    # Get metadata for this URL
-                    from Backend.drive_uploader import get_file_metadata_from_url
-                    metadata = get_file_metadata_from_url(url)
+                    # Get metadata (non-fatal — don't lose extracted data if metadata fetch fails)
+                    metadata = {}
+                    try:
+                        from Backend.drive_uploader import get_file_metadata_from_url
+                        metadata = get_file_metadata_from_url(url)
+                    except Exception as meta_err:
+                        logger.warning(f"   Metadata fetch failed for pathology report {idx + 1} (using fallback): {meta_err}")
+
+                    # Extract file ID from URL directly as fallback
+                    import re as _re
+                    file_id_match = _re.search(r'/file/d/([^/]+)', url)
+                    file_id = file_id_match.group(1) if file_id_match else ''
 
                     # Build report object with special handling for classified reports
                     report_obj = {
                         'drive_url': url,
-                        'file_id': metadata.get('drive_url', '').split('/d/')[1].split('/')[0] if '/d/' in metadata.get('drive_url', '') else '',
+                        'file_id': file_id,
                         'date': metadata.get('date', ''),
                         'document_type': 'Pathology Report',
                         'description': metadata.get('name', f'Pathology Report {idx + 1}'),
@@ -641,21 +650,29 @@ async def get_demo_patient_data(request: MRNRequest):
                     logger.info(f"   Processing radiology report {idx + 1}/{len(radiology_urls)}...")
 
                     # Extract radiology details (using URL with MD notes appended)
-                    # For demo, we assume the URL already has MD notes or extract from standalone
                     radiology_summary, radiology_imp_RECIST = extract_radiology_details_from_report(
                         radiology_url=url,
                         use_gemini_api=True
                     )
 
-                    # Get metadata
-                    from Backend.drive_uploader import get_file_metadata_from_url
-                    metadata = get_file_metadata_from_url(url)
+                    # Get metadata (non-fatal — don't lose extracted data if metadata fetch fails)
+                    metadata = {}
+                    try:
+                        from Backend.drive_uploader import get_file_metadata_from_url
+                        metadata = get_file_metadata_from_url(url)
+                    except Exception as meta_err:
+                        logger.warning(f"   Metadata fetch failed for radiology report {idx + 1} (using fallback): {meta_err}")
+
+                    # Extract file ID from URL directly as fallback
+                    import re as _re
+                    file_id_match = _re.search(r'/file/d/([^/]+)', url)
+                    file_id = file_id_match.group(1) if file_id_match else ''
 
                     detailed_reports.append({
                         'drive_url': url,
-                        'drive_url_with_MD': url,  # Same URL for demo
-                        'drive_file_id': metadata.get('drive_url', '').split('/d/')[1].split('/')[0] if '/d/' in metadata.get('drive_url', '') else '',
-                        'drive_file_id_with_MD': metadata.get('drive_url', '').split('/d/')[1].split('/')[0] if '/d/' in metadata.get('drive_url', '') else '',
+                        'drive_url_with_MD': url,
+                        'drive_file_id': file_id,
+                        'drive_file_id_with_MD': file_id,
                         'date': metadata.get('date', ''),
                         'document_type': 'Radiology Report',
                         'description': metadata.get('name', f'Radiology Report {idx + 1}'),
@@ -730,6 +747,53 @@ async def get_demo_patient_data(request: MRNRequest):
         # Store in data pool
         data_pool.store_patient_data(mrn=request.mrn, data=result)
         logger.info(f"💾 Demo data cached for MRN: {request.mrn}")
+
+        # Auto-compute eligibility for this patient against all cached trials (background)
+        try:
+            trials_count = data_pool.get_trials_count()
+            if trials_count > 0:
+                logger.info(f"\n{'='*60}")
+                logger.info(f"🔬 AUTO-COMPUTING ELIGIBILITY for demo patient {request.mrn}")
+                logger.info(f"   Matching against {trials_count} cached trials...")
+                logger.info(f"{'='*60}")
+
+                def compute_eligibility_background(mrn: str, patient_data: dict):
+                    try:
+                        from Utils.batch_eligibility_engine import get_batch_engine
+                        engine = get_batch_engine()
+                        engine.compute_eligibility_matrix(
+                            patient_mrns=[mrn],
+                            limit_trials=100
+                        )
+                        logger.info(f"✅ Eligibility computation complete for demo patient {mrn}")
+                    except Exception as e:
+                        logger.error(f"❌ Background eligibility computation failed: {e}")
+                        try:
+                            data_pool.complete_computation_progress(mrn, error_message=str(e))
+                        except:
+                            pass
+                    finally:
+                        with _computation_lock:
+                            _active_computations.pop(mrn, None)
+
+                import threading
+                thread = threading.Thread(
+                    target=compute_eligibility_background,
+                    args=(request.mrn, result)
+                )
+                thread.daemon = True
+
+                with _computation_lock:
+                    _active_computations[request.mrn] = thread
+
+                thread.start()
+                result['eligibility_computation'] = "started_in_background"
+            else:
+                result['eligibility_computation'] = "skipped_no_trials_cached"
+                logger.info("⚠️ No trials cached — skipping eligibility computation")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not start eligibility computation: {e}")
+            result['eligibility_computation'] = "failed"
 
         return result
 
@@ -2602,15 +2666,40 @@ async def compute_eligibility_batch(
         patient_mrns = [patient_mrn] if patient_mrn else None
 
         if background:
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                loop.run_in_executor(
-                    executor,
-                    engine.compute_eligibility_matrix,
-                    patient_mrns,
-                    None,  # trial_nct_ids
-                    limit_trials
-                )
+            # Prevent duplicate computations for the same patient
+            if patient_mrn:
+                with _computation_lock:
+                    existing = _active_computations.get(patient_mrn)
+                    if existing and existing.is_alive():
+                        return {
+                            "success": True,
+                            "message": "Eligibility computation already in progress",
+                            "already_running": True,
+                            "limit_trials": limit_trials,
+                            "patient_mrn": patient_mrn
+                        }
+
+            import threading
+            def _run_eligibility():
+                try:
+                    engine.compute_eligibility_matrix(
+                        patient_mrns=patient_mrns,
+                        limit_trials=limit_trials
+                    )
+                except Exception as e:
+                    print(f"Background eligibility computation failed: {e}")
+                finally:
+                    if patient_mrn:
+                        with _computation_lock:
+                            _active_computations.pop(patient_mrn, None)
+
+            thread = threading.Thread(target=_run_eligibility, daemon=True)
+            thread.start()
+
+            # Register so we can detect duplicates
+            if patient_mrn:
+                with _computation_lock:
+                    _active_computations[patient_mrn] = thread
 
             return {
                 "success": True,

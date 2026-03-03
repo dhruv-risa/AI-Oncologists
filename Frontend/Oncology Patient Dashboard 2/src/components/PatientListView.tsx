@@ -26,10 +26,11 @@ interface Patient {
 
 interface PatientListViewProps {
   onSelectPatient: (patientId: string) => void;
+  onSelectPatientWithTab?: (patientId: string, tab: string) => void;
   onGoToTrials?: () => void;
 }
 
-export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListViewProps) {
+export function PatientListView({ onSelectPatient, onSelectPatientWithTab, onGoToTrials }: PatientListViewProps) {
   const { cachedPatients, loadCachedPatients, fetchPatientData, fetchDemoPatientData, loading, error, clearError } = usePatient();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchMRN, setSearchMRN] = useState('');
@@ -444,7 +445,17 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
 
                 {/* Clinical Trials Match Badge - only show when eligibility has been computed */}
                 {patient.trialsAnalyzed !== undefined && patient.trialsAnalyzed > 0 && (patient.likelyEligible! > 0 || patient.potentiallyEligible! > 0) && (
-                  <div className="mt-1 pt-3 border-t border-gray-200">
+                  <div
+                    className="mt-1 pt-3 border-t border-gray-200 hover:bg-violet-50 rounded-b-lg -mx-5 -mb-5 px-5 pb-3 pt-3 cursor-pointer transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onSelectPatientWithTab) {
+                        onSelectPatientWithTab(patient.id, 'clinical-trials');
+                      } else {
+                        onSelectPatient(patient.id);
+                      }
+                    }}
+                  >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Beaker className="w-4 h-4 text-green-600" />

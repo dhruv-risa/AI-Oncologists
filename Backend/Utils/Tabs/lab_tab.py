@@ -28,22 +28,29 @@ extracted_instructions = (
     "Extract structured lab result data for a 'Patient Labs Dashboard' from the provided lab report. "
     "Scope: Analyze the SINGLE document provided and extract current values only. "
 
-    "EXCLUSION RULE - CRITICAL: "
-    "- IGNORE and DO NOT EXTRACT any data from MD notes, physician notes, clinical notes, progress notes, or consultation reports. "
-    "- ONLY extract data from actual laboratory result reports, lab panels, and test result documents. "
-    "- Focus solely on formal lab reports with test names, values, units, and reference ranges. "
+    "EXTRACTION SOURCE RULE: "
+    "- Extract data from actual laboratory result reports, lab panels, and test result documents. "
+    "- ALSO extract lab values documented in MD notes, physician notes, or progress notes if they contain specific lab values with numbers. "
+    "- Focus on extracting ALL available lab values with test names, values, units, and reference ranges. "
 
-    "MISSION: For EVERY biomarker listed (Tumor Markers, Complete Blood Count, and Metabolic Panel), extract: "
+    "MISSION: For EVERY biomarker listed below, extract: "
     "- The MOST RECENT value from this document with its unit, date, status, and reference range. "
     "- Use the 'Lab Resulted' or 'Resulted' date (NOT specimen collection date) when available. "
 
     "Targets: "
     "- TUMOR MARKERS: CEA, NSE, proGRP, CYFRA 21-1. "
-    "- CBC: WBC, Hemoglobin, Platelets, ANC (if missing, use 'Segs#' or 'Polys, Abs'). "
-    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin (may also be labeled as 'Bilirubin' or 'Bili')."
+    "- CBC: WBC, Hemoglobin, Platelets, ANC, MCV, RDW, Lymphocytes, Monocytes. "
+    "- METABOLIC/CHEMISTRY: Sodium, Potassium, Chloride, CO2/Bicarbonate, Calcium, Phosphorus, Magnesium, "
+    "  Glucose, BUN, Creatinine, eGFR, Total Protein, Albumin, Uric Acid. "
+    "- LIVER FUNCTION: ALT, AST, Total Bilirubin, Alkaline Phosphatase, LDH. "
+    "- COAGULATION: INR, PT, aPTT. "
+    "- THYROID: TSH, Free T4. "
+    "- DIABETES: HbA1c/Hemoglobin A1c. "
+    "- IRON STUDIES: Iron, Ferritin, TIBC. "
 
     "CLINICAL INTERPRETATION: "
-    "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40), Neutropenia (ANC <1.5)."
+    "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40), Neutropenia (ANC <1.5), "
+    "Renal (Cr >1.2 or eGFR <60), Electrolyte abnormalities, Coagulopathy (INR >1.5), Thyroid dysfunction."
 )
 
 def biomarker_schema():
@@ -67,13 +74,51 @@ description = {
         "WBC": biomarker_schema(),
         "Hemoglobin": biomarker_schema(),
         "Platelets": biomarker_schema(),
-        "ANC": biomarker_schema()
+        "ANC": biomarker_schema(),
+        "MCV": biomarker_schema(),
+        "RDW": biomarker_schema(),
+        "Lymphocytes": biomarker_schema(),
+        "Monocytes": biomarker_schema()
     },
     "metabolic_panel": {
+        "Sodium": biomarker_schema(),
+        "Potassium": biomarker_schema(),
+        "Chloride": biomarker_schema(),
+        "CO2": biomarker_schema(),
+        "Calcium": biomarker_schema(),
+        "Phosphorus": biomarker_schema(),
+        "Magnesium": biomarker_schema(),
+        "Glucose": biomarker_schema(),
+        "BUN": biomarker_schema(),
         "Creatinine": biomarker_schema(),
+        "eGFR": biomarker_schema(),
+        "Total_Protein": biomarker_schema(),
+        "Albumin": biomarker_schema(),
+        "Uric_Acid": biomarker_schema()
+    },
+    "liver_function": {
         "ALT": biomarker_schema(),
         "AST": biomarker_schema(),
-        "Total Bilirubin": biomarker_schema()
+        "Total_Bilirubin": biomarker_schema(),
+        "Alkaline_Phosphatase": biomarker_schema(),
+        "LDH": biomarker_schema()
+    },
+    "coagulation": {
+        "INR": biomarker_schema(),
+        "PT": biomarker_schema(),
+        "aPTT": biomarker_schema()
+    },
+    "thyroid": {
+        "TSH": biomarker_schema(),
+        "Free_T4": biomarker_schema()
+    },
+    "diabetes": {
+        "HbA1c": biomarker_schema()
+    },
+    "iron_studies": {
+        "Iron": biomarker_schema(),
+        "Ferritin": biomarker_schema(),
+        "TIBC": biomarker_schema()
     },
     "clinical_interpretation": [
         "String summary of abnormal findings and rules applied."
@@ -109,8 +154,10 @@ You are a deterministic clinical laboratory data extraction engine for a Patient
 MISSION
 ========================
 
-Extract structured lab result data from the provided SINGLE lab report document.
+Extract structured lab result data from the provided document.
 Scope: Analyze THIS document only and extract the most recent values.
+IMPORTANT: Extract lab values from ALL sources in this document including formal lab reports,
+lab panels, AND lab values documented within MD notes or progress notes.
 
 For EVERY biomarker listed below, extract:
 - The most recent value with its unit, date, status, reference range, and source context.
@@ -130,12 +177,50 @@ COMPLETE BLOOD COUNT (CBC):
 - Hemoglobin (Hgb)
 - Platelets
 - ANC (Absolute Neutrophil Count) - if missing, use 'Segs#' or 'Polys, Abs'
+- MCV (Mean Corpuscular Volume)
+- RDW (Red Cell Distribution Width)
+- Lymphocytes (Absolute or %)
+- Monocytes (Absolute or %)
 
-METABOLIC PANEL:
-- Creatinine
-- ALT (Alanine Aminotransferase)
-- AST (Aspartate Aminotransferase)
+METABOLIC PANEL / CHEMISTRY:
+- Sodium (Na)
+- Potassium (K)
+- Chloride (Cl)
+- CO2 / Bicarbonate (HCO3)
+- Calcium (Ca)
+- Phosphorus
+- Magnesium (Mg)
+- Glucose
+- BUN (Blood Urea Nitrogen)
+- Creatinine (Cr)
+- eGFR (Estimated Glomerular Filtration Rate)
+- Total Protein
+- Albumin
+- Uric Acid
+
+LIVER FUNCTION:
+- ALT (Alanine Aminotransferase / SGPT)
+- AST (Aspartate Aminotransferase / SGOT)
 - Total Bilirubin (also look for "Bilirubin", "Bili", "T. Bili", "Total Bili")
+- Alkaline Phosphatase (Alk Phos, ALP)
+- LDH (Lactate Dehydrogenase)
+
+COAGULATION:
+- INR (International Normalized Ratio)
+- PT (Prothrombin Time)
+- aPTT (Activated Partial Thromboplastin Time)
+
+THYROID:
+- TSH (Thyroid Stimulating Hormone)
+- Free T4 (Free Thyroxine)
+
+DIABETES:
+- HbA1c (Hemoglobin A1c, Glycated Hemoglobin)
+
+IRON STUDIES:
+- Iron (Serum Iron)
+- Ferritin
+- TIBC (Total Iron Binding Capacity)
 
 ========================
 CRITICAL EXTRACTION RULES
@@ -175,16 +260,16 @@ CRITICAL EXTRACTION RULES
      * 'LAB_SUMMARY' - Lab value summaries
      * 'MD_NOTE' - Lab values mentioned in physician notes (LOWEST PRIORITY)
    - Format: '<DOCUMENT_TYPE> - <location details>'
-   - Examples:
-     * 'LAB_REPORT - Page 1 CBC Panel'
-     * 'LAB_PANEL - Page 2 Comprehensive Metabolic Panel'
-     * 'MD_NOTE - Progress Note mentioning recent labs'
-   - This prioritization helps when multiple measurements exist for the same date
 
 7. BIOMARKER NAME VARIATIONS RULE
-   - Total Bilirubin may appear as: "Total Bilirubin", "Bilirubin", "Bili", "T. Bili", "Total Bili", "Bilirubin, Total"
-   - When you find ANY of these variations, extract it as "Total Bilirubin" in the output schema
-   - ANC may appear as: "ANC", "Absolute Neutrophil Count", "Segs#", "Polys, Abs", "Neutrophils, Absolute"
+   - Total Bilirubin: "Total Bilirubin", "Bilirubin", "Bili", "T. Bili", "Total Bili", "Bilirubin, Total"
+   - ANC: "ANC", "Absolute Neutrophil Count", "Segs#", "Polys, Abs", "Neutrophils, Absolute"
+   - Alkaline Phosphatase: "Alk Phos", "ALP", "Alkaline Phosphatase"
+   - eGFR: "eGFR", "GFR", "Estimated GFR", "Est. GFR"
+   - HbA1c: "HbA1c", "Hemoglobin A1c", "A1c", "Glycated Hemoglobin", "Glycohemoglobin"
+   - TSH: "TSH", "Thyroid Stimulating Hormone"
+   - Free T4: "Free T4", "FT4", "Free Thyroxine"
+   - LDH: "LDH", "Lactate Dehydrogenase", "LD"
    - Always map variations to the standardized names in the output schema
 
 ========================
@@ -193,14 +278,7 @@ OUTPUT SCHEMA (STRICT)
 
 {
   "tumor_markers": {
-    "CEA": {
-      "value": <float or "Pending" or null>,
-      "unit": "<string>",
-      "date": "YYYY-MM-DD",
-      "status": "<Normal|High|Low|Pending>",
-      "reference_range": "<string>",
-      "source_context": "<string>"
-    },
+    "CEA": { "value": <float or null>, "unit": "<string>", "date": "YYYY-MM-DD", "status": "<Normal|High|Low|Pending>", "reference_range": "<string>", "source_context": "<string>" },
     "NSE": { <same structure> },
     "proGRP": { <same structure> },
     "CYFRA_21_1": { <same structure> }
@@ -209,21 +287,55 @@ OUTPUT SCHEMA (STRICT)
     "WBC": { <same structure> },
     "Hemoglobin": { <same structure> },
     "Platelets": { <same structure> },
-    "ANC": { <same structure> }
+    "ANC": { <same structure> },
+    "MCV": { <same structure> },
+    "RDW": { <same structure> },
+    "Lymphocytes": { <same structure> },
+    "Monocytes": { <same structure> }
   },
   "metabolic_panel": {
+    "Sodium": { <same structure> },
+    "Potassium": { <same structure> },
+    "Chloride": { <same structure> },
+    "CO2": { <same structure> },
+    "Calcium": { <same structure> },
+    "Phosphorus": { <same structure> },
+    "Magnesium": { <same structure> },
+    "Glucose": { <same structure> },
+    "BUN": { <same structure> },
     "Creatinine": { <same structure> },
+    "eGFR": { <same structure> },
+    "Total_Protein": { <same structure> },
+    "Albumin": { <same structure> },
+    "Uric_Acid": { <same structure> }
+  },
+  "liver_function": {
     "ALT": { <same structure> },
     "AST": { <same structure> },
-    "Total_Bilirubin": { <same structure> }
+    "Total_Bilirubin": { <same structure> },
+    "Alkaline_Phosphatase": { <same structure> },
+    "LDH": { <same structure> }
+  },
+  "coagulation": {
+    "INR": { <same structure> },
+    "PT": { <same structure> },
+    "aPTT": { <same structure> }
+  },
+  "thyroid": {
+    "TSH": { <same structure> },
+    "Free_T4": { <same structure> }
+  },
+  "diabetes": {
+    "HbA1c": { <same structure> }
+  },
+  "iron_studies": {
+    "Iron": { <same structure> },
+    "Ferritin": { <same structure> },
+    "TIBC": { <same structure> }
   },
   "clinical_interpretation": [
-    "<Summary of abnormal findings from this document>",
-    "Rules applied:",
-    "- Anemia: Hemoglobin <13.5 (M) or <12.0 (F)",
-    "- Hepatic dysfunction: ALT or AST >40 U/L",
-    "- Neutropenia: ANC <1.5 K/uL",
-    "- Include other significant abnormalities found"
+    "<Summary of ALL abnormal findings from this document>",
+    "Include: Anemia, Hepatic dysfunction, Neutropenia, Renal impairment, Electrolyte abnormalities, Coagulopathy, Thyroid dysfunction, Iron deficiency"
   ]
 }
 
@@ -231,10 +343,15 @@ OUTPUT SCHEMA (STRICT)
 CLINICAL INTERPRETATION
 ========================
 
-Provide a summary including:
+Provide a summary including ALL of:
 - Anemia status: Hemoglobin <13.5 g/dL (Male) or <12.0 g/dL (Female)
-- Hepatic function: ALT/AST >40 U/L indicates elevation
+- Hepatic function: ALT/AST >40 U/L, Alk Phos elevation, Bilirubin elevation
 - Neutropenia: ANC <1.5 K/uL
+- Renal function: Creatinine >1.2 mg/dL, eGFR <60
+- Electrolyte abnormalities: Na, K, Ca, Mg outside normal ranges
+- Coagulopathy: INR >1.5
+- Thyroid: TSH outside 0.4-4.0 range
+- Iron deficiency: Low ferritin or iron
 - Any tumor marker elevations
 - Any other clinically significant abnormalities
 
@@ -243,7 +360,7 @@ FINAL VALIDATION
 ========================
 
 Before returning output:
-- Ensure ALL target biomarkers are present in the output (even if null)
+- Ensure ALL categories and biomarkers are present in the output (even if null)
 - Ensure dates are in YYYY-MM-DD format
 - Ensure all numeric values are preserved exactly as shown
 - Ensure schema consistency with all required fields

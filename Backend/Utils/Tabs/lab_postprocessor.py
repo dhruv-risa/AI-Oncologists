@@ -441,7 +441,12 @@ def refine_clinical_interpretations_with_ai(
     # Extract current lab values for context
     lab_summary = {}
 
-    for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]:
+    ALL_PANEL_NAMES = [
+        "tumor_markers", "complete_blood_count", "metabolic_panel",
+        "liver_function", "coagulation", "thyroid", "diabetes", "iron_studies"
+    ]
+
+    for panel_name in ALL_PANEL_NAMES:
         panel_data = consolidated_data.get(panel_name, {})
         lab_summary[panel_name] = {}
 
@@ -599,75 +604,64 @@ def postprocess_lab_data(raw_lab_data: List[Dict], use_ai_refinement: bool = Tru
     metabolic_list = []
     clinical_interp_list = []
 
+    # Define all known panel categories and their expected biomarker names
+    PANEL_DEFINITIONS = {
+        "tumor_markers": ["CEA", "NSE", "proGRP", "CYFRA_21_1"],
+        "complete_blood_count": ["WBC", "Hemoglobin", "Platelets", "ANC", "MCV", "RDW", "Lymphocytes", "Monocytes"],
+        "metabolic_panel": ["Sodium", "Potassium", "Chloride", "CO2", "Calcium", "Phosphorus", "Magnesium",
+                           "Glucose", "BUN", "Creatinine", "eGFR", "Total_Protein", "Albumin", "Uric_Acid"],
+        "liver_function": ["ALT", "AST", "Total_Bilirubin", "Alkaline_Phosphatase", "LDH"],
+        "coagulation": ["INR", "PT", "aPTT"],
+        "thyroid": ["TSH", "Free_T4"],
+        "diabetes": ["HbA1c"],
+        "iron_studies": ["Iron", "Ferritin", "TIBC"],
+    }
+
+    # Dynamically collect panels from all batches
+    panel_data = {panel_name: [] for panel_name in PANEL_DEFINITIONS}
+
     for batch in raw_lab_data:
-        # Check if tumor_markers is a list (new API structure)
-        if isinstance(batch.get("tumor_markers"), list):
-            tumor_markers_list.extend(batch["tumor_markers"])
-        elif isinstance(batch.get("tumor_markers"), dict):
-            tumor_markers_list.append(batch["tumor_markers"])
-
-        # Check if complete_blood_count is a list (new API structure)
-        if isinstance(batch.get("complete_blood_count"), list):
-            cbc_list.extend(batch["complete_blood_count"])
-        elif isinstance(batch.get("complete_blood_count"), dict):
-            cbc_list.append(batch["complete_blood_count"])
-
-        # Check if metabolic_panel is a list (new API structure)
-        if isinstance(batch.get("metabolic_panel"), list):
-            metabolic_list.extend(batch["metabolic_panel"])
-        elif isinstance(batch.get("metabolic_panel"), dict):
-            metabolic_list.append(batch["metabolic_panel"])
+        for panel_name in PANEL_DEFINITIONS:
+            panel_value = batch.get(panel_name)
+            if isinstance(panel_value, list):
+                panel_data[panel_name].extend(panel_value)
+            elif isinstance(panel_value, dict):
+                panel_data[panel_name].append(panel_value)
 
         # Handle clinical_interpretation
         if isinstance(batch.get("clinical_interpretation"), list):
             clinical_interp_list.append(batch["clinical_interpretation"])
 
-    # Consolidate each panel
-    consolidated_tumor_markers = consolidate_panel(
-        tumor_markers_list,
-        ["CEA", "NSE", "proGRP", "CYFRA_21_1"]
-    )
-
-    consolidated_cbc = consolidate_panel(
-        cbc_list,
-        ["WBC", "Hemoglobin", "Platelets", "ANC"]
-    )
-
-    consolidated_metabolic = consolidate_panel(
-        metabolic_list,
-        ["Creatinine", "ALT", "AST", "Total Bilirubin"]
-    )
+    # Consolidate each panel dynamically
+    consolidated_panels = {}
+    for panel_name, biomarker_names in PANEL_DEFINITIONS.items():
+        consolidated_panels[panel_name] = consolidate_panel(
+            panel_data[panel_name],
+            biomarker_names
+        )
 
     # Consolidate clinical interpretations
     consolidated_interpretations = consolidate_clinical_interpretations(clinical_interp_list)
 
     # Optionally refine clinical interpretations with AI
     if use_ai_refinement and consolidated_interpretations:
-        # Prepare consolidated data structure for AI refinement
-        consolidated_data_for_ai = {
-            "tumor_markers": consolidated_tumor_markers,
-            "complete_blood_count": consolidated_cbc,
-            "metabolic_panel": consolidated_metabolic
-        }
-
         # Refine clinical interpretations with AI
         print(f"🤖 Refining {len(consolidated_interpretations)} clinical interpretations with AI...")
         refined_interpretations = refine_clinical_interpretations_with_ai(
             raw_interpretations=consolidated_interpretations,
-            consolidated_data=consolidated_data_for_ai
+            consolidated_data=consolidated_panels
         )
     else:
         refined_interpretations = consolidated_interpretations
         if not use_ai_refinement:
             print("ℹ️  AI refinement disabled, using raw interpretations")
 
-    # Return clean structure
-    return {
-        "tumor_markers": consolidated_tumor_markers,
-        "complete_blood_count": consolidated_cbc,
-        "metabolic_panel": consolidated_metabolic,
-        "clinical_interpretation": refined_interpretations
-    }
+    # Return clean structure with all panels
+    result = {}
+    for panel_name in PANEL_DEFINITIONS:
+        result[panel_name] = consolidated_panels[panel_name]
+    result["clinical_interpretation"] = refined_interpretations
+    return result
 
 
 def format_for_ui(consolidated_data: Dict) -> Dict:
@@ -735,31 +729,30 @@ def format_for_ui(consolidated_data: Dict) -> Dict:
         panel = consolidated_data.get(panel_name, {})
         return panel if isinstance(panel, dict) else {}
 
-    formatted = {
-        "tumor_markers": {
-            name: format_biomarker(data, name)
-            for name, data in safe_get_panel("tumor_markers").items()
-            if isinstance(data, dict)
-        },
-        "complete_blood_count": {
-            name: format_biomarker(data, name)
-            for name, data in safe_get_panel("complete_blood_count").items()
-            if isinstance(data, dict)
-        },
-        "metabolic_panel": {
-            name: format_biomarker(data, name)
-            for name, data in safe_get_panel("metabolic_panel").items()
-            if isinstance(data, dict)
-        },
-        "clinical_interpretation": consolidated_data.get("clinical_interpretation", []),
-        "summary": {
-            "total_abnormal": sum(
-                1 for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]
-                for biomarker in safe_get_panel(panel_name).values()
-                if isinstance(biomarker, dict) and biomarker.get("current", {}).get("status") in ["High", "Low", "Critical"]
-            ),
-            "last_updated": get_most_recent_date(consolidated_data)
-        }
+    # All known panel names (dynamically handle any panels present)
+    ALL_PANEL_NAMES = [
+        "tumor_markers", "complete_blood_count", "metabolic_panel",
+        "liver_function", "coagulation", "thyroid", "diabetes", "iron_studies"
+    ]
+
+    formatted = {}
+    for panel_name in ALL_PANEL_NAMES:
+        panel_data = safe_get_panel(panel_name)
+        if panel_data:
+            formatted[panel_name] = {
+                name: format_biomarker(data, name)
+                for name, data in panel_data.items()
+                if isinstance(data, dict)
+            }
+
+    formatted["clinical_interpretation"] = consolidated_data.get("clinical_interpretation", [])
+    formatted["summary"] = {
+        "total_abnormal": sum(
+            1 for panel_name in ALL_PANEL_NAMES
+            for biomarker in safe_get_panel(panel_name).values()
+            if isinstance(biomarker, dict) and biomarker.get("current", {}).get("status") in ["High", "Low", "Critical"]
+        ),
+        "last_updated": get_most_recent_date(consolidated_data)
     }
 
     return formatted
@@ -769,7 +762,12 @@ def get_most_recent_date(data: Dict) -> str:
     """Get the most recent date across all biomarkers."""
     all_dates = []
 
-    for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]:
+    ALL_PANEL_NAMES = [
+        "tumor_markers", "complete_blood_count", "metabolic_panel",
+        "liver_function", "coagulation", "thyroid", "diabetes", "iron_studies"
+    ]
+
+    for panel_name in ALL_PANEL_NAMES:
         panel = data.get(panel_name, {})
 
         # Ensure panel is a dict
