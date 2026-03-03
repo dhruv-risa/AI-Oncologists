@@ -2,18 +2,24 @@
 
 import sys
 import os
+import json
+import re
 import requests
+import vertexai
+from vertexai.generative_models import GenerativeModel, Part
 
 # Add Backend to path for imports
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from Backend.Utils.Tabs.llmparser import llmresponsedetailed
 from Backend.Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
 
 # Setup logger
 logger = setup_logger(__name__)
+
+# Initialize Vertex AI
+vertexai.init(project="prior-auth-portal-dev", location="us-central1")
 
 extracted_instructions_lot = (
     "Extract structured treatment data for a 'Lines of Therapy' timeline UI from the provided clinical notes. "
@@ -186,16 +192,207 @@ description_timeline = {
     ]
 }
 
+def extract_lot_with_gemini(pdf_input):
+    """
+    Extract Lines of Therapy data using Vertex AI Gemini SDK.
+
+    Args:
+        pdf_input: Either bytes (PDF content) or URL/path to the PDF file
+
+    Returns:
+        Dictionary containing extracted LOT data
+    """
+    # Handle both bytes and file path/URL inputs
+    if isinstance(pdf_input, bytes):
+        logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
+        pdf_bytes = pdf_input
+    elif pdf_input.startswith("http"):
+        # Handle Google Drive URLs
+        logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
+        if "drive.google.com" in pdf_input:
+            match = re.search(r'/file/d/([^/]+)', pdf_input)
+            if match:
+                file_id = match.group(1)
+                download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            else:
+                raise ValueError("Could not extract file ID from Google Drive URL")
+        else:
+            download_url = pdf_input
+
+        response = requests.get(download_url, allow_redirects=True)
+        response.raise_for_status()
+        pdf_bytes = response.content
+        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+    else:
+        # Assume it's a file path
+        logger.info(f"📤 Reading PDF from path: {pdf_input}")
+        with open(pdf_input, "rb") as f:
+            pdf_bytes = f.read()
+
+    # Build prompt from extraction instructions and description
+    GEMINI_PROMPT = f"""
+{extracted_instructions_lot}
+
+OUTPUT SCHEMA (STRICT):
+{json.dumps(description_lot, indent=2)}
+
+OUTPUT FORMAT:
+Return VALID JSON ONLY.
+No explanations.
+No markdown code blocks.
+No commentary.
+Just the JSON object following the schema above.
+"""
+
+    logger.info("🤖 Generating treatment LOT extraction with Vertex AI Gemini...")
+
+    # Initialize the model
+    model = GenerativeModel("gemini-2.5-pro")
+
+    # Wrap PDF bytes in Part object
+    doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
+
+    # Make API request
+    try:
+        response = model.generate_content(
+            [doc_part, GEMINI_PROMPT],
+            generation_config={
+                "temperature": 0,
+                "top_p": 1
+            }
+        )
+        logger.info("✅ Gemini treatment LOT extraction complete")
+    except Exception as e:
+        logger.error(f"❌ API request failed: {e}")
+        raise
+
+    # Parse JSON response
+    try:
+        response_text = response.text.strip()
+        logger.info(f"📄 Extracted response text ({len(response_text)} chars)")
+
+        # Use regex to extract JSON from markdown code blocks
+        json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+        match = re.search(json_pattern, response_text)
+
+        if match:
+            response_text = match.group(1).strip()
+            logger.info("🔍 Extracted JSON from markdown code block")
+
+        # Parse the JSON
+        extracted_data = json.loads(response_text)
+        logger.info(f"✅ Successfully parsed JSON with {len(extracted_data)} top-level keys")
+
+        return extracted_data
+
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Failed to parse JSON: {e}")
+        logger.error(f"📄 Response text preview: {response_text[:500]}")
+        raise
+
+
+def extract_timeline_with_gemini(pdf_input):
+    """
+    Extract Treatment Timeline data using Vertex AI Gemini SDK.
+
+    Args:
+        pdf_input: Either bytes (PDF content) or URL/path to the PDF file
+
+    Returns:
+        Dictionary containing extracted timeline data
+    """
+    # Handle both bytes and file path/URL inputs
+    if isinstance(pdf_input, bytes):
+        logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
+        pdf_bytes = pdf_input
+    elif pdf_input.startswith("http"):
+        # Handle Google Drive URLs
+        logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
+        if "drive.google.com" in pdf_input:
+            match = re.search(r'/file/d/([^/]+)', pdf_input)
+            if match:
+                file_id = match.group(1)
+                download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            else:
+                raise ValueError("Could not extract file ID from Google Drive URL")
+        else:
+            download_url = pdf_input
+
+        response = requests.get(download_url, allow_redirects=True)
+        response.raise_for_status()
+        pdf_bytes = response.content
+        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+    else:
+        # Assume it's a file path
+        logger.info(f"📤 Reading PDF from path: {pdf_input}")
+        with open(pdf_input, "rb") as f:
+            pdf_bytes = f.read()
+
+    # Build prompt from extraction instructions and description
+    GEMINI_PROMPT = f"""
+{extracted_instructions_timeline}
+
+OUTPUT SCHEMA (STRICT):
+{json.dumps(description_timeline, indent=2)}
+
+OUTPUT FORMAT:
+Return VALID JSON ONLY.
+No explanations.
+No markdown code blocks.
+No commentary.
+Just the JSON object following the schema above.
+"""
+
+    logger.info("🤖 Generating treatment timeline extraction with Vertex AI Gemini...")
+
+    model = GenerativeModel("gemini-2.5-pro")
+    doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
+
+    try:
+        response = model.generate_content(
+            [doc_part, GEMINI_PROMPT],
+            generation_config={
+                "temperature": 0,
+                "top_p": 1
+            }
+        )
+        logger.info("✅ Gemini treatment timeline extraction complete")
+    except Exception as e:
+        logger.error(f"❌ API request failed: {e}")
+        raise
+
+    try:
+        response_text = response.text.strip()
+        logger.info(f"📄 Extracted response text ({len(response_text)} chars)")
+
+        json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+        match = re.search(json_pattern, response_text)
+
+        if match:
+            response_text = match.group(1).strip()
+            logger.info("🔍 Extracted JSON from markdown code block")
+
+        extracted_data = json.loads(response_text)
+        logger.info(f"✅ Successfully parsed JSON with {len(extracted_data)} top-level keys")
+
+        return extracted_data
+
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Failed to parse JSON: {e}")
+        logger.error(f"📄 Response text preview: {response_text[:500]}")
+        raise
+
+
 def extract_treatment_tab_info(pdf_url):
     log_extraction_start(logger, "Treatment Tab (2 components)", pdf_url)
 
     logger.info("🔄 Extracting treatment lines of therapy (1/2)...")
-    patient_treatment_lot = llmresponsedetailed(pdf_url, extraction_instructions=extracted_instructions_lot, description=description_lot)
+    patient_treatment_lot = extract_lot_with_gemini(pdf_url)
     log_extraction_output(logger, "Treatment LOT", patient_treatment_lot)
     log_extraction_complete(logger, "Treatment LOT", patient_treatment_lot.keys() if isinstance(patient_treatment_lot, dict) else None)
 
     logger.info("🔄 Extracting treatment timeline (2/2)...")
-    patient_treatment_timeline = llmresponsedetailed(pdf_url, extraction_instructions=extracted_instructions_timeline, description=description_timeline)
+    patient_treatment_timeline = extract_timeline_with_gemini(pdf_url)
     log_extraction_output(logger, "Treatment Timeline", patient_treatment_timeline)
     log_extraction_complete(logger, "Treatment Timeline", patient_treatment_timeline.keys() if isinstance(patient_treatment_timeline, dict) else None)
 

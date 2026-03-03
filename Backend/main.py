@@ -14,6 +14,7 @@ import requests
 import base64
 from io import BytesIO
 import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     import PyPDF2
 except ImportError:
@@ -126,60 +127,89 @@ def extract_patient_data(mrn: str, verbose: bool = True):
         if verbose:
             print(f"      ✓ URL: {result['pdf_url']}")
 
-        # Step 3: Extract Demographics
+        # Step 3-7: Extract all tab information in parallel
         if verbose:
-            print("\n[3/6] Extracting patient demographics...")
+            print("\n[3/6] Extracting all tab information in parallel...")
+            print("      🔄 Running 5 extraction tasks concurrently...")
 
-        demographics = extract_patient_demographics(pdf_url=result['pdf_url'])
-        result['demographics'] = demographics
+        # Define extraction tasks
+        def extract_demographics_task():
+            try:
+                return ('demographics', extract_patient_demographics(pdf_url=result['pdf_url']), None)
+            except Exception as e:
+                return ('demographics', None, str(e))
 
-        if verbose:
-            print(f"      ✓ Extracted {len(demographics)} demographic fields")
+        def extract_diagnosis_status_task():
+            try:
+                return ('diagnosis', extract_diagnosis_status(pdf_url=result['pdf_url']), None)
+            except Exception as e:
+                return ('diagnosis', None, str(e))
 
-        # Step 4: Extract Diagnosis Status
-        if verbose:
-            print("\n[4/6] Extracting diagnosis status...")
+        def extract_comorbidities_task():
+            try:
+                return ('comorbidities', extract_comorbidities_status(pdf_url=result['pdf_url']), None)
+            except Exception as e:
+                return ('comorbidities', None, str(e))
 
-        diagnosis = extract_diagnosis_status(pdf_url=result['pdf_url'])
-        result['diagnosis'] = diagnosis
+        def extract_treatment_task():
+            try:
+                lot, timeline = extract_treatment_tab_info(pdf_url=result['pdf_url'])
+                return ('treatment', {'lot': lot, 'timeline': timeline}, None)
+            except Exception as e:
+                return ('treatment', None, str(e))
 
-        if verbose:
-            print(f"      ✓ Extracted {len(diagnosis)} diagnosis fields")
+        def extract_diagnosis_tab_task():
+            try:
+                header, timeline, footer = diagnosis_extraction(pdf_input=result['pdf_url'])
+                return ('diagnosis_tab', {'header': header, 'timeline': timeline, 'footer': footer}, None)
+            except Exception as e:
+                return ('diagnosis_tab', None, str(e))
 
-        if verbose:
-            print("\n[5/6] Extracting Comorbidities status...")
+        # Execute all tasks in parallel
+        tasks = [
+            extract_demographics_task,
+            extract_diagnosis_status_task,
+            extract_comorbidities_task,
+            extract_treatment_task,
+            extract_diagnosis_tab_task
+        ]
 
-        comorbidities = extract_comorbidities_status(pdf_url=result['pdf_url'])
-        result['comorbidities'] = comorbidities
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all tasks
+            future_to_task = {executor.submit(task): task.__name__ for task in tasks}
 
-        if verbose:
-            print(f"      ✓ Extracted {len(comorbidities)} comorbidities fields")
+            # Collect results as they complete
+            for future in as_completed(future_to_task):
+                task_name = future_to_task[future]
+                try:
+                    data_type, data, error = future.result()
 
-        if verbose:
-            print("\n[6/6] Extracting Treatment Tab info status...")
+                    if error:
+                        if verbose:
+                            print(f"      ⚠️  {data_type} extraction failed: {error}")
+                        result[f'{data_type}_error'] = error
+                    else:
+                        # Handle different data types
+                        if data_type == 'treatment':
+                            result['treatment_tab_info_LOT'] = data['lot']
+                            result['treatment_tab_info_timeline'] = data['timeline']
+                            if verbose:
+                                print(f"      ✓ Treatment tab extracted ({len(data['lot'])} LOT, {len(data['timeline'])} timeline)")
+                        elif data_type == 'diagnosis_tab':
+                            result['diagnosis_header'] = data['header']
+                            result['diagnosis_evolution_timeline'] = data['timeline']
+                            result['diagnosis_footer'] = data['footer']
+                            if verbose:
+                                print(f"      ✓ Diagnosis tab extracted ({len(data['header'])} header, {len(data['timeline'])} timeline, {len(data['footer'])} footer)")
+                        else:
+                            result[data_type] = data
+                            if verbose:
+                                print(f"      ✓ {data_type.capitalize()} extracted ({len(data)} fields)")
 
-        treatment_tab_info_LOT, treatment_tab_info_timeline = extract_treatment_tab_info(pdf_url=result['pdf_url'])
-        result['treatment_tab_info_LOT'] = treatment_tab_info_LOT
-        result['treatment_tab_info_timeline'] = treatment_tab_info_timeline
+                except Exception as e:
+                    if verbose:
+                        print(f"      ⚠️  Task {task_name} failed: {str(e)}")
 
-        if verbose:
-            print(f"      ✓ Extracted {len(treatment_tab_info_LOT)} treatment_tab_info_LOT fields")
-            print(f"      ✓ Extracted {len(treatment_tab_info_timeline)} treatment_tab_info_timeline fields")
-
-
-        if verbose:
-            print("\n[6/6] Extracting Diagnosis Tab info status...")
-
-        diagnosis_header, diagnosis_evolution_timeline, diagnosis_footer = diagnosis_extraction(pdf_input=result['pdf_url'])
-        result['diagnosis_header'] = diagnosis_header
-        result['diagnosis_evolution_timeline'] = diagnosis_evolution_timeline
-        result['diagnosis_footer'] = diagnosis_footer
-        result
-
-        if verbose:
-            print(f"      ✓ Extracted {len(diagnosis_header)} diagnosis_header fields")
-            print(f"      ✓ Extracted {len(diagnosis_evolution_timeline)} diagnosis_evolution_timeline fields")
-            print(f"      ✓ Extracted {len(diagnosis_footer)} diagnosis_footer fields")
         result['success'] = True
 
         if verbose:
@@ -268,6 +298,15 @@ def lab_tab_info(mrn: str, verbose: bool = True):
         result['lab_info'] = processing_result['combined_data']
         result['metadata'] = processing_result['metadata']
 
+        # Include FHIR metadata
+        if 'fhir_metadata' in processing_result:
+            result['fhir_metadata'] = processing_result['fhir_metadata']
+            # Add summary counts for clarity
+            fhir_meta = processing_result['fhir_metadata']
+            if fhir_meta.get('fhir_integration_successful'):
+                result['total_data_sources'] = result['lab_results_count'] + 1  # PDFs + FHIR
+                result['fhir_observations_count'] = fhir_meta.get('fhir_observations_fetched', 0)
+
         # Format lab documents for Documents tab
         if 'lab_documents' in processing_result and processing_result['lab_documents']:
             result['lab_reports'] = [
@@ -293,8 +332,16 @@ def lab_tab_info(mrn: str, verbose: bool = True):
                 print("\n" + "="*70)
                 print("  LAB EXTRACTION COMPLETE")
                 print("="*70)
-                print(f"Total Lab Documents: {result['lab_results_count']}")
+                print(f"Total Lab Documents (PDFs): {result['lab_results_count']}")
                 print(f"Successfully Processed: {result['processed_documents']}")
+                if 'fhir_metadata' in result:
+                    fhir_meta = result['fhir_metadata']
+                    if fhir_meta.get('fhir_integration_successful'):
+                        print(f"FHIR Observations Fetched: {fhir_meta.get('fhir_observations_fetched', 0)}")
+                        print(f"FHIR Biomarkers Converted: {fhir_meta.get('fhir_observations_converted', 0)}")
+                        print(f"Total Data Sources: {result.get('total_data_sources', result['lab_results_count'])}")
+                    else:
+                        print("FHIR Integration: Not available")
                 if 'validation_summary' in result:
                     val_sum = result['validation_summary']
                     print(f"Validation: {val_sum['total_passed']}/{val_sum['total_validated']} passed")

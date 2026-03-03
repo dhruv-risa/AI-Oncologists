@@ -13,10 +13,7 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
-from apscheduler.schedulers.background import BackgroundScheduler
-import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add project root to path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
@@ -44,7 +41,6 @@ from Backend.Utils.components.patient_diagnosis_status import extract_diagnosis_
 from Backend.Utils.Tabs.comorbidities import extract_comorbidities_status
 from Backend.Utils.Tabs.treatment_tab import extract_treatment_tab_info
 from Backend.Utils.Tabs.diagnosis_tab import diagnosis_extraction
-from Backend.Utils.Tabs.clinical_trials_tab import extract_clinical_trials
 from Backend.Utils.logger_config import setup_logger
 
 # Setup logger
@@ -56,32 +52,39 @@ logger = setup_logger(__name__)
 # ============================================================================
 
 def parse_date_for_sorting(date_str):
-    """Parse various date formats into a comparable datetime object for sorting."""
+    """
+    Parse various date formats into a comparable datetime object for sorting.
+    Returns a datetime object, or a very old date if parsing fails (to sort invalid dates last).
+
+    Handles formats like:
+    - "December 8, 2024"
+    - "12/08/2024"
+    - "2024-12-08"
+    - "08-Dec-2024"
+    - etc.
+    """
     from datetime import datetime
-    import re
 
     if not date_str or not isinstance(date_str, str):
-        return datetime(1900, 1, 1)
+        return datetime(1900, 1, 1)  # Very old date for None/empty/invalid
 
     date_str = date_str.strip()
 
-    # Handle 'Z' suffix (UTC)
+    # Handle ISO 8601 format with UTC timezone (Z) - strip the Z for parsing
     if date_str.endswith('Z'):
-        date_str = date_str[:-1]
+        date_str = date_str[:-1]  # Remove the 'Z' suffix
 
-    # Handle timezone offsets like +00:00, -05:00, +05:30, etc.
-    date_str = re.sub(r'[+-]\d{2}:\d{2}$', '', date_str)
-
+    # Try different date format patterns
     date_formats = [
-        "%Y-%m-%dT%H:%M:%S.%f",
-        "%Y-%m-%dT%H:%M:%S",
-        "%B %d, %Y",
-        "%m/%d/%Y",
-        "%Y-%m-%d",
-        "%d-%b-%Y",
-        "%Y/%m/%d",
-        "%d/%m/%Y",
-        "%b %d, %Y",
+        "%Y-%m-%dT%H:%M:%S.%f",  # ISO format with milliseconds (e.g., 2026-02-04T13:41:22.000)
+        "%Y-%m-%dT%H:%M:%S",     # ISO format with time (e.g., 2024-12-08T15:30:00)
+        "%B %d, %Y",             # December 8, 2024
+        "%m/%d/%Y",              # 12/08/2024
+        "%Y-%m-%d",              # 2024-12-08
+        "%d-%b-%Y",              # 08-Dec-2024
+        "%Y/%m/%d",              # 2024/12/08
+        "%d/%m/%Y",              # 08/12/2024
+        "%b %d, %Y",             # Dec 8, 2024
     ]
 
     for fmt in date_formats:
@@ -90,86 +93,43 @@ def parse_date_for_sorting(date_str):
         except (ValueError, AttributeError):
             continue
 
+    # If none of the formats work, return a very old date
     logger.warning(f"Could not parse date: {date_str}")
     return datetime(1900, 1, 1)
 
 
 def sort_reports_by_date(reports, descending=True):
-    """Sort reports by date field, with most recent first (by default)."""
+    """
+    Sort reports by date field, with most recent first (by default).
+
+    Args:
+        reports: List of report dictionaries with 'date' field
+        descending: If True, sort with most recent first. If False, oldest first.
+
+    Returns:
+        Sorted list of reports
+    """
     if not reports:
         return reports
 
     sorted_reports = sorted(
         reports,
         key=lambda x: parse_date_for_sorting(x.get('date', '')),
-        reverse=descending
+        reverse=descending  # True = most recent first
     )
 
     return sorted_reports
 
 
-# Initialize data pool (before lifespan so it's available at startup)
-data_pool = get_data_pool()
-
-_sync_lock = threading.Lock()
-
-def scheduled_trial_sync():
-    """Nightly job: sync trials and recompute eligibility for all patients."""
-    if not _sync_lock.acquire(blocking=False):
-        logger.info("Sync already in progress - skipping")
-        return
-    try:
-        logger.info("SCHEDULED TRIAL SYNC STARTING")
-        from Backend.Utils.batch_eligibility_engine import get_batch_engine
-        engine = get_batch_engine()
-        result = engine.full_sync(max_trials_per_query=50, limit_trials=100)
-        logger.info(f"Scheduled sync completed: {result}")
-    except Exception as e:
-        logger.error(f"Scheduled trial sync failed: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        _sync_lock.release()
-
-@asynccontextmanager
-async def lifespan(app):
-    # STARTUP
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(
-        scheduled_trial_sync,
-        trigger='cron',
-        hour=2, minute=0,
-        id='nightly_trial_sync',
-        replace_existing=True,
-    )
-    scheduler.start()
-    logger.info("APScheduler started - nightly trial sync at 2:00 AM")
-
-    # Initial sync if cache is empty
-    try:
-        trials_count = data_pool.get_trials_count()
-        if trials_count == 0:
-            logger.info("Trials cache empty - triggering initial sync in background")
-            thread = threading.Thread(target=scheduled_trial_sync, daemon=True)
-            thread.start()
-        else:
-            logger.info(f"Trials cache has {trials_count} trials - skipping initial sync")
-    except Exception as e:
-        logger.error(f"Error checking trials cache on startup: {e}")
-
-    yield
-
-    # SHUTDOWN
-    scheduler.shutdown(wait=False)
-    logger.info("APScheduler shut down")
-
 # Initialize FastAPI app
 app = FastAPI(
     title="AI Oncologist API",
     description="API for extracting and managing oncology patient data from EMR",
-    version="1.0.0",
-    lifespan=lifespan
+    version="1.0.0"
 )
+
+# Initialize data pool
+data_pool = get_data_pool()
 
 # Configure CORS
 app.add_middleware(
@@ -223,6 +183,9 @@ class LabDataResponse(BaseModel):
     lab_info: Optional[dict] = None
     metadata: Optional[dict] = None
     validation_summary: Optional[dict] = None
+    fhir_metadata: Optional[dict] = None
+    fhir_observations_count: Optional[int] = None
+    total_data_sources: Optional[int] = None
     error: Optional[str] = None
 
 
@@ -276,7 +239,6 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
-
 
 
 # ============================================================================
@@ -333,47 +295,142 @@ async def get_patient_data(request: MRNRequest):
             print(f"Returning cached data for MRN: {request.mrn}")
             return cached_data
 
-        # If not in cache, fetch fresh data IN BATCHES OF 3
+        # If not in cache, fetch fresh data in PARALLEL
         logger.info("="*80)
-        logger.info(f"🚀 STARTING SEQUENTIAL EXTRACTION for MRN: {request.mrn}")
+        logger.info(f"🚀 STARTING PARALLEL EXTRACTION for MRN: {request.mrn}")
         logger.info("="*80)
-        logger.info("Sequential processing of extraction pipelines:")
+        logger.info("⚡ Running 4 extraction pipelines concurrently:")
         logger.info("   1️⃣  Patient Data Pipeline (Demographics, Diagnosis, Treatment, etc.)")
         logger.info("   2️⃣  Lab Results Pipeline")
         logger.info("   3️⃣  Genomics Pipeline")
         logger.info("   4️⃣  Pathology Pipeline")
         logger.info("="*80)
 
-        # Step 1: Extract patient data
-        logger.info(f"📋 Step 1/4: Extracting patient data for MRN: {request.mrn}...")
-        result = extract_patient_data(request.mrn, False)
-        logger.info(f"✅ Patient data extraction completed for MRN: {request.mrn}")
+        # Define extraction tasks
+        def extract_patient_task():
+            try:
+                logger.info(f"📋 Starting patient data extraction for MRN: {request.mrn}...")
+                result = extract_patient_data(request.mrn, False)
+                logger.info(f"✅ Patient data extraction completed")
+                return ('patient', result, None)
+            except Exception as e:
+                logger.error(f"❌ Patient data extraction failed: {str(e)}")
+                return ('patient', None, str(e))
 
-        # Step 2: Extract lab results
-        logger.info(f"🧪 Step 2/4: Extracting lab results for MRN: {request.mrn}...")
-        lab_result = lab_tab_info(request.mrn, False)
-        logger.info(f"✅ Lab results extraction completed for MRN: {request.mrn}")
+        def extract_lab_task():
+            try:
+                logger.info(f"🧪 Starting lab results extraction for MRN: {request.mrn}...")
+                lab_result = lab_tab_info(request.mrn, False)
+                logger.info(f"✅ Lab results extraction completed")
+                return ('lab', lab_result, None)
+            except Exception as e:
+                logger.error(f"❌ Lab results extraction failed: {str(e)}")
+                return ('lab', None, str(e))
 
-        # Step 3: Extract genomics data
-        logger.info(f"🧬 Step 3/4: Extracting genomics data for MRN: {request.mrn}...")
-        genomics_result = genomics_tab_info(request.mrn, False)
-        logger.info(f"✅ Genomics data extraction completed for MRN: {request.mrn}")
+        def extract_genomics_task():
+            try:
+                logger.info(f"🧬 Starting genomics extraction for MRN: {request.mrn}...")
+                genomics_result = genomics_tab_info(request.mrn, False)
+                logger.info(f"✅ Genomics extraction completed")
+                return ('genomics', genomics_result, None)
+            except Exception as e:
+                logger.error(f"❌ Genomics extraction failed: {str(e)}")
+                return ('genomics', None, str(e))
 
-        # Step 4: Extract pathology data
-        logger.info(f"🔬 Step 4/4: Extracting pathology data for MRN: {request.mrn}...")
-        pathology_result = pathology_tab_info_pipeline(request.mrn, False, True)  # use_gemini_api=True
-        logger.info(f"✅ Pathology data extraction completed for MRN: {request.mrn}")
+        def extract_pathology_task():
+            try:
+                logger.info(f"🔬 Starting pathology extraction for MRN: {request.mrn}...")
+                pathology_result = pathology_tab_info_pipeline(request.mrn, False, True)
+                logger.info(f"✅ Pathology extraction completed")
+                return ('pathology', pathology_result, None)
+            except Exception as e:
+                logger.error(f"❌ Pathology extraction failed: {str(e)}")
+                return ('pathology', None, str(e))
+
+        # Execute all tasks in parallel
+        tasks = [
+            extract_patient_task,
+            extract_lab_task,
+            extract_genomics_task,
+            extract_pathology_task
+        ]
+
+        # Store results
+        result = None
+        lab_result = None
+        genomics_result = None
+        pathology_result = None
+        errors = []
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Submit all tasks
+            future_to_task = {executor.submit(task): task.__name__ for task in tasks}
+
+            # Collect results as they complete
+            for future in as_completed(future_to_task):
+                task_name = future_to_task[future]
+                try:
+                    data_type, data, error = future.result()
+
+                    if error:
+                        errors.append(f"{data_type}: {error}")
+                        logger.error(f"⚠️  {data_type} extraction had errors: {error}")
+                    else:
+                        # Assign results to appropriate variables
+                        if data_type == 'patient':
+                            result = data
+                        elif data_type == 'lab':
+                            lab_result = data
+                        elif data_type == 'genomics':
+                            genomics_result = data
+                        elif data_type == 'pathology':
+                            pathology_result = data
+
+                except Exception as e:
+                    logger.error(f"⚠️  Task {task_name} failed unexpectedly: {str(e)}")
+                    errors.append(f"{task_name}: {str(e)}")
+
+        # Check if we got the essential patient data
+        if result is None:
+            raise Exception(f"Failed to extract patient data. Errors: {', '.join(errors)}")
 
         logger.info("="*80)
-        logger.info(f"✅ ALL SEQUENTIAL EXTRACTIONS COMPLETED for MRN: {request.mrn}")
+        logger.info(f"✅ ALL PARALLEL EXTRACTIONS COMPLETED for MRN: {request.mrn}")
+        if errors:
+            logger.warning(f"⚠️  Some extractions had errors: {', '.join(errors)}")
         logger.info("="*80)
 
-        result['lab_info'] = lab_result.get('lab_info')
-        result['lab_reports'] = lab_result.get('lab_reports', [])  # Lab documents for Documents tab
-        result['genomic_info'] = genomics_result.get('genomic_info')
-        result['genomics_reports'] = genomics_result.get('genomics_reports', [])  # Genomics documents for Documents tab
-        result['pathology_summary'] = pathology_result.get('pathology_summary')
-        result['pathology_markers'] = pathology_result.get('pathology_markers')
+        # Check if patient data extraction succeeded
+        if not result.get('success', False):
+            # If patient data extraction failed, return error response with all required fields
+            logger.error(f"❌ Patient data extraction failed: {result.get('error', 'Unknown error')}")
+            return {
+                'success': False,
+                'mrn': request.mrn,
+                'pdf_url': None,
+                'demographics': None,
+                'diagnosis': None,
+                'comorbidities': None,
+                'treatment_tab_info_LOT': None,
+                'treatment_tab_info_timeline': None,
+                'diagnosis_header': None,
+                'diagnosis_evolution_timeline': None,
+                'diagnosis_footer': None,
+                'lab_info': None,
+                'pathology_summary': None,
+                'pathology_markers': None,
+                'pathology_reports': [],
+                'radiology_reports': [],
+                'error': result.get('error', 'Patient data extraction failed')
+            }
+
+        # Merge results (handle None values gracefully)
+        result['lab_info'] = lab_result.get('lab_info') if lab_result else None
+        result['lab_reports'] = lab_result.get('lab_reports', []) if lab_result else []
+        result['genomic_info'] = genomics_result.get('genomic_info') if genomics_result else None
+        result['genomics_reports'] = genomics_result.get('genomics_reports', []) if genomics_result else []
+        result['pathology_summary'] = pathology_result.get('pathology_summary') if pathology_result else None
+        result['pathology_markers'] = pathology_result.get('pathology_markers') if pathology_result else None
 
         # Use pathology data already extracted by pathology_tab_info_pipeline (no duplicate extraction)
         print(f"Using pathology reports already extracted by pathology_tab_info_pipeline for MRN: {request.mrn}")
@@ -383,8 +440,8 @@ async def get_patient_data(request: MRNRequest):
         genomic_alterations_reports = []
         no_test_performed_reports = []
 
-        # Get the typical pathology reports from the pipeline result
-        typical_reports = pathology_result.get('typical_pathology_reports', [])
+        # Get the typical pathology reports from the pipeline result (handle None)
+        typical_reports = pathology_result.get('typical_pathology_reports', []) if pathology_result else []
         for report in typical_reports:
             detailed_pathology_reports.append({
                 "drive_url": report.get('drive_url'),
@@ -397,8 +454,8 @@ async def get_patient_data(request: MRNRequest):
                 "pathology_markers": report.get('pathology_markers')
             })
 
-        # Get genomic pathology reports from pipeline result
-        genomic_reports = pathology_result.get('genomic_pathology_reports', [])
+        # Get genomic pathology reports from pipeline result (handle None)
+        genomic_reports = pathology_result.get('genomic_pathology_reports', []) if pathology_result else []
         for report in genomic_reports:
             genomic_alterations_reports.append({
                 "drive_url": report.get('drive_url', ''),
@@ -438,7 +495,7 @@ async def get_patient_data(request: MRNRequest):
                 for report in radiology_reports:
                     try:
                         radiology_summary, radiology_imp_RECIST = extract_radiology_details_from_report(
-                            radiology_url=report['drive_url'],
+                            radiology_url=report['drive_url_with_MD'],
                             use_gemini_api=True
                         )
                         detailed_radiology_reports.append({
@@ -484,43 +541,6 @@ async def get_patient_data(request: MRNRequest):
 
         # Auto-store in data pool
         data_pool.store_patient_data(mrn=request.mrn, data=result)
-
-        # Auto-compute eligibility for this patient against all cached trials (background)
-        try:
-            trials_count = data_pool.get_trials_count()
-            if trials_count > 0:
-                print(f"\n{'='*60}")
-                print(f"AUTO-COMPUTING ELIGIBILITY for new patient {request.mrn}")
-                print(f"Matching against {trials_count} cached trials...")
-                print(f"{'='*60}")
-
-                # Run in background thread so it doesn't block the response
-                def compute_eligibility_background(mrn: str, patient_data: dict):
-                    try:
-                        from Utils.batch_eligibility_engine import get_batch_engine
-                        engine = get_batch_engine()
-                        engine.compute_eligibility_matrix(
-                            patient_mrns=[mrn],
-                            limit_trials=100  # Limit for performance
-                        )
-                        print(f"Eligibility computation complete for patient {mrn}")
-                    except Exception as e:
-                        print(f"Background eligibility computation failed: {e}")
-
-                import threading
-                thread = threading.Thread(
-                    target=compute_eligibility_background,
-                    args=(request.mrn, result)
-                )
-                thread.daemon = True
-                thread.start()
-
-                result['eligibility_computation'] = "started_in_background"
-            else:
-                result['eligibility_computation'] = "skipped_no_trials_cached"
-        except Exception as e:
-            print(f"Warning: Could not start eligibility computation: {e}")
-            result['eligibility_computation'] = "failed"
 
         return result
     except Exception as e:
@@ -1080,63 +1100,6 @@ async def get_pathology_tab(request: MRNRequest):
         )
 
 
-@app.post("/api/tabs/clinical-trials", tags=["Tabs"])
-async def get_clinical_trials(request: MRNRequest):
-    """
-    Get matched clinical trials for a patient using smart multi-query search.
-
-    NEW STRATEGY:
-    1. Gets patient data from the data pool (must be loaded first via /api/patient/all)
-    2. Builds targeted search queries from patient data (cancer type, biomarkers, genomics, etc.)
-    3. Searches ClinicalTrials.gov API with multiple queries (250+ trials per query, 2 pages)
-    4. Deduplicates and analyzes ALL eligibility criteria against patient data with LLM
-    5. Returns trials sorted by eligibility percentage
-
-    Expected to fetch 500-1000 unique trials for comprehensive matching.
-
-    Returns:
-    - List of matched trials with full eligibility criteria breakdown
-    - Each criterion shows: what the trial requires, patient's value, and match status
-    - Summary statistics (likely_eligible, potentially_eligible, not_eligible counts)
-    """
-    try:
-        # Get patient data from pool
-        patient_data = data_pool.get_patient_data(request.mrn)
-
-        if not patient_data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Patient with MRN {request.mrn} not found. Please load patient data first using /api/patient/all"
-            )
-
-        # Extract clinical trials matches using smart multi-query strategy
-        # max_trials_per_query=250, max_pages=2 -> ~500 trials per query
-        result = extract_clinical_trials(patient_data, max_trials_per_query=50, max_pages=1)
-
-        return {
-            "success": result.get("success", False),
-            "mrn": request.mrn,
-            "search_queries": result.get("search_queries", []),
-            "total_queries": result.get("total_queries", 0),
-            "patient_cancer_type": result.get("patient_cancer_type", ""),
-            "total_trials_fetched": result.get("total_trials_fetched", 0),
-            "total_trials_analyzed": result.get("total_trials_analyzed", 0),
-            "summary": result.get("summary", {}),
-            "trials": result.get("trials", []),
-            "message": result.get("message"),
-            "error": result.get("error")
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
 # ============================================================================
 # Helper Functions for Testing
 # ============================================================================
@@ -1282,412 +1245,6 @@ async def clear_data_pool():
         "success": True,
         "message": "Data pool cleared successfully"
     }
-
-
-# ============================================================================
-# Trial-Centric Routes (Trials → Patients)
-# ============================================================================
-
-@app.get("/api/trials", tags=["Clinical Trials"])
-async def list_trials(
-    status: str = None,
-    page: int = 1,
-    limit: int = 50
-):
-    """
-    List all cached clinical trials with pagination.
-
-    This endpoint returns trials that have been pre-fetched and cached.
-    Use the /api/admin/sync-trials endpoint to populate the cache.
-
-    Query parameters:
-    - status: Filter by trial status (e.g., "RECRUITING")
-    - page: Page number (default: 1)
-    - limit: Items per page (default: 50, max: 100)
-    """
-    try:
-        limit = min(limit, 100)
-        offset = (page - 1) * limit
-
-        trials = data_pool.list_all_trials(
-            status=status,
-            limit=limit,
-            offset=offset
-        )
-
-        total = data_pool.get_trials_count(status=status)
-
-        return {
-            "success": True,
-            "page": page,
-            "limit": limit,
-            "total": total,
-            "total_pages": (total + limit - 1) // limit,
-            "trials": trials
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-@app.get("/api/trials/{nct_id}", tags=["Clinical Trials"])
-async def get_trial_details(nct_id: str):
-    """
-    Get detailed information about a specific clinical trial.
-
-    Returns the cached trial data including eligibility criteria,
-    locations, contacts, and eligibility statistics.
-    """
-    try:
-        trial = data_pool.get_trial(nct_id)
-
-        if not trial:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Trial {nct_id} not found in cache. Run sync-trials first."
-            )
-
-        # Get eligibility stats for this trial
-        stats = data_pool.get_eligibility_stats_for_trial(nct_id)
-
-        return {
-            "success": True,
-            "trial": trial,
-            "eligibility_stats": stats
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-@app.get("/api/trials/{nct_id}/patients", tags=["Clinical Trials"])
-async def get_eligible_patients_for_trial(
-    nct_id: str,
-    eligibility_status: str = None,
-    page: int = 1,
-    limit: int = 50
-):
-    """
-    Get all patients eligible for a specific clinical trial.
-
-    This endpoint returns pre-computed eligibility results from the matrix.
-    Use /api/admin/compute-eligibility to populate the matrix.
-
-    Query parameters:
-    - eligibility_status: Filter by status ("Likely Eligible", "Potentially Eligible", "Not Eligible")
-    - page: Page number (default: 1)
-    - limit: Items per page (default: 50, max: 100)
-    """
-    try:
-        limit = min(limit, 100)
-        offset = (page - 1) * limit
-
-        # Get eligible patients
-        patients = data_pool.get_eligible_patients_for_trial(
-            nct_id=nct_id,
-            status_filter=eligibility_status,
-            limit=limit,
-            offset=offset
-        )
-
-        # Get stats
-        stats = data_pool.get_eligibility_stats_for_trial(nct_id)
-
-        return {
-            "success": True,
-            "nct_id": nct_id,
-            "page": page,
-            "limit": limit,
-            "eligibility_stats": stats,
-            "patients": patients
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-@app.get("/api/patients/{mrn}/eligible-trials", tags=["Clinical Trials"])
-async def get_eligible_trials_for_patient_cached(
-    mrn: str,
-    eligibility_status: str = None
-):
-    """
-    Get all trials a patient is eligible for from the pre-computed cache.
-
-    This is faster than /api/tabs/clinical-trials as it uses pre-computed results.
-    Use /api/admin/compute-eligibility to populate the matrix.
-
-    Query parameters:
-    - eligibility_status: Filter by status ("Likely Eligible", "Potentially Eligible", "Not Eligible")
-    """
-    try:
-        # Check if patient exists
-        if not data_pool.patient_exists(mrn):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Patient {mrn} not found in data pool"
-            )
-
-        trials = data_pool.get_eligible_trials_for_patient(
-            mrn=mrn,
-            status_filter=eligibility_status
-        )
-
-        return {
-            "success": True,
-            "mrn": mrn,
-            "total": len(trials),
-            "trials": trials
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-# ============================================================================
-# Admin Routes for Batch Operations
-# ============================================================================
-
-@app.post("/api/admin/sync-trials", tags=["Admin"])
-async def sync_trials_batch(
-    max_per_query: int = 50,
-    background: bool = False,
-    auto_compute_eligibility: bool = True
-):
-    """
-    Sync clinical trials from ClinicalTrials.gov API to local cache.
-
-    This fetches trials for multiple cancer types and stores them in the database.
-    Can run in foreground (blocking) or background (async).
-    After syncing, automatically computes eligibility for all existing patients.
-
-    Query parameters:
-    - max_per_query: Maximum trials to fetch per search query (default: 50)
-    - background: Run in background (default: False)
-    - auto_compute_eligibility: Auto-compute eligibility for all patients after sync (default: True)
-    """
-    try:
-        from Utils.batch_eligibility_engine import get_batch_engine
-
-        engine = get_batch_engine()
-
-        def sync_and_compute():
-            # First sync trials
-            sync_result = engine.sync_trials(max_per_query=max_per_query)
-
-            # Then auto-compute eligibility ONLY for newly added trials
-            new_nct_ids = sync_result.get("new_nct_ids", [])
-            if auto_compute_eligibility and new_nct_ids:
-                patients = data_pool.list_all_patients()
-                if patients:
-                    print(f"\n{'='*60}")
-                    print(f"AUTO-COMPUTING ELIGIBILITY for {len(patients)} patients against {len(new_nct_ids)} NEW trials")
-                    print(f"{'='*60}")
-                    engine.compute_eligibility_matrix(trial_nct_ids=new_nct_ids)
-            elif not new_nct_ids:
-                print("No new trials added - skipping eligibility computation")
-
-            return sync_result
-
-        if background:
-            # Run in background using thread pool
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                loop.run_in_executor(executor, sync_and_compute)
-
-            return {
-                "success": True,
-                "message": "Trial sync started in background (will auto-compute eligibility)",
-                "max_per_query": max_per_query
-            }
-        else:
-            result = sync_and_compute()
-            return {
-                "success": True,
-                "result": result
-            }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-@app.post("/api/admin/compute-eligibility", tags=["Admin"])
-async def compute_eligibility_batch(
-    limit_trials: int = 100,
-    patient_mrn: str = None,
-    background: bool = False
-):
-    """
-    Compute eligibility matrix for all patient×trial combinations.
-
-    This pre-computes eligibility for all patients against all cached trials.
-    Results are stored in the eligibility_matrix table for instant queries.
-
-    Query parameters:
-    - limit_trials: Maximum number of trials to process (default: 100)
-    - patient_mrn: Compute only for specific patient (optional)
-    - background: Run in background (default: False)
-    """
-    try:
-        from Utils.batch_eligibility_engine import get_batch_engine
-
-        engine = get_batch_engine()
-
-        patient_mrns = [patient_mrn] if patient_mrn else None
-
-        if background:
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                loop.run_in_executor(
-                    executor,
-                    engine.compute_eligibility_matrix,
-                    patient_mrns,
-                    None,  # trial_nct_ids
-                    limit_trials
-                )
-
-            return {
-                "success": True,
-                "message": "Eligibility computation started in background",
-                "limit_trials": limit_trials,
-                "patient_mrn": patient_mrn
-            }
-        else:
-            result = engine.compute_eligibility_matrix(
-                patient_mrns=patient_mrns,
-                limit_trials=limit_trials
-            )
-            return {
-                "success": True,
-                "result": result
-            }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-@app.post("/api/admin/full-sync", tags=["Admin"])
-async def full_sync_batch(
-    max_trials_per_query: int = 50,
-    limit_trials: int = 100,
-    background: bool = True
-):
-    """
-    Perform a full sync: fetch trials and compute all eligibility.
-
-    This is a convenience endpoint that runs both sync-trials and compute-eligibility.
-    Recommended to run in background for large datasets.
-
-    Query parameters:
-    - max_trials_per_query: Max trials to fetch per search query (default: 50)
-    - limit_trials: Total limit on trials to process for eligibility (default: 100)
-    - background: Run in background (default: True)
-    """
-    try:
-        from Utils.batch_eligibility_engine import get_batch_engine
-
-        engine = get_batch_engine()
-
-        if background:
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                loop.run_in_executor(
-                    executor,
-                    engine.full_sync,
-                    max_trials_per_query,
-                    limit_trials
-                )
-
-            return {
-                "success": True,
-                "message": "Full sync started in background",
-                "max_trials_per_query": max_trials_per_query,
-                "limit_trials": limit_trials
-            }
-        else:
-            result = engine.full_sync(
-                max_trials_per_query=max_trials_per_query,
-                limit_trials=limit_trials
-            )
-            return {
-                "success": True,
-                "result": result
-            }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-@app.get("/api/admin/sync-status", tags=["Admin"])
-async def get_sync_status():
-    """
-    Get the status of the last sync operations.
-
-    Returns information about the most recent trials sync and eligibility computation.
-    """
-    try:
-        last_trials_sync = data_pool.get_last_sync("trials_fetch")
-        last_eligibility_sync = data_pool.get_last_sync("eligibility_compute")
-        last_full_sync = data_pool.get_last_sync("full_sync")
-
-        trials_count = data_pool.get_trials_count()
-
-        # Check scheduler status
-        scheduler_active = False
-        next_scheduled_sync = None
-        try:
-            from apscheduler.schedulers.background import BackgroundScheduler
-            # The scheduler is created in lifespan; check via the job store
-            # We look for any running BackgroundScheduler instances
-            import gc
-            for obj in gc.get_referrers(BackgroundScheduler):
-                if isinstance(obj, BackgroundScheduler) and obj.running:
-                    scheduler_active = True
-                    job = obj.get_job('nightly_trial_sync')
-                    if job and job.next_run_time:
-                        next_scheduled_sync = job.next_run_time.isoformat()
-                    break
-        except Exception:
-            pass
-
-        return {
-            "success": True,
-            "trials_in_cache": trials_count,
-            "last_trials_sync": last_trials_sync,
-            "last_eligibility_computation": last_eligibility_sync,
-            "last_full_sync": last_full_sync,
-            "scheduler_active": scheduler_active,
-            "next_scheduled_sync": next_scheduled_sync
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
 
 
 # ============================================================================
@@ -2264,8 +1821,8 @@ async def test_patient_all_tabs(request: MRNRequest):
                 "pathology_markers": report.get('pathology_markers')
             })
 
-        # Get genomic pathology reports from pipeline result
-        genomic_reports = pathology_result.get('genomic_pathology_reports', [])
+        # Get genomic pathology reports from pipeline result (handle None)
+        genomic_reports = pathology_result.get('genomic_pathology_reports', []) if pathology_result else []
         for report in genomic_reports:
             genomic_alterations_reports.append({
                 "drive_url": report.get('drive_url', ''),

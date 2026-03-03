@@ -1,5 +1,5 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { calculateLabStatus, getNormalLimitForChart, PREDEFINED_NORMAL_LIMITS } from '../utils/labNormalRanges';
 
 interface TrendDataPoint {
@@ -237,9 +237,83 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
   // Show all ticks for every data point
   const tickInterval = 0; // 0 means show all ticks
 
+  // State for current window index
+  const [windowIndex, setWindowIndex] = useState(0);
+
+  // Calculate 2-month time windows starting from the latest date
+  const windows = useMemo(() => {
+    // Get the date range of real data points
+    const realDataPoints = chartData.filter(d => !d.isPhantom);
+    if (realDataPoints.length === 0) return [chartData];
+
+    // Sort by date to ensure correct ordering
+    const sortedData = [...chartData].sort((a, b) =>
+      new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime()
+    );
+
+    const latestDate = new Date(sortedData[sortedData.length - 1].fullDate);
+    const earliestDate = new Date(sortedData[0].fullDate);
+
+    // Create 2-month windows starting from the latest date going backwards
+    const windows: typeof chartData[] = [];
+    let windowEndDate = new Date(latestDate);
+
+    while (windowEndDate >= earliestDate) {
+      // Calculate window start date (2 months before end date)
+      const windowStartDate = new Date(windowEndDate);
+      windowStartDate.setMonth(windowStartDate.getMonth() - 2);
+
+      // Filter data points that fall within this window
+      const windowData = sortedData.filter(point => {
+        const pointDate = new Date(point.fullDate);
+        return pointDate >= windowStartDate && pointDate <= windowEndDate;
+      });
+
+      if (windowData.length > 0) {
+        windows.push(windowData);
+      }
+
+      // Move to next window (going backwards in time)
+      windowEndDate = new Date(windowStartDate);
+      windowEndDate.setDate(windowEndDate.getDate() - 1); // Start one day before the previous window
+
+      // Safety check to prevent infinite loop
+      if (windows.length > 100) break;
+    }
+
+    return windows.length > 0 ? windows : [sortedData];
+  }, [chartData]);
+
+  // Get the current window data
+  const displayData = useMemo(() => {
+    return windows[windowIndex] || chartData;
+  }, [windows, windowIndex, chartData]);
+
+  // Navigation handlers - left shows older data, right shows newer data
+  const canGoLeft = windowIndex < windows.length - 1; // Can go to older data
+  const canGoRight = windowIndex > 0; // Can go to newer data
+
+  const handleLeft = () => {
+    if (canGoLeft) setWindowIndex(windowIndex + 1); // Increase index = older data
+  };
+
+  const handleRight = () => {
+    if (canGoRight) setWindowIndex(windowIndex - 1); // Decrease index = newer data
+  };
+
+  // Get date range of current window for display
+  const windowDateRange = useMemo(() => {
+    if (displayData.length === 0) return '';
+    const realPoints = displayData.filter(d => !d.isPhantom);
+    if (realPoints.length === 0) return '';
+    const start = realPoints[0].fullDate;
+    const end = realPoints[realPoints.length - 1].fullDate;
+    return `${formatDateForDisplay(start)} - ${formatDateForDisplay(end)}`;
+  }, [displayData]);
+
   // Determine interpretation based on trend (excluding phantom points)
   const interpretation = useMemo(() => {
-    const realDataPoints = chartData.filter(d => !d.isPhantom);
+    const realDataPoints = displayData.filter(d => !d.isPhantom);
 
     if (realDataPoints.length < 2) {
       return 'Current value: ' + biomarkerData.current.value + ' ' + unit;
@@ -250,22 +324,21 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
     const change = lastValue - firstValue;
     const pctChange = ((change / firstValue) * 100).toFixed(1);
 
-    const direction = biomarkerData.trend_direction === 'increasing' ? 'increasing' :
-                     biomarkerData.trend_direction === 'decreasing' ? 'decreasing' : 'stable';
+    const direction = change > 0 ? 'increasing' : change < 0 ? 'decreasing' : 'stable';
 
     const changePrefix = change > 0 ? '+' : '';
     return labName + ' trending ' + direction + ' from ' + firstValue + ' to ' + lastValue + ' ' + unit + ' (' + changePrefix + pctChange + '% over ' + realDataPoints.length + ' measurements)';
-  }, [chartData, biomarkerData, labName, unit]);
+  }, [displayData, biomarkerData, labName, unit]);
 
   // Compute treatment overlays with proper date matching
   const treatmentOverlays = useMemo(() => {
-    if (!treatmentStages || treatmentStages.length === 0 || chartData.length === 0) {
+    if (!treatmentStages || treatmentStages.length === 0 || displayData.length === 0) {
       console.log('[' + labName + '] No treatment stages or chart data available');
       return { overlays: [], tickMarks: [], relevantStages: [] };
     }
 
     // Get lab data X-axis limits (only real data points, not phantom)
-    const realDataPoints = chartData.filter(d => !d.isPhantom);
+    const realDataPoints = displayData.filter(d => !d.isPhantom);
     if (realDataPoints.length === 0) {
       return { overlays: [], tickMarks: [], relevantStages: [] };
     }
@@ -346,8 +419,8 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
       }
 
       // Check if stage overlaps with lab data
-      const labStart = new Date(chartData[0].fullDate).getTime();
-      const labEnd = new Date(chartData[chartData.length - 1].fullDate).getTime();
+      const labStart = new Date(displayData[0].fullDate).getTime();
+      const labEnd = new Date(displayData[displayData.length - 1].fullDate).getTime();
 
       // No overlap if stage ends before lab starts, or stage starts after lab ends
       if (stageEnd < labStart || stageStart > labEnd) {
@@ -358,22 +431,22 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
       // Find the best matching data points for x1 and x2
       // x1 should be the first data point that's on or after the stage start (or first available)
       let x1Idx = 0;
-      for (let i = 0; i < chartData.length; i++) {
-        const pointTime = new Date(chartData[i].fullDate).getTime();
+      for (let i = 0; i < displayData.length; i++) {
+        const pointTime = new Date(displayData[i].fullDate).getTime();
         if (pointTime >= stageStart) {
           x1Idx = i;
           break;
         }
         // If we've gone past the stage start without finding a point, use the last checked point
-        if (pointTime < stageStart && i === chartData.length - 1) {
+        if (pointTime < stageStart && i === displayData.length - 1) {
           x1Idx = i;
         }
       }
 
       // x2 should be the last data point that's on or before the stage end (or last available)
-      let x2Idx = chartData.length - 1;
-      for (let i = chartData.length - 1; i >= 0; i--) {
-        const pointTime = new Date(chartData[i].fullDate).getTime();
+      let x2Idx = displayData.length - 1;
+      for (let i = displayData.length - 1; i >= 0; i--) {
+        const pointTime = new Date(displayData[i].fullDate).getTime();
         if (pointTime <= stageEnd) {
           x2Idx = i;
           break;
@@ -390,8 +463,8 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
       }
 
       // If they're the same and there's more data, expand
-      if (x1Idx === x2Idx && chartData.length > 1) {
-        if (x2Idx < chartData.length - 1) {
+      if (x1Idx === x2Idx && displayData.length > 1) {
+        if (x2Idx < displayData.length - 1) {
           x2Idx++;
         } else if (x1Idx > 0) {
           x1Idx--;
@@ -399,8 +472,8 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
       }
 
       const overlay = {
-        x1: chartData[x1Idx].date,
-        x2: chartData[x2Idx].date,
+        x1: displayData[x1Idx].date,
+        x2: displayData[x2Idx].date,
         fillColor: getTailwindColor(stage.color),
         strokeColor: getTailwindColor(stage.borderColor),
         label: stage.label
@@ -438,14 +511,41 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
     console.log('Total overlays created:', overlays.length);
     console.log('Total tick marks created:', tickMarks.length);
     return { overlays, tickMarks, relevantStages };
-  }, [treatmentStages, chartData, labName]);
-
-  if (!chartData || chartData.length === 0) {
-    return <div className="text-sm text-gray-500">No trend data available</div>;
-  }
+  }, [treatmentStages, displayData, labName]);
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-4">
+      {/* Time Window Navigation */}
+      {windows.length > 1 && (
+        <div className="mb-4 flex items-center justify-center gap-4">
+          <button
+            onClick={handleLeft}
+            disabled={!canGoLeft}
+            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+              canGoLeft
+                ? 'bg-blue-500 text-white hover:bg-blue-600 hover:scale-110 shadow-md hover:shadow-lg'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed opacity-50'
+            }`}
+            title="Show earlier data"
+          >
+            <span className="text-xl">←</span>
+          </button>
+
+          <button
+            onClick={handleRight}
+            disabled={!canGoRight}
+            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+              canGoRight
+                ? 'bg-blue-500 text-white hover:bg-blue-600 hover:scale-110 shadow-md hover:shadow-lg'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed opacity-50'
+            }`}
+            title="Show later data"
+          >
+            <span className="text-xl">→</span>
+          </button>
+        </div>
+      )}
+
       {/* Stage Legend - show all treatments for full context */}
       {treatmentStages && treatmentStages.length > 0 && (
         <div className="mb-3 bg-gradient-to-r from-gray-50 to-slate-50 p-3 rounded-lg border border-gray-200">
@@ -516,7 +616,7 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
       )}
 
       <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={chartData} margin={{ top: 45, right: 80, bottom: 60, left: 20 }}>
+        <LineChart data={displayData} margin={{ top: 45, right: 80, bottom: 60, left: 20 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
 
           {/* Treatment start tick marks - vertical lines with enhanced visibility */}
@@ -548,7 +648,7 @@ export function LabTrendChart({ labName, biomarkerData, treatmentStages }: LabTr
             tick={(props: any) => {
               const { x, y, payload } = props;
               // Find the corresponding data point
-              const dataPoint = chartData.find(d => d.date === payload.value);
+              const dataPoint = displayData.find(d => d.date === payload.value);
 
               // Only show tick if this is a real data point (not phantom)
               if (!dataPoint || dataPoint.isPhantom) {

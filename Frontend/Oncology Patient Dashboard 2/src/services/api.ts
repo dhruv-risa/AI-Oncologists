@@ -319,75 +319,6 @@ export interface RadiologyReportsResponse {
   reports: RadiologyReportDetail[];
 }
 
-// Clinical Trials interfaces
-export interface CriterionResult {
-  criterion_number: number;
-  criterion_text: string;
-  patient_value: string;
-  met: boolean | null;
-  confidence: string;
-  explanation: string;
-  criterion_type: 'inclusion' | 'exclusion';
-}
-
-export interface TrialEligibility {
-  status: 'LIKELY_ELIGIBLE' | 'POTENTIALLY_ELIGIBLE' | 'NOT_ELIGIBLE';
-  status_reason: string;
-  percentage: number;
-  inclusion: {
-    met: number;
-    not_met: number;
-    unknown: number;
-    total: number;
-  };
-  exclusion: {
-    clear: number;
-    violated: number;
-    unknown: number;
-    total: number;
-  };
-}
-
-export interface TrialContact {
-  name: string;
-  phone: string;
-  email: string;
-}
-
-export interface TrialLocation {
-  facility: string;
-  city: string;
-  state: string;
-  country: string;
-  status: string;
-}
-
-export interface ClinicalTrial {
-  nct_id: string;
-  title: string;
-  phase: string;
-  status: string;
-  study_type: string;
-  brief_summary: string;
-  eligibility: TrialEligibility;
-  criteria_results: {
-    inclusion: CriterionResult[];
-    exclusion: CriterionResult[];
-  };
-  contact: TrialContact;
-  locations: TrialLocation[];
-}
-
-export interface ClinicalTrialsResponse {
-  success: boolean;
-  mrn: string;
-  search_queries?: string[];
-  patient_cancer_type?: string;
-  total_trials: number;
-  trials: ClinicalTrial[];
-  error?: string;
-}
-
 export interface PatientData {
   success: boolean;
   mrn: string;
@@ -454,9 +385,9 @@ export interface PatientData {
     duration_since_progression: string;
     duration_since_relapse?: string;
     reference_dates: {
-      initial_diagnosis_date: string;
-      last_progression_date: string | null;
-      last_relapse_date?: string | null;
+        initial_diagnosis_date: string;
+        last_progression_date: string | null;
+        last_relapse_date?: string | null;
     }
   };
   lab_results?: LabResult[];
@@ -633,14 +564,6 @@ class ApiService {
     });
   }
 
-  // Clinical Trials - Get matched trials with eligibility analysis
-  async getClinicalTrials(mrn: string): Promise<ClinicalTrialsResponse> {
-    return this.request<ClinicalTrialsResponse>('/api/tabs/clinical-trials', {
-      method: 'POST',
-      body: JSON.stringify({ mrn }),
-    });
-  }
-
   // Data pool endpoints (for cached data)
   async getCachedPatient(mrn: string): Promise<PatientData> {
     return this.request<PatientData>(`/api/pool/patient/${mrn}`);
@@ -667,184 +590,6 @@ class ApiService {
     });
   }
 
-  // ==================== TRIAL-CENTRIC API METHODS ====================
-
-  // List all cached clinical trials
-  async listTrials(options?: { status?: string; page?: number; limit?: number }): Promise<TrialsListResponse> {
-    const params = new URLSearchParams();
-    if (options?.status) params.append('status', options.status);
-    if (options?.page) params.append('page', options.page.toString());
-    if (options?.limit) params.append('limit', options.limit.toString());
-
-    const queryString = params.toString();
-    const endpoint = `/api/trials${queryString ? `?${queryString}` : ''}`;
-    return this.request<TrialsListResponse>(endpoint);
-  }
-
-  // Get detailed information about a specific trial
-  async getTrialDetails(nctId: string): Promise<TrialDetailResponse> {
-    return this.request<TrialDetailResponse>(`/api/trials/${nctId}`);
-  }
-
-  // Get all patients eligible for a specific trial
-  async getEligiblePatientsForTrial(
-    nctId: string,
-    options?: { eligibilityStatus?: string; page?: number; limit?: number }
-  ): Promise<EligiblePatientsResponse> {
-    const params = new URLSearchParams();
-    if (options?.eligibilityStatus) params.append('eligibility_status', options.eligibilityStatus);
-    if (options?.page) params.append('page', options.page.toString());
-    if (options?.limit) params.append('limit', options.limit.toString());
-
-    const queryString = params.toString();
-    const endpoint = `/api/trials/${nctId}/patients${queryString ? `?${queryString}` : ''}`;
-    return this.request<EligiblePatientsResponse>(endpoint);
-  }
-
-  // Get cached eligible trials for a patient (instant)
-  async getCachedEligibleTrialsForPatient(mrn: string, eligibilityStatus?: string): Promise<CachedEligibleTrialsResponse> {
-    const params = new URLSearchParams();
-    if (eligibilityStatus) params.append('eligibility_status', eligibilityStatus);
-
-    const queryString = params.toString();
-    const endpoint = `/api/patients/${mrn}/eligible-trials${queryString ? `?${queryString}` : ''}`;
-    return this.request<CachedEligibleTrialsResponse>(endpoint);
-  }
-
-  // Admin: Sync trials from ClinicalTrials.gov
-  async syncTrials(options?: { maxPerQuery?: number; background?: boolean }): Promise<AdminResponse> {
-    const params = new URLSearchParams();
-    if (options?.maxPerQuery) params.append('max_per_query', options.maxPerQuery.toString());
-    if (options?.background !== undefined) params.append('background', options.background.toString());
-
-    const queryString = params.toString();
-    const endpoint = `/api/admin/sync-trials${queryString ? `?${queryString}` : ''}`;
-    return this.request<AdminResponse>(endpoint, { method: 'POST' });
-  }
-
-  // Admin: Compute eligibility matrix
-  async computeEligibility(options?: { limitTrials?: number; patientMrn?: string; background?: boolean }): Promise<AdminResponse> {
-    const params = new URLSearchParams();
-    if (options?.limitTrials) params.append('limit_trials', options.limitTrials.toString());
-    if (options?.patientMrn) params.append('patient_mrn', options.patientMrn);
-    if (options?.background !== undefined) params.append('background', options.background.toString());
-
-    const queryString = params.toString();
-    const endpoint = `/api/admin/compute-eligibility${queryString ? `?${queryString}` : ''}`;
-    return this.request<AdminResponse>(endpoint, { method: 'POST' });
-  }
-
-  // Admin: Full sync (trials + eligibility)
-  async fullSync(options?: { maxTrialsPerQuery?: number; limitTrials?: number; background?: boolean }): Promise<AdminResponse> {
-    const params = new URLSearchParams();
-    if (options?.maxTrialsPerQuery) params.append('max_trials_per_query', options.maxTrialsPerQuery.toString());
-    if (options?.limitTrials) params.append('limit_trials', options.limitTrials.toString());
-    if (options?.background !== undefined) params.append('background', options.background.toString());
-
-    const queryString = params.toString();
-    const endpoint = `/api/admin/full-sync${queryString ? `?${queryString}` : ''}`;
-    return this.request<AdminResponse>(endpoint, { method: 'POST' });
-  }
-
-  // Admin: Get sync status
-  async getSyncStatus(): Promise<SyncStatusResponse> {
-    return this.request<SyncStatusResponse>('/api/admin/sync-status');
-  }
-}
-
-// Trial-centric response types
-export interface CachedTrial {
-  nct_id: string;
-  title: string;
-  phase: string;
-  status: string;
-  cancer_types: string[];
-  conditions: string[];
-  eligibility_criteria: string;
-  locations: any[];
-  contact: any;
-  sponsor: string;
-  start_date: string;
-  completion_date: string;
-  enrollment: number;
-  brief_summary: string;
-  fetched_at: string;
-  is_active: boolean;
-}
-
-export interface TrialsListResponse {
-  success: boolean;
-  page: number;
-  limit: number;
-  total: number;
-  total_pages: number;
-  trials: CachedTrial[];
-}
-
-export interface EligibilityStats {
-  total: number;
-  LIKELY_ELIGIBLE?: number;
-  POTENTIALLY_ELIGIBLE?: number;
-  NOT_ELIGIBLE?: number;
-  "Likely Eligible"?: number;
-  "Potentially Eligible"?: number;
-  "Not Eligible"?: number;
-}
-
-export interface TrialDetailResponse {
-  success: boolean;
-  trial: CachedTrial;
-  eligibility_stats: EligibilityStats;
-}
-
-export interface PatientEligibility {
-  id: number;
-  trial_nct_id: string;
-  patient_mrn: string;
-  eligibility_status: string;
-  eligibility_percentage: number;
-  criteria_results: any;
-  key_matching_criteria: string[];
-  key_exclusion_reasons: string[];
-  computed_at: string;
-  patient_summary: {
-    mrn: string;
-    name: string;
-    age: string;
-    gender: string;
-    cancer_type: string;
-    stage: string;
-  };
-}
-
-export interface EligiblePatientsResponse {
-  success: boolean;
-  nct_id: string;
-  page: number;
-  limit: number;
-  eligibility_stats: EligibilityStats;
-  patients: PatientEligibility[];
-}
-
-export interface CachedEligibleTrialsResponse {
-  success: boolean;
-  mrn: string;
-  total: number;
-  trials: any[];
-}
-
-export interface AdminResponse {
-  success: boolean;
-  message?: string;
-  result?: any;
-}
-
-export interface SyncStatusResponse {
-  success: boolean;
-  trials_in_cache: number;
-  last_trials_sync: any;
-  last_eligibility_computation: any;
-  last_full_sync: any;
 }
 
 // Export singleton instance

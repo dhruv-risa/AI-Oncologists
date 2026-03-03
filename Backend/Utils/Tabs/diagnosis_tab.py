@@ -147,7 +147,7 @@ def extract_diagnosis_header_with_gemini(pdf_input):
     description = {
     "primary_diagnosis": "The formal clinical name of the primary cancer. This should be the main cancer type being treated. IMPORTANT: Use proper medical terminology with correct spacing (e.g., 'Non-Small Cell Lung Cancer' NOT 'Nonsmall cell lung cancer', 'Small Cell Lung Cancer' NOT 'Smallcell lung cancer'). Standardize diagnosis names: capitalize each major word, use hyphens appropriately, and ensure proper spacing. Examples: 'Non-Small Cell Lung Cancer', 'Pleural Mesothelioma', 'Breast Carcinoma', 'Colorectal Adenocarcinoma', 'Small Cell Lung Cancer', 'Renal Cell Carcinoma'. Look in: Problem List, Diagnosis section, ICD-10 codes, Assessment section, or explicit diagnostic statements in clinical notes.",
     "histologic_type": "The specific microscopic cell type or histologic subtype documented in the medical record. This can come from pathology report, biopsy, or clinical diagnosis. Examples: 'Adenocarcinoma', 'Squamous cell carcinoma', 'Epithelioid', 'Sarcomatoid', 'Biphasic', 'Small cell', 'Large cell', 'Ductal carcinoma', 'Invasive lobular'. If the histology is embedded in the primary diagnosis (e.g., 'Epithelioid Pleural Mesothelioma'), extract just the histologic subtype ('Epithelioid'). Look in: Pathology section, Biopsy results, Diagnosis section, Clinical notes. Return null ONLY if absolutely no histologic information exists in the document.",
-    "diagnosis_date": "The exact date when the cancer was first diagnosed in MM/DD/YYYY format (e.g., '03/15/2023'). Look for phrases like 'diagnosed on', 'initial diagnosis date', or earliest mention of cancer detection.",
+    "diagnosis_date": "The exact date when the cancer was first diagnosed in ISO format YYYY-MM-DD (e.g., '2023-03-15'). Look for phrases like 'diagnosed on', 'initial diagnosis date', or earliest mention of cancer detection.",
     "initial_staging": {
     "tnm": "CRITICAL: TNM classification ONLY - this field must NEVER contain the word 'Stage'. This is the T-N-M tumor staging classification at initial/first diagnosis. IMPORTANT FORMATTING: Use lowercase 'c' for clinical (cT, cN, cM) and lowercase 'p' for pathological (pT, pN, pM). Format examples: 'cT2a cN1 cM0', 'pT1c pN2 cM0', 'cT3 cN2 cM1a', 'cT4 cN3 cM1c'. WRONG format: 'CT3, CN0, CM1b' (uppercase letters). Include prefixes (c=clinical, p=pathologic, y=post-therapy) and all modifiers. The TNM field describes Tumor size (T), Node involvement (N), and Metastasis status (M). DO NOT put stage groups like 'Stage IV' or 'Stage IIB' here - those go in ajcc_stage field. If staging evolved from initial diagnosis, this should capture the EARLIEST TNM mentioned. IMPORTANT: Return null (not empty string, not 'N/A', not 'NA') if no TNM classification is documented in the record.",
     "ajcc_stage": "CRITICAL: AJCC stage group ONLY - this field must ALWAYS contain the word 'Stage'. Format examples: 'Stage IIB', 'Stage IIIA', 'Pathologic Stage IB', 'Clinical Stage IVA', 'Stage IV'. Include the stage type prefix (Clinical/Pathologic) if documented. This is the baseline stage when cancer was first found. VERIFY ACCURACY: For lung cancer with M1 disease, check M1 subcategory: M1a→Stage IVA, M1b or M1c→Stage IVB. If documented stage conflicts with TNM (e.g., 'cM1b' with 'Stage IVA'), use the CORRECT stage per AJCC guidelines (Stage IVB). DO NOT put TNM classifications like 'T2 N1 M0' here - those go in the tnm field."
@@ -480,14 +480,14 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
     FOR EACH TIMELINE ENTRY, YOU MUST EXTRACT THE FOLLOWING REQUIRED FIELDS:
 
     1. DATE: Extract the date when this oncologic phase began. Use ONLY these formats:
-       - Specific date: 'MM/DD/YYYY' (e.g., '06/15/2024', '03/12/2023')
+       - Specific date: 'YYYY-MM-DD' (e.g., '2024-06-15', '2023-03-12')
        - Month and year: 'Month YYYY' (e.g., 'June 2024', 'March 2023', 'February 2022')
        - Year only (if month unknown): 'YYYY' (e.g., '2023', '2022')
        NEVER use vague terms like 'Late 2025', 'Early 2023', 'Late 2025 - Early 2026'.
        If exact date is unknown but you know it's around a certain time, use the middle of that period:
-       - 'Late 2025' → 'December 2025' or '12/01/2025'
-       - 'Early 2023' → 'January 2023' or '01/01/2023'
-       - 'Mid-2024' → 'June 2024' or '06/01/2024'
+       - 'Late 2025' → 'December 2025' or '2025-12-01'
+       - 'Early 2023' → 'January 2023' or '2023-01-01'
+       - 'Mid-2024' → 'June 2024' or '2024-06-01'
        For the most recent entry, use 'Current Status' as the date label.
 
     2. STAGE INFORMATION (CRITICAL - DO NOT OMIT):
@@ -760,7 +760,7 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
     description = {
         "timeline": [
             {
-                "date_label": "String. REQUIRED. The specific date this phase began. MUST use one of these formats ONLY: 'MM/DD/YYYY' (e.g., '06/15/2024'), 'Month YYYY' (e.g., 'June 2024', 'March 2023'), or 'YYYY' (e.g., '2023'). For the most recent entry, use 'Current Status'. NEVER use vague terms like 'Late 2025', 'Early 2023', or date ranges like 'Late 2025 - Early 2026'.",
+                "date_label": "String. REQUIRED. The specific date this phase began. MUST use one of these formats ONLY: 'YYYY-MM-DD' (e.g., '2024-06-15'), 'Month YYYY' (e.g., 'June 2024', 'March 2023'), or 'YYYY' (e.g., '2023'). For the most recent entry, use 'Current Status'. NEVER use vague terms like 'Late 2025', 'Early 2023', or date ranges like 'Late 2025 - Early 2026'.",
                 "stage_header": "String. REQUIRED. MUST start with 'Stage' (e.g., 'Stage IVB'). For pre-diagnosis findings, use 'Pre-diagnosis finding'. For entries without staging, use 'Staging not performed'. Use most recent stage if available.",
                 "tnm_status": "String. REQUIRED. TNM classification (e.g., 'T4N3M1c'). MUST NOT contain 'Stage'. Use most recent if missing.",
                 "disease_status": "String. REQUIRED. One of: 'Initial diagnosis', 'Disease progression', 'Recurrence', 'Stable disease', 'Partial response', 'Complete remission'. MUST align with RECIST evaluation if mentioned in reports. Use 'Partial response' when tumors have shrunk but cancer remains (RECIST ≥30% decrease). Use 'Complete remission' ONLY when all signs of cancer have disappeared. During active treatment with tumor shrinkage, use 'Partial response' not 'Complete remission'. NEVER contradict RECIST findings - if RECIST shows progressive disease, must use 'Disease progression' regardless of treatment response narratives.",
@@ -912,7 +912,7 @@ Just the JSON object following the schema above.
 
 def normalize_date_label(date_str):
     """
-    Normalize date labels to consistent, parseable formats in MM/DD/YYYY or Month YYYY format.
+    Normalize date labels to consistent, parseable formats.
 
     Converts vague date terms to specific month/year formats:
     - 'Late 2025' → 'December 2025'
@@ -924,7 +924,7 @@ def normalize_date_label(date_str):
         date_str: Original date string
 
     Returns:
-        Normalized date string in 'Month YYYY', 'MM/DD/YYYY', or 'YYYY' format
+        Normalized date string in 'Month YYYY', 'YYYY-MM-DD', or 'YYYY' format
     """
     if not date_str:
         return date_str
@@ -987,9 +987,9 @@ def recalculate_durations(diagnosis_footer_data):
         initial_diagnosis_date_str = reference_dates.get('initial_diagnosis_date')
         if initial_diagnosis_date_str and initial_diagnosis_date_str != 'null':
             try:
-                # Parse the date (handles MM/DD/YYYY or YYYY-MM format)
-                if len(initial_diagnosis_date_str) == 10:  # MM/DD/YYYY
-                    initial_diagnosis_date = datetime.strptime(initial_diagnosis_date_str, '%m/%d/%Y')
+                # Parse the date (handles YYYY-MM-DD or YYYY-MM format)
+                if len(initial_diagnosis_date_str) == 10:  # YYYY-MM-DD
+                    initial_diagnosis_date = datetime.strptime(initial_diagnosis_date_str, '%Y-%m-%d')
                 elif len(initial_diagnosis_date_str) == 7:  # YYYY-MM
                     initial_diagnosis_date = datetime.strptime(initial_diagnosis_date_str, '%Y-%m')
                 else:
@@ -1034,8 +1034,8 @@ def recalculate_durations(diagnosis_footer_data):
         if last_progression_date_str and last_progression_date_str != 'null' and last_progression_date_str is not None:
             try:
                 # Parse the date
-                if len(last_progression_date_str) == 10:  # MM/DD/YYYY
-                    last_progression_date = datetime.strptime(last_progression_date_str, '%m/%d/%Y')
+                if len(last_progression_date_str) == 10:  # YYYY-MM-DD
+                    last_progression_date = datetime.strptime(last_progression_date_str, '%Y-%m-%d')
                 elif len(last_progression_date_str) == 7:  # YYYY-MM
                     last_progression_date = datetime.strptime(last_progression_date_str, '%Y-%m')
                 else:
@@ -1080,8 +1080,8 @@ def recalculate_durations(diagnosis_footer_data):
         if last_relapse_date_str and last_relapse_date_str != 'null' and last_relapse_date_str is not None:
             try:
                 # Parse the date
-                if len(last_relapse_date_str) == 10:  # MM/DD/YYYY
-                    last_relapse_date = datetime.strptime(last_relapse_date_str, '%m/%d/%Y')
+                if len(last_relapse_date_str) == 10:  # YYYY-MM-DD
+                    last_relapse_date = datetime.strptime(last_relapse_date_str, '%Y-%m-%d')
                 elif len(last_relapse_date_str) == 7:  # YYYY-MM
                     last_relapse_date = datetime.strptime(last_relapse_date_str, '%Y-%m')
                 else:
@@ -1226,9 +1226,9 @@ def extract_diagnosis_footer_with_gemini(pdf_input):
                         "duration_since_progression": "Time elapsed from the most recent progression or new primary event to the document signature date in human-readable format (e.g., '3 months', '6 weeks'). Use 'N/A' if no progression is documented. NOTE: This is for NEW metastases at untreated sites or continuous disease progression WITHOUT prior control. Do NOT count local recurrence at treated metastatic sites as progression.",
                         "duration_since_relapse": "Time elapsed from the most recent relapse/recurrence event to the document signature date in human-readable format (e.g., '18 months', '6 months'). Use 'N/A' if no relapse/recurrence is documented. CRITICAL: This field is for TWO types of recurrence: (TYPE 1) Systemic cancer RETURNED after curative treatment of early-stage disease, OR (TYPE 2) Local regrowth at a previously treated metastatic site after achieving local control. If the disease has been continuously present or progressively worsening at untreated sites without any control/remission period, use 'N/A'.",
                         "reference_dates": {
-                            "initial_diagnosis_date": "The date of the first cancer diagnosis in MM/DD/YYYY format (e.g., '03/15/2023') or partial format (YYYY-MM).",
-                            "last_progression_date": "The date of the most recent disease progression event in MM/DD/YYYY format (e.g., '06/10/2024') or partial format (YYYY-MM). Use null if no progression. This is for continuous progression events.",
-                            "last_relapse_date": "The date when relapse/recurrence was detected or documented in MM/DD/YYYY format (e.g., '08/20/2024') or partial format (YYYY-MM). Use null if no relapse/recurrence occurred. CRITICAL: Only populate this if the patient had achieved remission/complete response/NED and then the cancer RETURNED. Look for explicit mentions of 'recurrence', 'relapse', 'disease returned after remission', 'recurrent disease'."
+                            "initial_diagnosis_date": "The date of the first cancer diagnosis in ISO format (YYYY-MM-DD) or partial format (YYYY-MM).",
+                            "last_progression_date": "The date of the most recent disease progression event in ISO format (YYYY-MM-DD) or partial format (YYYY-MM). Use null if no progression. This is for NEW metastases at untreated sites or continuous progression events. Do NOT include local recurrence at treated metastatic sites.",
+                            "last_relapse_date": "The date when relapse/recurrence was detected or documented in ISO format (YYYY-MM-DD) or partial format (YYYY-MM). Use null if no relapse/recurrence occurred. CRITICAL: Populate this for TWO scenarios: (TYPE 1) Patient had early-stage disease with curative treatment and later developed metastatic disease, OR (TYPE 2) A treated metastatic site (with SRS/SBRT/surgery) shows local regrowth/recurrence. Look for: 'recurrence', 'relapse', 'recurrent [site] metastasis', 'local recurrence after [treatment]', 'regrowth at [treated site]'."
                         }
                     }
 
@@ -1331,7 +1331,7 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
     description_header = {
                 "primary_diagnosis": "The formal clinical name of the primary cancer. Use proper medical terminology with correct spacing and capitalization (e.g., 'Non-Small Cell Lung Cancer' NOT 'Nonsmall cell lung cancer', 'Small Cell Lung Cancer', 'Breast Carcinoma'). This should be the main cancer type being treated.",
                 "histologic_type": "The specific microscopic cell type from pathology report (e.g., 'Adenocarcinoma', 'Squamous cell carcinoma', 'Ductal carcinoma'). This describes the cellular characteristics of the cancer.",
-                "diagnosis_date": "The exact date when the cancer was first diagnosed in MM/DD/YYYY format (e.g., '03/15/2023'). Look for phrases like 'diagnosed on', 'initial diagnosis date', or earliest mention of cancer detection.",
+                "diagnosis_date": "The exact date when the cancer was first diagnosed in ISO format YYYY-MM-DD (e.g., '2023-03-15'). Look for phrases like 'diagnosed on', 'initial diagnosis date', or earliest mention of cancer detection.",
                 "initial_staging": {
                     "tnm": "CRITICAL: TNM classification ONLY - NEVER EVER include 'Stage'. This is the T-N-M tumor staging classification at initial/first diagnosis. Format examples: 'T2a N1 M0', 'T2aN1M0', 'pT1c pN2 cM0', 'cT3 cN2 cM1a', 'T4 N3 M1c'. Include prefixes (c=clinical, p=pathologic, y=post-therapy) and all modifiers. The TNM field describes Tumor size (T), Node involvement (N), and Metastasis status (M). ABSOLUTELY DO NOT put stage groups like 'Stage IV' or 'Stage IIB' here - those go in ajcc_stage field. If staging evolved from initial diagnosis, this should capture the EARLIEST TNM mentioned. Return null if no TNM is documented.",
                     "ajcc_stage": "CRITICAL: AJCC stage group ONLY - MUST ALWAYS start with 'Stage'. Format examples: 'Stage IIB', 'Stage IIIA', 'Stage IB', 'Stage IVA', 'Stage IV', 'Stage 4'. Include stage type prefix if documented (e.g., 'Pathologic Stage IB', 'Clinical Stage IVA'). This is the baseline stage when cancer was first found. ABSOLUTELY DO NOT put TNM classifications like 'T2 N1 M0' here - those go in the tnm field."
@@ -1352,7 +1352,7 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
             "FOR EACH DISTINCT TIME POINT in the patient's journey, extract the following:"
             ""
             "1. DATE/TIMEFRAME:"
-            "   - Capture the specific date, month/year, or timeframe (e.g., 'March 2023', '06/15/2024', '2022-11', 'Current Status')."
+            "   - Capture the specific date, month/year, or timeframe (e.g., 'March 2023', 'June 15, 2024', '2022-11', 'Current Status')."
             "   - If this is the most recent entry, label it as 'Current Status' or use the most recent date mentioned."
             "   - Ensure dates are in chronological order from earliest to most recent."
             ""
@@ -1406,7 +1406,7 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
     description_evolution_timeline = {
         "stage_evolution_timeline": [
             {
-                "timeline_event_date": "The date, month/year, or timeframe for this event. Format examples: 'March 2023', '06/15/2024', 'June 2024', 'Current Status'. Use 'Current Status' for the most recent entry. Ensure chronological ordering.",
+                "timeline_event_date": "The date, month/year, or timeframe for this event. Format examples: 'March 2023', '2024-06-15', 'June 2024', 'Current Status'. Use 'Current Status' for the most recent entry. Ensure chronological ordering.",
                 "timeline_stage_group": "The AJCC stage group at this time point - MUST start with 'Stage'. Format examples: 'Stage IIB', 'Stage IVA', 'Stage IIIA', 'Stage IB', 'Stage IVB', 'Stage 4'. If you extract 'IVA', format as 'Stage IVA'. Include stage type prefix if documented (e.g., 'Pathologic Stage IIIA', 'Clinical Stage IB'). The word 'Stage' is MANDATORY.",
                 "timeline_tnm_status": "The complete TNM classification at this time point - MUST NOT include 'Stage'. Format examples: 'T2a N1 M0', 'T2aN1M0', 'cT4 cN3 cM1c', 'pT1c pN0 cM0', 'T3 N2 M1a'. Include ONLY T, N, M components with prefixes (c/p/y) and modifiers. Do NOT put the word 'Stage' here.",
                 "timeline_description": "Brief clinical summary of what occurred at this time point. Examples: 'Initial diagnosis after CT-guided biopsy', 'Disease progression with new brain metastases', 'Partial response to chemotherapy', 'Surgical resection completed', 'Stable disease on maintenance therapy', 'Complete metabolic response on PET scan'.",
@@ -1451,9 +1451,9 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
                         "duration_since_progression": "Time elapsed from the most recent progression or new primary event to the document signature date in human-readable format (e.g., '3 months', '6 weeks'). Use 'N/A' if no progression is documented. NOTE: This is for NEW metastases at untreated sites or continuous disease progression WITHOUT prior control. Do NOT count local recurrence at treated metastatic sites as progression.",
                         "duration_since_relapse": "Time elapsed from the most recent relapse/recurrence event to the document signature date in human-readable format (e.g., '18 months', '6 months'). Use 'N/A' if no relapse/recurrence is documented. CRITICAL: This field is for TWO types of recurrence: (TYPE 1) Systemic cancer RETURNED after curative treatment of early-stage disease, OR (TYPE 2) Local regrowth at a previously treated metastatic site after achieving local control. If the disease has been continuously present or progressively worsening at untreated sites without any control/remission period, use 'N/A'.",
                         "reference_dates": {
-                            "initial_diagnosis_date": "The date of the first cancer diagnosis in MM/DD/YYYY format (e.g., '03/15/2023') or partial format (YYYY-MM).",
-                            "last_progression_date": "The date of the most recent disease progression event in MM/DD/YYYY format (e.g., '06/10/2024') or partial format (YYYY-MM). Use null if no progression. This is for continuous progression events.",
-                            "last_relapse_date": "The date when relapse/recurrence was detected or documented in MM/DD/YYYY format (e.g., '08/20/2024') or partial format (YYYY-MM). Use null if no relapse/recurrence occurred. CRITICAL: Only populate this if the patient had achieved remission/complete response/NED and then the cancer RETURNED. Look for explicit mentions of 'recurrence', 'relapse', 'disease returned after remission', 'recurrent disease'."
+                            "initial_diagnosis_date": "The date of the first cancer diagnosis in ISO format (YYYY-MM-DD) or partial format (YYYY-MM).",
+                            "last_progression_date": "The date of the most recent disease progression event in ISO format (YYYY-MM-DD) or partial format (YYYY-MM). Use null if no progression. This is for NEW metastases at untreated sites or continuous progression events. Do NOT include local recurrence at treated metastatic sites.",
+                            "last_relapse_date": "The date when relapse/recurrence was detected or documented in ISO format (YYYY-MM-DD) or partial format (YYYY-MM). Use null if no relapse/recurrence occurred. CRITICAL: Populate this for TWO scenarios: (TYPE 1) Patient had early-stage disease with curative treatment and later developed metastatic disease, OR (TYPE 2) A treated metastatic site (with SRS/SBRT/surgery) shows local regrowth/recurrence. Look for: 'recurrence', 'relapse', 'recurrent [site] metastasis', 'local recurrence after [treatment]', 'regrowth at [treated site]'."
                         }
                     }
 

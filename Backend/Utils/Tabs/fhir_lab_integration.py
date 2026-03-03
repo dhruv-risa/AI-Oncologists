@@ -10,35 +10,90 @@ deduplication to avoid duplicate entries.
 
 import requests
 import time
+import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from Backend.Utils.logger_config import setup_logger
+from Backend.Utils.Tabs.lab_unit_converter import convert_to_standard_unit
 
 # Setup logger
 logger = setup_logger(__name__)
 
-# Mapping of LOINC codes to biomarker names
-LOINC_TO_BIOMARKER = {
+# Regex patterns for biomarker matching (case-insensitive)
+# These patterns match against the display name or text field from FHIR observations
+BIOMARKER_PATTERNS = {
     # Tumor Markers
-    "2039-6": "CEA",  # Carcinoembryonic antigen
-    "9679-7": "NSE",  # Neuron specific enolase
-    "30166-8": "proGRP",  # Pro-Gastrin-Releasing Peptide
-    "15158-9": "CYFRA_21_1",  # Cytokeratin 19 fragment
+    "CEA": [
+        r"\bCEA\b",
+        r"carcinoembryonic\s+antigen",
+    ],
+    "NSE": [
+        r"\bNSE\b",
+        r"neuron\s+specific\s+enolase",
+        r"neuron[-\s]specific[-\s]enolase",
+    ],
+    "proGRP": [
+        r"\bproGRP\b",
+        r"pro[-\s]?gastrin[-\s]?releasing\s+peptide",
+        r"\bpro\s*GRP\b",
+    ],
+    "CYFRA_21_1": [
+        r"\bCYFRA\b",
+        r"CYFRA\s*21[-\s]?1",
+        r"cytokeratin\s+19\s+fragment",
+        r"cytokeratin[-\s]19[-\s]fragment",
+    ],
 
     # Complete Blood Count
-    "6690-2": "WBC",  # Leukocytes [#/volume] in Blood by Automated count
-    "789-8": "WBC",  # Erythrocytes [#/volume] in Blood by Automated count (alternative)
-    "718-7": "Hemoglobin",  # Hemoglobin [Mass/volume] in Blood
-    "777-3": "Platelets",  # Platelets [#/volume] in Blood by Automated count
-    "751-8": "ANC",  # Neutrophils [#/volume] in Blood by Automated count
-    "26499-4": "ANC",  # Neutrophils [#/volume] in Blood (alternative)
+    "WBC": [
+        r"\bWBC\b",
+        r"\bwhite\s+blood\s+cell",
+        r"\bleukocytes?\b",
+        r"white\s+cell\s+count",
+    ],
+    "Hemoglobin": [
+        r"\bhemoglobin\b",
+        r"\bhaemoglobin\b",
+        r"\bHGB\b",
+        r"\bHgb\b",
+        r"\bHb\b(?!A1c)",  # Match Hb but not HbA1c
+    ],
+    "Platelets": [
+        r"\bplatelets?\b",
+        r"\bPLT\b",
+        r"platelet\s+count",
+    ],
+    "ANC": [
+        r"\bANC\b",
+        r"absolute\s+neutrophil\s+count",
+        r"neutrophils?\s+(?:absolute|abs)",
+        r"(?:segs|polys)(?:\s+|,\s*)(?:absolute|abs)",
+    ],
 
     # Metabolic Panel
-    "2160-0": "Creatinine",  # Creatinine [Mass/volume] in Serum or Plasma
-    "1742-6": "ALT",  # Alanine aminotransferase [Enzymatic activity/volume] in Serum or Plasma
-    "1920-8": "AST",  # Aspartate aminotransferase [Enzymatic activity/volume] in Serum or Plasma
-    "1975-2": "Total Bilirubin",  # Bilirubin.total [Mass/volume] in Serum or Plasma
-    "14631-6": "Total Bilirubin",  # Bilirubin.total [Moles/volume] in Serum or Plasma
+    "Creatinine": [
+        r"\bcreatinine\b(?!\s*clearance)(?!\s*ratio)",  # Match creatinine but not clearance or ratio
+        r"\bcreat\b",
+        r"\bCr\b(?!\s*clearance)",
+    ],
+    "ALT": [
+        r"\bALT\b",
+        r"alanine\s+aminotransferase",
+        r"\bSGPT\b",
+        r"alanine\s+transaminase",
+    ],
+    "AST": [
+        r"\bAST\b",
+        r"aspartate\s+aminotransferase",
+        r"\bSGOT\b",
+        r"aspartate\s+transaminase",
+    ],
+    "Total Bilirubin": [
+        r"(?:total\s+)?bilirubin(?:\s+total)?",
+        r"\bT\.?\s*Bili\b",
+        r"\bTBIL\b",
+        r"\bbili\b(?!\s*direct)(?!\s*indirect)",
+    ],
 }
 
 # Biomarker categories for organizing data
@@ -56,7 +111,7 @@ def fetch_fhir_observations(
     url: str = "https://fhir.prod.flatiron.io/fhir/Observation"
 ) -> List[Dict[str, Any]]:
     """
-    Fetch laboratory observations from FHIR Observation API.
+    Fetch ALL laboratory observations from FHIR Observation API with pagination support.
 
     Args:
         patient_id: FHIR patient ID
@@ -65,7 +120,7 @@ def fetch_fhir_observations(
         url: FHIR Observation endpoint URL
 
     Returns:
-        List of observation entries from FHIR API
+        List of ALL observation entries from FHIR API (aggregated across all pages)
 
     Raises:
         requests.RequestException: If API request fails
@@ -75,7 +130,7 @@ def fetch_fhir_observations(
     params = {
         "patient": patient_id,
         "category": category,
-        "_summary": "true"
+        "_count": 100  # Fetch 100 observations per page
     }
 
     headers = {
@@ -83,22 +138,55 @@ def fetch_fhir_observations(
         "Accept": "application/fhir+json"
     }
 
+    all_entries = []
+    current_url = url
+    page_count = 0
+
     try:
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
+        while current_url:
+            page_count += 1
+            logger.info(f"📄 Fetching page {page_count}...")
 
-        # Add rate limiting delay
-        time.sleep(1.5)
+            # Make request
+            if page_count == 1:
+                response = requests.get(current_url, headers=headers, params=params)
+            else:
+                # For subsequent pages, use the next link directly (no params)
+                response = requests.get(current_url, headers=headers)
 
-        data = response.json()
-        entries = data.get("entry", [])
+            response.raise_for_status()
 
-        logger.info(f"✅ Fetched {len(entries)} FHIR Observations")
-        return entries
+            # Add rate limiting delay
+            time.sleep(1.5)
+
+            data = response.json()
+            entries = data.get("entry", [])
+            all_entries.extend(entries)
+
+            logger.info(f"✅ Page {page_count}: Fetched {len(entries)} observations (Total so far: {len(all_entries)})")
+
+            # Check for next page link
+            links = data.get("link", [])
+            next_link = None
+            for link in links:
+                if link.get("relation") == "next":
+                    next_link = link.get("url")
+                    break
+
+            if next_link:
+                current_url = next_link
+                logger.info(f"🔗 Next page found, continuing...")
+            else:
+                logger.info(f"✅ No more pages. Pagination complete.")
+                break
+
+        total = data.get("total", len(all_entries))
+        logger.info(f"✅ Fetched {len(all_entries)} FHIR Observations out of {total} total")
+        return all_entries
 
     except requests.RequestException as e:
         logger.error(f"❌ Failed to fetch FHIR Observations: {e}")
-        return []
+        return all_entries if all_entries else []
 
 
 def normalize_date_from_fhir(date_str: str) -> Optional[str]:
@@ -289,95 +377,67 @@ def extract_reference_range(observation: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def map_loinc_to_biomarker(loinc_code: str, display_name: str) -> Optional[str]:
+def match_biomarker_by_regex(display_text: str) -> Optional[str]:
     """
-    Map LOINC code or display name to standardized biomarker name.
+    Match a biomarker using regex patterns on the display text.
+
+    This approach is more flexible than LOINC code mapping because:
+    - Display names are more consistent across systems
+    - Can handle variations in naming conventions
+    - Doesn't require maintaining a large LOINC code dictionary
 
     Args:
-        loinc_code: LOINC code from FHIR
-        display_name: Display name from FHIR coding
+        display_text: Display name or text description from FHIR observation
 
     Returns:
         Standardized biomarker name or None if not recognized
     """
-    # First try direct LOINC mapping
-    if loinc_code in LOINC_TO_BIOMARKER:
-        return LOINC_TO_BIOMARKER[loinc_code]
-
-    # Try fuzzy matching on display name
-    if not display_name:
+    if not display_text:
         return None
 
-    display_upper = display_name.upper()
+    # Clean the text for better matching
+    text = display_text.strip()
 
-    # Tumor markers
-    if "CEA" in display_upper or "CARCINOEMBRYONIC" in display_upper:
-        return "CEA"
-    if "NSE" in display_upper or "NEURON SPECIFIC ENOLASE" in display_upper:
-        return "NSE"
-    if "PROGRP" in display_upper or "PRO-GASTRIN" in display_upper:
-        return "proGRP"
-    if "CYFRA" in display_upper or "CYTOKERATIN 19" in display_upper:
-        return "CYFRA_21_1"
-
-    # CBC
-    if "WBC" in display_upper or "LEUKOCYTE" in display_upper or "WHITE BLOOD" in display_upper:
-        return "WBC"
-    if "HEMOGLOBIN" in display_upper or "HGB" in display_upper:
-        return "Hemoglobin"
-    if "PLATELET" in display_upper or "PLT" in display_upper:
-        return "Platelets"
-    if "NEUTROPHIL" in display_upper and ("ABSOLUTE" in display_upper or "ANC" in display_upper):
-        return "ANC"
-
-    # Metabolic
-    if "CREATININE" in display_upper:
-        return "Creatinine"
-    if "ALT" in display_upper or "ALANINE AMINOTRANSFERASE" in display_upper:
-        return "ALT"
-    if "AST" in display_upper or "ASPARTATE AMINOTRANSFERASE" in display_upper:
-        return "AST"
-    if "BILIRUBIN" in display_upper and ("TOTAL" in display_upper or display_upper.strip() == "BILIRUBIN"):
-        return "Total Bilirubin"
+    # Try to match each biomarker's patterns
+    for biomarker_name, patterns in BIOMARKER_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                logger.debug(f"✅ Matched '{text}' to {biomarker_name} using pattern: {pattern}")
+                return biomarker_name
 
     return None
 
 
 def convert_fhir_observations_to_lab_schema(
     fhir_entries: List[Dict[str, Any]]
-) -> Dict[str, Any]:
+) -> List[Dict[str, Any]]:
     """
-    Convert FHIR Observation entries to the same schema as Gemini-extracted lab data.
+    Convert FHIR Observation entries to a list of lab data dictionaries grouped by date.
 
-    The output schema matches the flat schema used by Gemini:
-    {
-        "tumor_markers": {
-            "CEA": {"value": ..., "unit": ..., "date": ..., "status": ..., "reference_range": ..., "source_context": ...},
-            ...
+    Each unique date gets its own dictionary with all biomarkers measured on that date.
+    This preserves complete temporal data for trend analysis.
+
+    Output format: List of dictionaries, one per unique date:
+    [
+        {
+            "tumor_markers": {"CEA": {...}, ...},
+            "complete_blood_count": {"WBC": {...}, ...},
+            "metabolic_panel": {"Creatinine": {...}, ...},
+            "clinical_interpretation": []
         },
-        "complete_blood_count": {...},
-        "metabolic_panel": {...},
-        "clinical_interpretation": []
-    }
+        ... (one dict per unique measurement date)
+    ]
 
     Args:
         fhir_entries: List of FHIR Observation entry dictionaries
 
     Returns:
-        Dictionary with lab data in Gemini schema format
+        List of lab data dictionaries (one per unique date) in Gemini schema format
     """
     logger.info(f"🔄 Converting {len(fhir_entries)} FHIR Observations to lab schema")
 
-    # Initialize result structure
-    result = {
-        "tumor_markers": {},
-        "complete_blood_count": {},
-        "metabolic_panel": {},
-        "clinical_interpretation": []
-    }
-
-    # Track biomarkers we've seen (for deduplication by date - keep most recent)
-    biomarker_data = {}  # biomarker_name -> list of measurements
+    # Group observations by date to preserve complete temporal data
+    observations_by_date = {}  # date -> {biomarker_name -> biomarker_entry}
 
     for entry in fhir_entries:
         resource = entry.get("resource", {})
@@ -396,24 +456,34 @@ def convert_fhir_observations_to_lab_schema(
         if not normalized_date:
             continue
 
-        # Extract LOINC code and display name
+        # Extract display text from observation
         code = resource.get("code", {})
-        codings = code.get("coding", [])
 
-        loinc_code = None
-        display_name = None
+        # Try to get display text from multiple sources (in order of preference)
+        display_text = None
 
-        for coding in codings:
-            if coding.get("system") == "http://loinc.org":
-                loinc_code = coding.get("code")
-                display_name = coding.get("display")
-                break
+        # 1. Check code.text (often the most descriptive)
+        display_text = code.get("text")
 
-        if not loinc_code:
+        # 2. If not found, check LOINC coding display
+        if not display_text:
+            codings = code.get("coding", [])
+            for coding in codings:
+                if coding.get("system") == "http://loinc.org":
+                    display_text = coding.get("display")
+                    break
+
+        # 3. If still not found, try any coding display
+        if not display_text:
+            codings = code.get("coding", [])
+            if codings:
+                display_text = codings[0].get("display")
+
+        if not display_text:
             continue
 
-        # Map to biomarker name
-        biomarker_name = map_loinc_to_biomarker(loinc_code, display_name)
+        # Match biomarker using regex patterns
+        biomarker_name = match_biomarker_by_regex(display_text)
         if not biomarker_name:
             continue
 
@@ -422,86 +492,103 @@ def convert_fhir_observations_to_lab_schema(
         if value is None:
             continue
 
+        # Apply unit conversion to standard unit
+        converted_value, standard_unit = convert_to_standard_unit(value, unit, biomarker_name)
+
+        # Log conversion if unit changed
+        if unit and unit != standard_unit:
+            logger.debug(f"🔄 Converted {biomarker_name}: {value} {unit} → {converted_value} {standard_unit}")
+
         # Extract reference range
         reference_range = extract_reference_range(resource)
 
         # Determine status
-        status = determine_status(value, reference_range)
+        status = determine_status(converted_value, reference_range)
 
         # Create biomarker entry
         biomarker_entry = {
-            "value": value,
-            "unit": unit,
+            "value": converted_value,
+            "unit": standard_unit,
             "date": normalized_date,
             "status": status,
             "reference_range": reference_range,
             "source_context": "FHIR_API - Laboratory Observation"
         }
 
-        # Store in biomarker_data for later aggregation
-        if biomarker_name not in biomarker_data:
-            biomarker_data[biomarker_name] = []
-        biomarker_data[biomarker_name].append(biomarker_entry)
+        # Group by date to preserve complete temporal data
+        if normalized_date not in observations_by_date:
+            observations_by_date[normalized_date] = {}
 
-    # Aggregate biomarkers: keep most recent for each biomarker
-    for biomarker_name, entries in biomarker_data.items():
-        # Sort by date descending to get most recent
-        entries.sort(key=lambda x: x["date"], reverse=True)
-        most_recent = entries[0]
+        # Store biomarker for this date (if duplicate on same date, keep latest processed)
+        observations_by_date[normalized_date][biomarker_name] = biomarker_entry
 
-        # Determine which panel this biomarker belongs to
-        panel = None
-        for panel_name, biomarkers in BIOMARKER_CATEGORIES.items():
-            if biomarker_name in biomarkers:
-                panel = panel_name
-                break
+    # Convert grouped observations to list of lab data dicts (one per date)
+    result_list = []
 
-        if panel:
-            result[panel][biomarker_name] = most_recent
+    for date in sorted(observations_by_date.keys(), reverse=True):  # Most recent first
+        # Initialize panels for this date
+        date_result = {
+            "tumor_markers": {},
+            "complete_blood_count": {},
+            "metabolic_panel": {},
+            "clinical_interpretation": []
+        }
 
-    logger.info(f"✅ Converted FHIR Observations:")
-    logger.info(f"   - Tumor Markers: {len(result['tumor_markers'])} biomarkers")
-    logger.info(f"   - CBC: {len(result['complete_blood_count'])} biomarkers")
-    logger.info(f"   - Metabolic Panel: {len(result['metabolic_panel'])} biomarkers")
+        # Organize biomarkers by panel for this date
+        for biomarker_name, biomarker_entry in observations_by_date[date].items():
+            panel = None
+            for panel_name, biomarkers in BIOMARKER_CATEGORIES.items():
+                if biomarker_name in biomarkers:
+                    panel = panel_name
+                    break
 
-    return result
+            if panel:
+                date_result[panel][biomarker_name] = biomarker_entry
+
+        result_list.append(date_result)
+
+    # Calculate total observations per panel
+    total_tm = sum(len(r["tumor_markers"]) for r in result_list)
+    total_cbc = sum(len(r["complete_blood_count"]) for r in result_list)
+    total_mp = sum(len(r["metabolic_panel"]) for r in result_list)
+
+    logger.info(f"✅ Converted FHIR Observations into {len(result_list)} date groups:")
+    logger.info(f"   - Total Tumor Marker observations: {total_tm}")
+    logger.info(f"   - Total CBC observations: {total_cbc}")
+    logger.info(f"   - Total Metabolic Panel observations: {total_mp}")
+
+    return result_list
 
 
 def merge_lab_data_with_fhir(
     llm_data: List[Dict[str, Any]],
-    fhir_data: Dict[str, Any]
+    fhir_data: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     """
     Merge FHIR Observation data with LLM-extracted data.
 
     The merge strategy:
-    1. LLM data is a list of extractions (one per document)
-    2. FHIR data is a single extraction with most recent values
-    3. Add FHIR data as an additional "document" in the list
+    1. LLM data is a list of extractions (one per PDF document)
+    2. FHIR data is now also a list (one dict per unique date with all observations from that date)
+    3. Combine both lists
     4. The postprocessor will handle deduplication by date
 
     Args:
         llm_data: List of lab data dictionaries from LLM extraction
-        fhir_data: Lab data dictionary from FHIR API
+        fhir_data: List of lab data dictionaries from FHIR API (grouped by date)
 
     Returns:
         Merged list of lab data dictionaries
     """
-    logger.info(f"🔄 Merging LLM data ({len(llm_data)} documents) with FHIR data")
+    logger.info(f"🔄 Merging LLM data ({len(llm_data)} documents) with FHIR data ({len(fhir_data)} date groups)")
 
     # Check if FHIR data has any biomarkers
-    has_fhir_data = False
-    for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]:
-        if fhir_data.get(panel_name):
-            has_fhir_data = True
-            break
-
-    if not has_fhir_data:
+    if not fhir_data:
         logger.info("ℹ️  No FHIR data to merge, returning LLM data only")
         return llm_data
 
-    # Add FHIR data to the list
-    merged_data = llm_data + [fhir_data]
+    # Combine both lists
+    merged_data = llm_data + fhir_data
 
     logger.info(f"✅ Merged data: {len(merged_data)} total documents (LLM + FHIR)")
     return merged_data
