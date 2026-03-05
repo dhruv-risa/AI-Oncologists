@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, Search, Filter, ArrowRight, Plus, Loader2, Beaker } from 'lucide-react';
+import { Users, Search, Filter, ArrowRight, AlertCircle, Activity, Plus, Loader2, Trash2, Beaker } from 'lucide-react';
 import { usePatient } from '../contexts/PatientContext';
 import { apiService } from '../services/api';
 import { PatientListSkeleton } from './PatientCardSkeleton';
@@ -31,7 +31,7 @@ interface PatientListViewProps {
 }
 
 export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListViewProps) {
-  const { cachedPatients, loadCachedPatients, fetchPatientData, loading, error, clearError } = usePatient();
+  const { cachedPatients, loadCachedPatients, fetchPatientData, deletePatient, loading, error, clearError } = usePatient();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchMRN, setSearchMRN] = useState('');
   const [showAddPatient, setShowAddPatient] = useState(false);
