@@ -125,6 +125,41 @@ class DataPool:
             )
         """)
 
+        # Create computation progress table - tracks per-patient eligibility computation
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS computation_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_mrn TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'computing',
+                trials_total INTEGER NOT NULL DEFAULT 0,
+                trials_completed INTEGER NOT NULL DEFAULT 0,
+                trials_eligible INTEGER NOT NULL DEFAULT 0,
+                trials_error INTEGER NOT NULL DEFAULT 0,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                error_message TEXT,
+                UNIQUE(patient_mrn)
+            )
+        """)
+
+        # Create patient review tokens table - stores shareable review links
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS patient_review_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token TEXT NOT NULL UNIQUE,
+                patient_mrn TEXT NOT NULL,
+                trial_nct_id TEXT NOT NULL,
+                criteria_snapshot TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                responses TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                FOREIGN KEY (patient_mrn) REFERENCES patient_data_pool(mrn),
+                FOREIGN KEY (trial_nct_id) REFERENCES trials_cache(nct_id)
+            )
+        """)
+
         # Create indexes for faster queries
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_trials_status ON trials_cache(status)
@@ -846,6 +881,174 @@ class DataPool:
             print(f"Error in bulk store eligibility: {e}")
 
         return stored_count
+
+    # ── Computation Progress Tracking ─────────────────────────────────────────
+
+    def start_computation_progress(self, patient_mrn: str, trials_total: int) -> bool:
+        """Record that eligibility computation has started for a patient."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO computation_progress
+                (patient_mrn, status, trials_total, trials_completed,
+                 trials_eligible, trials_error, started_at, updated_at, completed_at, error_message)
+                VALUES (?, 'computing', ?, 0, 0, 0, ?, ?, NULL, NULL)
+            """, (patient_mrn, trials_total,
+                  datetime.now().isoformat(), datetime.now().isoformat()))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error starting computation progress: {e}")
+            return False
+
+    def increment_computation_progress(self, patient_mrn: str,
+                                        is_eligible: bool = False,
+                                        is_error: bool = False) -> bool:
+        """Increment progress counter after a single trial completes."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            eligible_inc = 1 if is_eligible else 0
+            error_inc = 1 if is_error else 0
+            cursor.execute("""
+                UPDATE computation_progress
+                SET trials_completed = trials_completed + 1,
+                    trials_eligible = trials_eligible + ?,
+                    trials_error = trials_error + ?,
+                    updated_at = ?
+                WHERE patient_mrn = ? AND status = 'computing'
+            """, (eligible_inc, error_inc, datetime.now().isoformat(), patient_mrn))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error incrementing computation progress: {e}")
+            return False
+
+    def complete_computation_progress(self, patient_mrn: str,
+                                       error_message: str = None) -> bool:
+        """Mark computation as completed or errored."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            new_status = "error" if error_message else "completed"
+            cursor.execute("""
+                UPDATE computation_progress
+                SET status = ?,
+                    completed_at = ?,
+                    updated_at = ?,
+                    error_message = ?
+                WHERE patient_mrn = ?
+            """, (new_status, datetime.now().isoformat(),
+                  datetime.now().isoformat(), error_message, patient_mrn))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error completing computation progress: {e}")
+            return False
+
+    def get_computation_progress(self, patient_mrn: str):
+        """Get current computation progress for a patient."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT patient_mrn, status, trials_total, trials_completed,
+                       trials_eligible, trials_error, started_at, updated_at,
+                       completed_at, error_message
+                FROM computation_progress
+                WHERE patient_mrn = ?
+            """, (patient_mrn,))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return {
+                    "patient_mrn": row[0],
+                    "status": row[1],
+                    "trials_total": row[2],
+                    "trials_completed": row[3],
+                    "trials_eligible": row[4],
+                    "trials_error": row[5],
+                    "started_at": row[6],
+                    "updated_at": row[7],
+                    "completed_at": row[8],
+                    "error_message": row[9]
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting computation progress: {e}")
+            return None
+
+    # ── Patient Review Tokens ──────────────────────────────────────────────
+
+    def create_review_token(self, token: str, patient_mrn: str, trial_nct_id: str,
+                            criteria_snapshot: str) -> bool:
+        """Create a new patient review token with criteria snapshot."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO patient_review_tokens
+                (token, patient_mrn, trial_nct_id, criteria_snapshot, status)
+                VALUES (?, ?, ?, ?, 'pending')
+            """, (token, patient_mrn, trial_nct_id, criteria_snapshot))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error creating review token: {e}")
+            return False
+
+    def get_review_token(self, token: str):
+        """Get review token data."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT token, patient_mrn, trial_nct_id, criteria_snapshot,
+                       status, responses, created_at, completed_at
+                FROM patient_review_tokens
+                WHERE token = ?
+            """, (token,))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return {
+                    "token": row[0],
+                    "patient_mrn": row[1],
+                    "trial_nct_id": row[2],
+                    "criteria_snapshot": row[3],
+                    "status": row[4],
+                    "responses": row[5],
+                    "created_at": row[6],
+                    "completed_at": row[7]
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting review token: {e}")
+            return None
+
+    def complete_review_token(self, token: str, responses: str) -> bool:
+        """Mark a review token as completed with patient responses."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE patient_review_tokens
+                SET status = 'completed',
+                    responses = ?,
+                    completed_at = ?
+                WHERE token = ? AND status = 'pending'
+            """, (responses, datetime.now().isoformat(), token))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error completing review token: {e}")
+            return False
 
     def get_eligible_patients_for_trial(self, nct_id: str, status_filter: str = None,
                                         limit: int = 100, offset: int = 0) -> List[Dict]:

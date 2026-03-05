@@ -40,7 +40,7 @@ import {
 interface TrialDetailViewProps {
   nctId: string;
   onBack: () => void;
-  onSelectPatient?: (mrn: string) => void;
+  onSelectPatient?: (mrn: string, trialNctId?: string) => void;
 }
 
 export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailViewProps) {
@@ -325,7 +325,7 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
                     <TableRow
                       key={patient.id}
                       className={onSelectPatient ? 'cursor-pointer hover:bg-gray-50' : ''}
-                      onClick={() => onSelectPatient?.(patient.patient_mrn)}
+                      onClick={() => onSelectPatient?.(patient.patient_mrn, nctId)}
                     >
                       <TableCell>
                         <div>

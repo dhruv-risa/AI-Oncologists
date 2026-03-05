@@ -328,6 +328,32 @@ export interface CriterionResult {
   confidence: string;
   explanation: string;
   criterion_type: 'inclusion' | 'exclusion';
+  consent_needed?: boolean;
+  review_type?: 'patient' | 'clinician' | 'testing';
+  suggested_test?: string;
+  manually_resolved?: boolean;
+  resolved_by?: 'patient' | 'clinician';
+  original_met?: boolean | null;
+}
+
+// Bucket 2: Manual criterion resolution
+export interface CriterionResolutionPayload {
+  criterion_number: number;
+  criterion_type: 'inclusion' | 'exclusion';
+  resolved_met: boolean;
+  resolved_by: 'patient' | 'clinician';
+}
+
+export interface ResolveCriteriaResponse {
+  success: boolean;
+  nct_id: string;
+  mrn: string;
+  updated_eligibility: TrialEligibility;
+  criteria_results: {
+    inclusion: CriterionResult[];
+    exclusion: CriterionResult[];
+  };
+  resolutions_applied: number;
 }
 
 export interface TrialEligibility {
@@ -338,12 +364,14 @@ export interface TrialEligibility {
     met: number;
     not_met: number;
     unknown: number;
+    consent_needed?: number;
     total: number;
   };
   exclusion: {
     clear: number;
     violated: number;
     unknown: number;
+    consent_needed?: number;
     total: number;
   };
 }
@@ -716,6 +744,61 @@ class ApiService {
     return this.request<CachedEligibleTrialsResponse>(endpoint);
   }
 
+  // Get eligibility computation progress for a patient
+  async getEligibilityProgress(mrn: string): Promise<EligibilityProgressResponse> {
+    return this.request<EligibilityProgressResponse>(`/api/patients/${mrn}/eligibility-progress`);
+  }
+
+  // Bucket 2: Resolve unknown criteria manually
+  async resolveCriteria(
+    mrn: string,
+    nctId: string,
+    resolutions: CriterionResolutionPayload[]
+  ): Promise<ResolveCriteriaResponse> {
+    return this.request<ResolveCriteriaResponse>(
+      `/api/patients/${mrn}/trials/${nctId}/resolve-criteria`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ resolutions }),
+      }
+    );
+  }
+
+  // Bucket 3: Refresh a single trial's eligibility (re-run LLM)
+  async refreshTrialEligibility(mrn: string, nctId: string): Promise<ResolveCriteriaResponse> {
+    return this.request<ResolveCriteriaResponse>(
+      `/api/patients/${mrn}/trials/${nctId}/refresh-eligibility`,
+      { method: 'POST' }
+    );
+  }
+
+  // Patient Review: Generate a shareable review link
+  async sendPatientReview(mrn: string, nctId: string): Promise<SendPatientReviewResponse> {
+    return this.request<SendPatientReviewResponse>(
+      `/api/patients/${mrn}/trials/${nctId}/send-patient-review`,
+      { method: 'POST' }
+    );
+  }
+
+  // Patient Review: Get review page data (public)
+  async getPatientReview(token: string): Promise<PatientReviewData> {
+    return this.request<PatientReviewData>(`/api/review/${token}`);
+  }
+
+  // Patient Review: Submit patient responses (public)
+  async submitPatientReview(
+    token: string,
+    responses: CriterionResolutionPayload[]
+  ): Promise<PatientReviewSubmitResponse> {
+    return this.request<PatientReviewSubmitResponse>(
+      `/api/review/${token}/submit`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ responses }),
+      }
+    );
+  }
+
   // Admin: Sync trials from ClinicalTrials.gov
   async syncTrials(options?: { maxPerQuery?: number; background?: boolean }): Promise<AdminResponse> {
     const params = new URLSearchParams();
@@ -838,6 +921,53 @@ export interface CachedEligibleTrialsResponse {
   mrn: string;
   total: number;
   trials: any[];
+  computation_status?: string;
+  computation_progress?: {
+    trials_total: number;
+    trials_completed: number;
+    trials_eligible: number;
+  } | null;
+}
+
+export interface EligibilityProgressResponse {
+  success: boolean;
+  mrn: string;
+  status: 'not_started' | 'computing' | 'completed' | 'stale' | 'error';
+  trials_total: number;
+  trials_completed: number;
+  trials_eligible: number;
+  trials_error: number;
+  started_at?: string;
+  updated_at?: string;
+  completed_at?: string;
+  error_message?: string;
+}
+
+export interface SendPatientReviewResponse {
+  success: boolean;
+  token?: string;
+  review_url?: string;
+  criteria_count?: number;
+  message?: string;
+}
+
+export interface PatientReviewData {
+  status: 'pending' | 'completed';
+  trial_nct_id?: string;
+  trial_title?: string;
+  patient_first_name?: string;
+  criteria?: Array<{
+    criterion_number: number;
+    criterion_type: string;
+    criterion_text: string;
+  }>;
+  message?: string;
+}
+
+export interface PatientReviewSubmitResponse {
+  success: boolean;
+  message: string;
+  resolutions_applied: number;
 }
 
 export interface AdminResponse {

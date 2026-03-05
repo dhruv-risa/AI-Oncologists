@@ -19,32 +19,22 @@ import { usePatient } from '../contexts/PatientContext';
 interface PatientDetailViewProps {
   patientId: string;
   onBack: () => void;
+  initialTab?: string;
+  focusTrialId?: string;
 }
 
-export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps) {
-  const [activeTab, setActiveTab] = useState('diagnosis');
-  const [loadingPatientData, setLoadingPatientData] = useState(false);
-  const { currentPatient, fetchPatientData, error } = usePatient();
+export function PatientDetailView({ patientId, onBack, initialTab, focusTrialId }: PatientDetailViewProps) {
+  const [activeTab, setActiveTab] = useState(initialTab || 'diagnosis');
+  const { currentPatient, fetchPatientData, loading, error } = usePatient();
+
+  // Switch tab when navigated with a specific initialTab
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Fetch patient data when component mounts or patientId changes
   useEffect(() => {
-    const loadPatient = async () => {
-      // Check if we already have the patient data for this MRN
-      if (currentPatient && currentPatient.mrn === patientId) {
-        // We already have this patient's data, no need to load
-        setLoadingPatientData(false);
-        return;
-      }
-
-      // Need to fetch the patient data
-      setLoadingPatientData(true);
-      try {
-        await fetchPatientData(patientId);
-      } finally {
-        setLoadingPatientData(false);
-      }
-    };
-    loadPatient();
+    fetchPatientData(patientId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]); // Only re-run when patientId changes
 
@@ -65,7 +55,7 @@ export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps)
       case 'comorbidities':
         return <ComorbiditiesTab patientData={currentPatient} />;
       case 'clinical-trials':
-        return <ClinicalTrialsTab />;
+        return <ClinicalTrialsTab focusTrialId={focusTrialId} />;
       case 'documents':
         return <DocumentsSection patientData={currentPatient} />;
       default:
@@ -89,7 +79,7 @@ export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps)
       </div>
 
       {/* Loading State */}
-      {loadingPatientData && (
+      {loading && (
         <div className="flex flex-col items-center justify-center py-24">
           <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
           <p className="text-gray-600 text-lg">Loading patient data...</p>
@@ -98,7 +88,7 @@ export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps)
       )}
 
       {/* Error State */}
-      {error && !loadingPatientData && (
+      {error && !loading && (
         <div className="max-w-[1600px] mx-auto px-6 py-12">
           <div className="bg-red-50 border-2 border-red-200 rounded-lg p-8 text-center">
             <h3 className="text-lg font-medium text-red-900 mb-2">Failed to Load Patient Data</h3>
@@ -122,7 +112,7 @@ export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps)
       )}
 
       {/* Patient Data View */}
-      {!loadingPatientData && !error && currentPatient && currentPatient.demographics && (
+      {!loading && !error && currentPatient && currentPatient.demographics && (
         <>
           <PatientHeader patient={currentPatient} />
           <main className="max-w-[1600px] mx-auto px-6 py-6">

@@ -8,6 +8,8 @@ A comprehensive system for extracting and managing oncology patient data from El
 - [Architecture](#architecture)
 - [Features](#features)
 - [Clinical Trials Matching](#clinical-trials-matching)
+- [Progressive Eligibility Loading](#progressive-eligibility-loading)
+- [Patient Review Links](#patient-review-links)
 - [Prerequisites](#prerequisites)
 - [Setup Instructions](#setup-instructions)
 - [Running the Application](#running-the-application)
@@ -122,32 +124,96 @@ Some trial criteria cannot be verified from medical records (e.g., ability to si
 - **ECOG 0-2 (Active/Stable)**: Administrative criteria assumed met (patient is ambulatory and functional)
 - **ECOG 3-4 (Critical)**: Administrative criteria marked as unknown
 
+### Three-Bucket Criteria Resolution
+
+Unknown eligibility criteria are classified into three actionable buckets:
+
+- **Patient Review** (dark blue): Questions only the patient can answer (e.g., "Are you pregnant?", "Do you have a pacemaker?")
+- **Clinician Review** (maroon): Items requiring physician input (e.g., lab values present in records but needing interpretation)
+- **Needs Testing** (amber): Data not available in medical records, requiring new lab tests or imaging
+
+Classification uses a hybrid approach: keyword-based pre-classification handles obvious cases, while an LLM (Stage 2) resolves ambiguous criteria.
+
 ### Clinical Trials API Endpoints
 
 ```bash
 # Sync trials from ClinicalTrials.gov
-POST /api/trials/sync
-{
-  "background": false,
-  "max_trials_per_query": 50,
-  "limit_trials": 200
-}
+POST /api/admin/sync-trials?max_per_query=50&background=false
 
 # List all available trials
-GET /api/trials/list?status=RECRUITING&page=1&limit=20
+GET /api/trials?status=RECRUITING&page=1&limit=20
 
 # Get trial details
 GET /api/trials/{nct_id}
 
-# Get eligibility for a patient
-GET /api/eligibility/patient/{mrn}
+# Get cached eligible trials for a patient
+GET /api/patients/{mrn}/eligible-trials
 
 # Get eligible patients for a trial
-GET /api/eligibility/trial/{nct_id}
+GET /api/trials/{nct_id}/patients
 
-# Check sync status
-GET /api/trials/sync/status
+# Resolve unknown criteria manually
+POST /api/patients/{mrn}/trials/{nct_id}/resolve-criteria
+
+# Refresh a single trial's eligibility (re-run LLM)
+POST /api/patients/{mrn}/trials/{nct_id}/refresh-eligibility
+
+# Check eligibility computation progress
+GET /api/patients/{mrn}/eligibility-progress
 ```
+
+## Progressive Eligibility Loading
+
+When a new patient is added, eligibility is computed against hundreds of trials. Each trial takes 15-20 seconds (LLM call), so the full computation can take 40-60+ minutes.
+
+Instead of waiting for all trials to finish, results appear progressively:
+
+- Each trial result is stored to the database immediately as it completes
+- A `computation_progress` table tracks total/completed/eligible counts per patient
+- The frontend polls `GET /api/patients/{mrn}/eligibility-progress` every 10 seconds
+- A progress banner shows "Analyzing trial 47/420..." with an animated progress bar
+- Trial results appear in the list as they finish computing
+
+### Computation States
+
+| State | Meaning |
+|-------|---------|
+| `not_started` | No computation has been initiated |
+| `computing` | Actively processing trials |
+| `completed` | All trials have been analyzed |
+| `stale` | Server restarted mid-computation (Resume button shown) |
+| `error` | Computation failed with an error |
+
+## Patient Review Links
+
+For criteria classified as "Patient Review Needed", clinicians can generate a shareable link that the patient opens in their browser to answer Yes/No questions.
+
+### How It Works
+
+1. Clinician clicks **"Send to Patient"** on a trial card next to "Patient Review Needed"
+2. A modal appears with a generated URL and a **"Copy Link"** button
+3. The patient opens the link in any browser (mobile-friendly)
+4. A standalone page shows the trial name and Yes/No questions for each criterion
+5. The patient submits their answers
+6. Eligibility is **recalculated in real-time** using the patient's responses
+7. The clinician refreshes the dashboard to see updated eligibility
+
+### Patient Review API Endpoints
+
+```bash
+# Generate a shareable patient review link
+POST /api/patients/{mrn}/trials/{nct_id}/send-patient-review
+
+# Get review page data (public, no auth)
+GET /api/review/{token}
+
+# Submit patient responses (public, no auth)
+POST /api/review/{token}/submit
+```
+
+### Demo Mode
+
+The current implementation is demo-only: no SMS is actually sent. The clinician copies the generated link and shares it manually. The patient review page is a standalone mobile-friendly page that works without the dashboard.
 
 ## Prerequisites
 
@@ -653,7 +719,8 @@ AI Oncologist/
 │           ├── lab_postprocessor.py  # Lab data post-processing
 │           └── lab_chart_helper.py   # Lab chart generation
 │
-│   └── batch_eligibility_engine.py   # Batch trial eligibility computation
+│   └── Utils/
+│       └── batch_eligibility_engine.py   # Batch trial eligibility computation
 │
 ├── Frontend/
 │   └── Oncology Patient Dashboard 2/
@@ -667,6 +734,8 @@ AI Oncologist/
 │       │   │   ├── PatientHeader.tsx     # Patient header component
 │       │   │   ├── DiseaseSummary.tsx    # Disease summary component
 │       │   │   ├── TrialsListView.tsx    # Clinical trials browse view
+│       │   │   ├── TrialDetailView.tsx  # Single trial detail view
+│       │   │   ├── PatientReviewPage.tsx # Standalone patient review page
 │       │   │   └── tabs/
 │       │   │       ├── DiagnosisTab.tsx
 │       │   │       ├── TreatmentTab.tsx
@@ -854,6 +923,17 @@ For more detailed information, refer to:
 Copyright © 2024. All rights reserved.
 
 ## Version
+
+**Version 1.3** - Patient Review Links & Progressive Loading
+- Patient review link generation for shareable patient questionnaires
+- Standalone mobile-friendly patient review page with Yes/No questions
+- Real-time eligibility recalculation on patient response submission
+- Token-based review system with completion tracking
+- Progressive eligibility loading with polling and progress banner
+- Per-trial result storage for incremental updates
+- Stale computation detection and resume capability
+- Three-bucket criteria classification (Patient/Clinician/Testing) with hybrid keyword+LLM approach
+- Color-coded review buckets (dark blue for patient, maroon for clinician)
 
 **Version 1.1** - Clinical Trials Matching
 - Added clinical trials synchronization from ClinicalTrials.gov
