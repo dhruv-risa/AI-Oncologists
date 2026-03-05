@@ -50,7 +50,6 @@ from Backend.Utils.logger_config import setup_logger
 # Setup logger
 logger = setup_logger(__name__)
 
-<<<<<<< HEAD
 
 # ============================================================================
 # Utility Functions
@@ -125,7 +124,6 @@ def sort_reports_by_date(reports, descending=True):
 
     return sorted_reports
 
-=======
 # Initialize data pool (before lifespan so it's available at startup)
 data_pool = get_data_pool()
 
@@ -180,7 +178,6 @@ async def lifespan(app):
     # SHUTDOWN
     scheduler.shutdown(wait=False)
     logger.info("APScheduler shut down")
->>>>>>> feature/clinical-trials-eligibility
 
 # Initialize FastAPI app
 app = FastAPI(
