@@ -469,6 +469,11 @@ export interface PatientData {
   genomic_info?: GenomicInfo; // Genomic data from backend (detected_driver_mutations, immunotherapy_markers, additional_genomic_alterations)
   radiology_reports?: RadiologyReportDetail[]; // Individual radiology reports with extracted details
   genomics_reports?: Document[]; // Individual genomics documents with URLs for Documents tab
+  clinical_trials_eligibility?: {
+    trials: ClinicalTrial[];
+    total: number;
+    search_queries?: string[];
+  }; // Pre-computed clinical trial eligibility data cached with patient
 }
 
 export interface CachedPatient {

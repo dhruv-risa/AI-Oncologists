@@ -31,11 +31,14 @@ interface PatientListViewProps {
 }
 
 export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListViewProps) {
-  const { cachedPatients, loadCachedPatients, fetchPatientData, deletePatient, loading, error, clearError } = usePatient();
+  const { cachedPatients, loadCachedPatients, fetchPatientData, deletePatient, error, clearError, setCurrentPatient } = usePatient();
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientDataMap, setPatientDataMap] = useState<Map<string, any>>(new Map());
   const [searchMRN, setSearchMRN] = useState('');
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [loadingPatients, setLoadingPatients] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [addingNewPatient, setAddingNewPatient] = useState(false);
 
   // Load cached patients on mount
   useEffect(() => {
@@ -51,14 +54,23 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
   // Load full patient details for display
   useEffect(() => {
     const loadPatientDetails = async () => {
+      // Don't try to load details if there are no cached patients
       if (cachedPatients.length === 0) {
         setPatients([]);
+        setLoadingDetails(false);
         return;
       }
 
-      const patientPromises = cachedPatients.map(async (cached) => {
-        try {
-          const fullData = await apiService.getCachedPatient(cached.mrn);
+      setLoadingDetails(true);
+
+      try {
+        const newDataMap = new Map();
+        const patientPromises = cachedPatients.map(async (cached) => {
+          try {
+            const fullData = await apiService.getCachedPatient(cached.mrn);
+
+            // Store full data in map for later use
+            newDataMap.set(cached.mrn, fullData);
 
           // Derive current staging from timeline (most recent entry) or fall back to header
           const timeline = fullData.diagnosis_evolution_timeline?.timeline || [];
@@ -154,15 +166,35 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
             potentiallyEligible: (cached as any).potentiallyEligible || 0,
             matchedTrials: (cached as any).matchedTrials || 0
           };
-        }
-      });
+          }
+        });
 
-      const loadedPatients = await Promise.all(patientPromises);
-      setPatients(loadedPatients);
+        const loadedPatients = await Promise.all(patientPromises);
+        setPatients(loadedPatients);
+        setPatientDataMap(newDataMap);
+      } catch (error) {
+        console.error('Error loading patient details:', error);
+      } finally {
+        setLoadingDetails(false);
+      }
     };
 
     loadPatientDetails();
   }, [cachedPatients]);
+
+  // Handle selecting a patient - pre-load data into context for instant display
+  const handleSelectPatient = (patientId: string) => {
+    const fullData = patientDataMap.get(patientId);
+    if (fullData) {
+      // Pre-load the patient data into context so detail view can use it immediately
+      console.log(`Pre-loading patient ${patientId} from cache`);
+      setCurrentPatient(fullData);
+    } else {
+      console.log(`Patient ${patientId} not found in cache, will fetch from API`);
+    }
+    // Navigate to detail view
+    onSelectPatient(patientId);
+  };
 
   // Handle adding a new patient by MRN
   const handleAddPatient = async () => {
@@ -172,6 +204,7 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
     }
 
     try {
+      setAddingNewPatient(true);
       // Use FHIR API to fetch patient data
       await fetchPatientData(searchMRN.trim());
       setSearchMRN('');
@@ -180,6 +213,8 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
       await loadCachedPatients();
     } catch (err) {
       console.error('Failed to add patient:', err);
+    } finally {
+      setAddingNewPatient(false);
     }
   };
 
@@ -287,14 +322,14 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
                 onKeyDown={(e) => e.key === 'Enter' && handleAddPatient()}
                 placeholder="Enter Patient MRN (e.g., A2451440)"
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                disabled={loading}
+                disabled={addingNewPatient}
               />
               <button
                 onClick={handleAddPatient}
-                disabled={loading || !searchMRN.trim()}
+                disabled={addingNewPatient || !searchMRN.trim()}
                 className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
               >
-                {loading ? (
+                {addingNewPatient ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span>Processing...</span>
@@ -309,7 +344,7 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
               <button
                 onClick={() => setShowAddPatient(false)}
                 className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
-                disabled={loading}
+                disabled={addingNewPatient}
               >
                 Cancel
               </button>
@@ -346,11 +381,11 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
           </div>
         </div>
 
-        {/* Loading State */}
-        {loadingPatients && <PatientListSkeleton />}
+        {/* Loading State - show skeleton while loading initial data or patient details, but NOT when adding a new patient */}
+        {(loadingPatients || loadingDetails) && <PatientListSkeleton />}
 
-        {/* Empty State */}
-        {!loadingPatients && displayPatients.length === 0 && (
+        {/* Empty State - only show when truly no patients exist and not loading anything */}
+        {!loadingPatients && !loadingDetails && displayPatients.length === 0 && !addingNewPatient && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
             <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No Patients in Database</h3>
@@ -367,13 +402,18 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
           </div>
         )}
 
-        {/* Patient Cards Grid */}
-        {!loadingPatients && displayPatients.length > 0 && (
+        {/* Patient Cards Grid - show when we have patients OR when adding a new one */}
+        {!loadingPatients && !loadingDetails && (displayPatients.length > 0 || addingNewPatient) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
+            {/* Loading Card - show as first card when processing new patient */}
+            {addingNewPatient && (
+              <LoadingModal open={addingNewPatient} title="Fetching Patient Data" variant="card" />
+            )}
+
             {displayPatients.map((patient) => (
               <div
                 key={patient.id}
-                onClick={() => onSelectPatient(patient.id)}
+                onClick={() => handleSelectPatient(patient.id)}
                 className="bg-white rounded-xl shadow-sm border border-gray-200 hover:border-blue-500 hover:shadow-md transition-all group cursor-pointer p-5 flex flex-col gap-3"
               >
                 {/* Patient Header */}
@@ -490,9 +530,6 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
           </div>
         )}
       </div>
-
-      {/* Loading Modal */}
-      <LoadingModal open={loading} title="Fetching Patient Data" />
     </div>
   );
 }

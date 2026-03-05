@@ -124,9 +124,90 @@ export function ClinicalTrialsTab() {
 
     useEffect(() => {
         if (currentPatient?.mrn) {
-            fetchTrials();
+            // First check if trial eligibility is already loaded with patient data
+            if (currentPatient.clinical_trials_eligibility &&
+                currentPatient.clinical_trials_eligibility.trials &&
+                currentPatient.clinical_trials_eligibility.trials.length > 0) {
+                console.log('Using pre-loaded trial eligibility data from patient cache');
+
+                // Transform pre-loaded trials to match ClinicalTrial interface
+                const transformedTrials = currentPatient.clinical_trials_eligibility.trials.map((t: any) => {
+                    // Use full criteria_results if available, otherwise fall back to key_matching/exclusion
+                    const inclusion = t.criteria_results?.inclusion ||
+                        t.key_matching_criteria?.map((c: string, i: number) => ({
+                            criterion_number: i + 1,
+                            criterion_text: c,
+                            patient_value: '',
+                            met: true,
+                            confidence: 'high',
+                            explanation: '',
+                            criterion_type: 'inclusion' as const
+                        })) || [];
+
+                    const exclusion = t.criteria_results?.exclusion ||
+                        t.key_exclusion_reasons?.map((c: string, i: number) => ({
+                            criterion_number: i + 1,
+                            criterion_text: c,
+                            patient_value: '',
+                            met: true,
+                            confidence: 'high',
+                            explanation: '',
+                            criterion_type: 'exclusion' as const
+                        })) || [];
+
+                    // Calculate inclusion/exclusion stats from criteria
+                    const inclusionMet = inclusion.filter((c: any) => c.met === true).length;
+                    const inclusionNotMet = inclusion.filter((c: any) => c.met === false).length;
+                    const inclusionUnknown = inclusion.filter((c: any) => c.met === null).length;
+                    const exclusionClear = exclusion.filter((c: any) => c.met === false).length;
+                    const exclusionViolated = exclusion.filter((c: any) => c.met === true).length;
+                    const exclusionUnknown = exclusion.filter((c: any) => c.met === null).length;
+
+                    return {
+                        nct_id: t.trial_nct_id || t.nct_id,
+                        title: t.title || 'Unknown Trial',
+                        phase: t.phase || 'N/A',
+                        status: t.trial_status || t.status || 'Unknown',
+                        study_type: 'Interventional',
+                        brief_summary: t.brief_summary || '',
+                        eligibility: {
+                            status: t.eligibility_status === 'LIKELY_ELIGIBLE' ? 'LIKELY_ELIGIBLE' :
+                                    t.eligibility_status === 'POTENTIALLY_ELIGIBLE' ? 'POTENTIALLY_ELIGIBLE' :
+                                    t.eligibility_status === 'NOT_ELIGIBLE' ? 'NOT_ELIGIBLE' :
+                                    t.eligibility_status === 'Likely Eligible' ? 'LIKELY_ELIGIBLE' :
+                                    t.eligibility_status === 'Potentially Eligible' ? 'POTENTIALLY_ELIGIBLE' : 'NOT_ELIGIBLE',
+                            status_reason: '',
+                            percentage: t.eligibility_percentage || 0,
+                            inclusion: { met: inclusionMet, not_met: inclusionNotMet, unknown: inclusionUnknown, total: inclusion.length },
+                            exclusion: { clear: exclusionClear, violated: exclusionViolated, unknown: exclusionUnknown, total: exclusion.length }
+                        },
+                        criteria_results: {
+                            inclusion,
+                            exclusion
+                        },
+                        contact: t.contact || {},
+                        locations: t.locations || []
+                    };
+                });
+
+                setTrials(transformedTrials);
+                setCachedCount(currentPatient.clinical_trials_eligibility.total);
+                setSearchQueries(currentPatient.clinical_trials_eligibility.search_queries || ['Saved eligibility analysis']);
+                setLoading(false);
+                return;
+            }
+
+            // If not in patient data, try to load from separate trial cache
+            const loadCached = async () => {
+                const hasCached = await fetchCachedTrials();
+                if (!hasCached) {
+                    // No cached data available - user will need to click "Search Trials" button
+                    setLoading(false);
+                }
+            };
+            loadCached();
         }
-    }, [currentPatient?.mrn]);
+    }, [currentPatient]);
 
     const toggleTrialExpanded = (nctId: string) => {
         setExpandedTrials(prev => {
@@ -299,9 +380,16 @@ export function ClinicalTrialsTab() {
             {/* No Trials Found */}
             {!loading && !error && trials.length === 0 && (
                 <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
-                    <FlaskConical className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                    <p className="text-gray-600 font-medium">No matching clinical trials found</p>
-                    <p className="text-gray-400 text-sm mt-1">Try refreshing or check back later</p>
+                    <FlaskConical className="w-12 h-12 text-violet-400 mx-auto mb-3" />
+                    <p className="text-gray-600 font-medium">No clinical trial eligibility data available</p>
+                    <p className="text-gray-400 text-sm mt-2">Search for matching clinical trials and analyze eligibility criteria</p>
+                    <button
+                        onClick={() => fetchTrials(true)}
+                        className="mt-4 flex items-center gap-2 px-6 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors mx-auto"
+                    >
+                        <Search className="w-4 h-4" />
+                        Search Clinical Trials
+                    </button>
                 </div>
             )}
 

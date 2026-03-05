@@ -13,6 +13,7 @@ interface PatientContextState {
   deletePatient: (mrn: string) => Promise<void>;
   clearError: () => void;
   clearCurrentPatient: () => void;
+  setCurrentPatient: (patient: PatientData) => void;
 }
 
 // Create context
@@ -196,6 +197,11 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setCurrentPatient(null);
   }, []);
 
+  // Set current patient directly (for optimization when data is already loaded)
+  const setCurrentPatientDirect = useCallback((patient: PatientData) => {
+    setCurrentPatient(patient);
+  }, []);
+
   const value: PatientContextState = {
     currentPatient,
     cachedPatients,
@@ -207,6 +213,7 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
     deletePatient,
     clearError,
     clearCurrentPatient,
+    setCurrentPatient: setCurrentPatientDirect,
   };
 
   return (

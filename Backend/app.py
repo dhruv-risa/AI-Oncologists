@@ -1308,6 +1308,8 @@ async def get_patient_from_pool(mrn: str):
 
     Use this endpoint in your static UI to fetch patient data without
     making expensive API calls to the EMR system.
+
+    Also includes pre-computed clinical trial eligibility data if available.
     """
     patient_data = data_pool.get_patient_data(mrn)
 
@@ -1316,6 +1318,20 @@ async def get_patient_from_pool(mrn: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Patient with MRN {mrn} not found in data pool. Please fetch the data first using /api/patient/all endpoint."
         )
+
+    # Try to include pre-computed trial eligibility data
+    try:
+        trials = data_pool.get_eligible_trials_for_patient(mrn=mrn)
+        if trials and len(trials) > 0:
+            patient_data["clinical_trials_eligibility"] = {
+                "trials": trials,
+                "total": len(trials),
+                "search_queries": ["Saved eligibility analysis"]
+            }
+    except Exception as e:
+        # If trial data doesn't exist or errors, just continue without it
+        print(f"No trial eligibility data for patient {mrn}: {e}")
+        pass
 
     return patient_data
 
