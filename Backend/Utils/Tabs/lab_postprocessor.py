@@ -923,7 +923,8 @@ def postprocess_lab_data(raw_lab_data: List[Dict], use_ai_refinement: bool = Tru
         "tumor_markers": ["CEA", "NSE", "proGRP", "CYFRA_21_1"],
         "complete_blood_count": ["WBC", "Hemoglobin", "Platelets", "ANC", "MCV", "RDW", "Lymphocytes", "Monocytes"],
         "metabolic_panel": ["Sodium", "Potassium", "Chloride", "CO2", "Calcium", "Phosphorus", "Magnesium",
-                           "Glucose", "BUN", "Creatinine", "eGFR", "Total_Protein", "Albumin", "Uric_Acid"],
+                           "Glucose", "BUN", "Creatinine", "eGFR", "Total_Protein", "Albumin", "Uric_Acid",
+                           "ALT", "AST", "Total Bilirubin", "Total_Bilirubin"],  # Include both space and underscore versions
         "liver_function": ["ALT", "AST", "Total_Bilirubin", "Alkaline_Phosphatase", "LDH"],
         "coagulation": ["INR", "PT", "aPTT"],
         "thyroid": ["TSH", "Free_T4"],

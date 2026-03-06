@@ -162,11 +162,29 @@ def convert_to_standard_unit(
         # μmol/L to mg/dL: divide by 17.1
         if normalized_source in ["μmol/l", "umol/l", "mcmol/l"]:
             converted_value = round(value / 17.1, 2)
+        # mg/L to mg/dL: divide by 10
+        elif normalized_source in ["mg/l"]:
+            converted_value = round(value / 10, 2)
+        # Already in mg/dL
+        elif normalized_source in ["mg/dl"]:
+            converted_value = value
+        else:
+            # Keep original value if unit is unrecognized
+            converted_value = value
 
     # ALT/AST conversions (usually already in U/L)
     elif biomarker in ["ALT", "AST"]:
-        # IU/L is same as U/L
-        if normalized_source in ["iu/l", "u/l", "units/l"]:
+        # IU/L, U/L, Units/L are all equivalent to standard U/L
+        if normalized_source in ["iu/l", "u/l", "units/l", "unit/l"]:
+            converted_value = value
+        # mU/L (milliUnits) to U/L: divide by 1000
+        elif normalized_source in ["mu/l", "milliunits/l"]:
+            converted_value = round(value / 1000, 2)
+        # μkat/L (microkatal) to U/L: multiply by 60
+        elif normalized_source in ["μkat/l", "ukat/l", "nkat/l"]:
+            converted_value = round(value * 60, 2)
+        else:
+            # Keep original value if unit is unrecognized
             converted_value = value
 
     # Tumor marker conversions (usually already in standard units)
@@ -247,6 +265,16 @@ if __name__ == "__main__":
         # Total Bilirubin conversions
         ("Total Bilirubin", 17.1, "μmol/L", "Should convert μmol/L to mg/dL"),
         ("Total Bilirubin", 1.0, "mg/dL", "Already in standard unit"),
+        ("Total Bilirubin", 10.0, "mg/L", "Should convert mg/L to mg/dL"),
+
+        # ALT conversions
+        ("ALT", 40, "U/L", "Already in standard unit"),
+        ("ALT", 40, "IU/L", "IU/L is same as U/L"),
+        ("ALT", 40000, "mU/L", "Should convert mU/L to U/L"),
+
+        # AST conversions
+        ("AST", 35, "U/L", "Already in standard unit"),
+        ("AST", 35, "IU/L", "IU/L is same as U/L"),
     ]
 
     for biomarker, value, source_unit, description in test_cases:

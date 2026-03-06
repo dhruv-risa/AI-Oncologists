@@ -43,12 +43,21 @@ extracted_instructions = (
     "- Use the 'Lab Resulted' or 'Resulted' date (NOT specimen collection date) when available. "
 
     "Targets: "
-    "- TUMOR MARKERS: CEA, NSE, proGRP, CYFRA 21-1. "
-    "- CBC: WBC, Hemoglobin, Platelets, ANC (if missing, use 'Segs#' or 'Polys, Abs'). "
-    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin (may also be labeled as 'Bilirubin' or 'Bili')."
+    "- TUMOR MARKERS: CEA (ng/mL), NSE (ng/mL), proGRP (pg/mL), CYFRA 21-1 (ng/mL). "
+    "- CBC: WBC (10^3/μL or K/μL), Hemoglobin (g/dL), Platelets (10^3/μL or K/μL), ANC (10^3/μL or K/μL - if missing, use 'Segs#' or 'Polys, Abs'). "
+    "- METABOLIC: Creatinine (mg/dL), ALT (U/L or IU/L), AST (U/L or IU/L), Total Bilirubin (mg/dL - may also be labeled as 'Bilirubin' or 'Bili'). "
+
+    "UNIT CONVERSION REQUIREMENTS: "
+    "- If the lab report shows values in different units, CONVERT them to the standard units specified above. "
+    "- Common conversions: "
+    "  * Hemoglobin: g/L → g/dL (divide by 10) "
+    "  * Creatinine: μmol/L → mg/dL (divide by 88.4) "
+    "  * Total Bilirubin: μmol/L → mg/dL (divide by 17.1) "
+    "  * WBC/Platelets/ANC: cells/μL → 10^3/μL (divide by 1000) "
+    "- Always specify the unit after conversion in your output. "
 
     "CLINICAL INTERPRETATION: "
-    "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40), Neutropenia (ANC <1.5)."
+    "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40 U/L), Neutropenia (ANC <1.5 K/μL)."
 )
 
 def biomarker_schema():
