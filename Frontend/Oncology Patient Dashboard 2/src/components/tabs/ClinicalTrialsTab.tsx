@@ -986,7 +986,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                 placeholder="Search by NCT ID, title, phase, or eligibility..."
                                 value={filterText}
                                 onChange={e => setFilterText(e.target.value)}
-                                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-400"
+                                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-400"
                             />
                             {filterText && (
                                 <button
