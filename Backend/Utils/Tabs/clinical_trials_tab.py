@@ -216,6 +216,70 @@ def parse_eligibility_criteria(criteria_text: str) -> Dict[str, List[str]]:
     return result
 
 
+def normalize_tnm(tnm: str) -> str:
+    """Normalize TNM notation to use proper lowercase prefixes (cT, cN, cM, pT, pN, pM)."""
+    if not tnm or tnm in ('Unknown', 'NA', 'N/A', None):
+        return tnm or 'Unknown'
+    import re as _re
+    result = _re.sub(r'\b([CP])([TNM])', lambda m: m.group(1).lower() + m.group(2), tnm)
+    result = ' '.join(result.split())
+    return result
+
+
+def validate_ajcc_stage(tnm: str, ajcc_stage: str) -> str:
+    """Validate and correct AJCC stage based on TNM M-subcategory (8th edition).
+    Key rules: M1a → Stage IVA, M1b → Stage IVB, M1c → Stage IVB"""
+    if not tnm or not ajcc_stage or ajcc_stage in ('Unknown', 'NA', 'N/A'):
+        return ajcc_stage or 'Unknown'
+    import re as _re
+    tnm_upper = tnm.upper()
+    m1a_match = _re.search(r'M1A', tnm_upper)
+    m1b_match = _re.search(r'M1B', tnm_upper)
+    m1c_match = _re.search(r'M1C', tnm_upper)
+    if m1a_match:
+        if 'IVB' in ajcc_stage.upper() or 'IVC' in ajcc_stage.upper():
+            return 'Stage IVA'
+    elif m1b_match or m1c_match:
+        if 'IVA' in ajcc_stage.upper() and 'IVB' not in ajcc_stage.upper():
+            return 'Stage IVB'
+    return ajcc_stage
+
+
+def standardize_lab_value(biomarker_name: str, value, unit: str):
+    """Standardize lab value to common US clinical units.
+    Conversions: Hemoglobin g/L→g/dL, WBC/ANC/Platelets raw→10^3/μL,
+    Creatinine μmol/L→mg/dL, Bilirubin μmol/L→mg/dL"""
+    try:
+        val = float(value)
+    except (ValueError, TypeError):
+        return value, unit or ""
+    unit = unit or ""
+    unit_lower = unit.lower().strip()
+    name_lower = biomarker_name.lower()
+
+    # Hemoglobin: g/L → g/dL
+    if 'hemoglobin' in name_lower or 'hgb' in name_lower or 'hb' in name_lower:
+        if 'g/l' in unit_lower and val > 30:
+            return round(val / 10.0, 1), "g/dL"
+
+    # WBC, ANC, Platelets: raw counts → 10^3/μL
+    if any(k in name_lower for k in ('wbc', 'white blood', 'anc', 'neutrophil', 'platelet')):
+        if val > 500:
+            return round(val / 1000.0, 2), "10^3/μL"
+
+    # Creatinine: μmol/L → mg/dL
+    if 'creatinine' in name_lower:
+        if 'mol' in unit_lower or val > 20:
+            return round(val / 88.4, 2), "mg/dL"
+
+    # Bilirubin: μmol/L → mg/dL
+    if 'bilirubin' in name_lower:
+        if 'mol' in unit_lower or val > 5:
+            return round(val / 17.1, 2), "mg/dL"
+
+    return val, unit
+
+
 def build_patient_context(patient_data: Dict) -> str:
     """
     Build a COMPREHENSIVE patient context string for LLM analysis.
@@ -395,6 +459,12 @@ the patient is ELIGIBLE (not allergic) unless there is specific documentation of
         initial_ajcc = initial_staging.get('ajcc_stage') or diagnosis.get('ajcc_stage') or 'Unknown'
         current_tnm = current_staging.get('tnm') or initial_tnm
         current_ajcc = current_staging.get('ajcc_stage') or diagnosis.get('current_stage') or initial_ajcc
+
+        # Compensate: normalize TNM notation and validate AJCC staging
+        initial_tnm = normalize_tnm(initial_tnm)
+        current_tnm = normalize_tnm(current_tnm)
+        initial_ajcc = validate_ajcc_stage(initial_tnm, initial_ajcc)
+        current_ajcc = validate_ajcc_stage(current_tnm, current_ajcc)
 
         # Pull metastatic/recurrence from diagnosis_header if not in diagnosis
         metastatic_status = diagnosis.get('metastatic_status') or diagnosis_header.get('metastatic_status') or 'Unknown'
@@ -684,6 +754,8 @@ No prior systemic therapy documented.
                 if value is None:
                     continue
                 unit = current.get("unit", "") or ""
+                # Compensate: standardize lab units for consistent eligibility matching
+                value, unit = standardize_lab_value(lab_name, value, unit)
                 ref = current.get("reference_range", "") or ""
                 status = current.get("status", "") or ""
                 date = current.get("date", "") or ""
@@ -1410,10 +1482,13 @@ def derive_clinical_facts(patient_data: Dict) -> str:
         marker = panel.get(biomarker_name, {}) or {}
         if isinstance(marker, dict) and marker.get("has_data"):
             current = marker.get("current", {}) or {}
-            val = current.get("value")
-            if val is not None:
+            raw_val = current.get("value")
+            if raw_val is not None:
                 try:
-                    return float(val), current.get("unit", ""), current.get("date", "")
+                    raw_unit = current.get("unit", "") or ""
+                    # Compensate: standardize units for accurate clinical calculations
+                    std_val, std_unit = standardize_lab_value(biomarker_name, raw_val, raw_unit)
+                    return float(std_val), std_unit, current.get("date", "")
                 except (ValueError, TypeError):
                     pass
         return None, None, None
