@@ -8,7 +8,7 @@ This FastAPI application provides REST API endpoints for:
 """
 import sys
 import os
-from typing import Optional
+from typing import Optional, List
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -126,6 +126,10 @@ def sort_reports_by_date(reports, descending=True):
 
 # Initialize data pool (before lifespan so it's available at startup)
 data_pool = get_data_pool()
+
+# Clinical trials computation tracking
+_computation_lock = threading.Lock()
+_active_computations = {}
 
 _sync_lock = threading.Lock()
 
@@ -1576,6 +1580,358 @@ async def get_eligible_trials_for_patient_cached(
             "total": len(trials),
             "trials": trials
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.get("/api/patients/{mrn}/eligibility-progress", tags=["Clinical Trials"])
+async def get_eligibility_progress(mrn: str):
+    """Get the current computation progress for a patient's eligibility analysis."""
+    try:
+        progress = data_pool.get_computation_progress(mrn)
+
+        if progress is None:
+            return {
+                "success": True,
+                "mrn": mrn,
+                "status": "not_started",
+                "trials_total": 0,
+                "trials_completed": 0,
+                "trials_eligible": 0,
+                "trials_error": 0
+            }
+
+        comp_status = progress["status"]
+        if comp_status == "computing":
+            with _computation_lock:
+                thread = _active_computations.get(mrn)
+                if thread is None or not thread.is_alive():
+                    comp_status = "stale"
+
+        return {
+            "success": True,
+            "mrn": mrn,
+            "status": comp_status,
+            "trials_total": progress["trials_total"],
+            "trials_completed": progress["trials_completed"],
+            "trials_eligible": progress["trials_eligible"],
+            "trials_error": progress["trials_error"],
+            "started_at": progress.get("started_at"),
+            "updated_at": progress.get("updated_at"),
+            "completed_at": progress.get("completed_at"),
+            "error_message": progress.get("error_message")
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+# ── Manual criterion resolution ──
+
+class CriterionResolution(BaseModel):
+    criterion_number: int
+    criterion_type: str = Field(..., description="'inclusion' or 'exclusion'")
+    resolved_met: bool = Field(..., description="True = Yes (met), False = No (not met)")
+    resolved_by: str = Field(..., description="'patient' or 'clinician'")
+
+class ResolveCriteriaRequest(BaseModel):
+    resolutions: List[CriterionResolution]
+
+
+@app.post("/api/patients/{mrn}/trials/{nct_id}/resolve-criteria", tags=["Clinical Trials"])
+async def resolve_criteria(mrn: str, nct_id: str, request: ResolveCriteriaRequest):
+    """
+    Manually resolve unknown eligibility criteria for a patient-trial pair.
+
+    When a doctor or patient answers Yes/No for unknown criteria, this endpoint
+    updates the stored criteria_results and recalculates the eligibility score.
+    """
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    try:
+        # 1. Fetch existing eligibility row
+        conn = sqlite3.connect(data_pool.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT criteria_results
+            FROM eligibility_matrix
+            WHERE trial_nct_id = ? AND patient_mrn = ?
+        """, (nct_id, mrn))
+        row = cursor.fetchone()
+
+        if not row:
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No eligibility data found for patient {mrn} and trial {nct_id}"
+            )
+
+        criteria_results = json.loads(row[0]) if row[0] else {}
+
+        # 2. Apply resolutions
+        applied = 0
+        for resolution in request.resolutions:
+            criteria_list = criteria_results.get(resolution.criterion_type, [])
+            for criterion in criteria_list:
+                if criterion.get("criterion_number") == resolution.criterion_number:
+                    # Preserve original value before overwriting
+                    if "original_met" not in criterion:
+                        criterion["original_met"] = criterion.get("met")
+                    criterion["met"] = resolution.resolved_met
+                    criterion["manually_resolved"] = True
+                    criterion["resolved_by"] = resolution.resolved_by
+                    criterion["resolved_at"] = datetime.now().isoformat()
+                    criterion["confidence"] = "manual_review"
+                    applied += 1
+                    break
+
+        # 3. Recalculate eligibility score
+        from Backend.Utils.Tabs.clinical_trials_tab import (
+            calculate_eligibility_score, classify_unknown_criteria, add_suggested_tests
+        )
+        all_criteria = criteria_results.get("inclusion", []) + criteria_results.get("exclusion", [])
+        all_criteria = classify_unknown_criteria(all_criteria)
+        all_criteria = add_suggested_tests(all_criteria)
+        eligibility = calculate_eligibility_score(all_criteria)
+
+        # 4. Update the database
+        cursor.execute("""
+            UPDATE eligibility_matrix
+            SET criteria_results = ?,
+                eligibility_status = ?,
+                eligibility_percentage = ?,
+                computed_at = ?
+            WHERE trial_nct_id = ? AND patient_mrn = ?
+        """, (
+            json.dumps(criteria_results),
+            eligibility["status"],
+            eligibility["percentage"],
+            datetime.now().isoformat(),
+            nct_id, mrn
+        ))
+        conn.commit()
+        conn.close()
+
+        # 5. Return updated data
+        return {
+            "success": True,
+            "nct_id": nct_id,
+            "mrn": mrn,
+            "updated_eligibility": eligibility,
+            "criteria_results": criteria_results,
+            "resolutions_applied": applied
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.post("/api/patients/{mrn}/trials/{nct_id}/refresh-eligibility", tags=["Clinical Trials"])
+async def refresh_single_trial_eligibility(mrn: str, nct_id: str):
+    """
+    Re-run the LLM eligibility analysis for a single patient×trial pair.
+
+    Use this after new test results enter the system so that previously-unknown
+    criteria can be resolved with fresh data. The call takes 1-3 min (LLM).
+    """
+    import json
+    import sqlite3
+    from datetime import datetime
+    from concurrent.futures import ThreadPoolExecutor
+
+    try:
+        # 1. Get patient data
+        patient_data = data_pool.get_patient_data(mrn)
+        if patient_data is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Patient {mrn} not found in data pool"
+            )
+
+        # 2. Get trial data
+        trial = data_pool.get_trial(nct_id)
+        if trial is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Trial {nct_id} not found in trials cache"
+            )
+
+        # 3. Build patient context and re-run eligibility via LLM
+        from Backend.Utils.Tabs.clinical_trials_tab import (
+            build_patient_context, process_single_trial,
+            calculate_eligibility_score, mark_consent_criteria,
+            classify_unknown_criteria, add_suggested_tests,
+        )
+
+        patient_context = build_patient_context(patient_data)
+
+        # Run the (blocking) LLM call in a thread so we don't block the event loop
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = await loop.run_in_executor(
+                pool,
+                process_single_trial,
+                trial, patient_context, patient_data
+            )
+
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="LLM eligibility analysis returned no result"
+            )
+
+        # 4. Persist updated results into the eligibility_matrix
+        criteria_results = result.get("criteria_results", {})
+        eligibility = result.get("eligibility", {})
+
+        conn = sqlite3.connect(data_pool.db_path)
+        cursor = conn.cursor()
+
+        # Check if row exists
+        cursor.execute(
+            "SELECT id FROM eligibility_matrix WHERE trial_nct_id = ? AND patient_mrn = ?",
+            (nct_id, mrn),
+        )
+        existing = cursor.fetchone()
+
+        now = datetime.now().isoformat()
+        if existing:
+            cursor.execute("""
+                UPDATE eligibility_matrix
+                SET criteria_results = ?,
+                    eligibility_status = ?,
+                    eligibility_percentage = ?,
+                    computed_at = ?
+                WHERE trial_nct_id = ? AND patient_mrn = ?
+            """, (
+                json.dumps(criteria_results),
+                eligibility.get("status", ""),
+                eligibility.get("percentage", 0),
+                now,
+                nct_id, mrn,
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO eligibility_matrix
+                (trial_nct_id, patient_mrn, eligibility_status, eligibility_percentage,
+                 criteria_results, computed_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                nct_id, mrn,
+                eligibility.get("status", ""),
+                eligibility.get("percentage", 0),
+                json.dumps(criteria_results),
+                now,
+            ))
+
+        conn.commit()
+        conn.close()
+
+        # 5. Return in the same shape as resolve-criteria for frontend reuse
+        return {
+            "success": True,
+            "nct_id": nct_id,
+            "mrn": mrn,
+            "updated_eligibility": eligibility,
+            "criteria_results": criteria_results,
+            "resolutions_applied": 0,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error refreshing trial {nct_id} for patient {mrn}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.post("/api/patients/{mrn}/trials/{nct_id}/send-patient-review", tags=["Clinical Trials"])
+async def send_patient_review(mrn: str, nct_id: str):
+    """
+    Generate a shareable patient review link for a specific trial.
+
+    Extracts patient-review criteria from the eligibility data,
+    creates a token, and returns a URL that can be shared with the patient.
+    """
+    import json
+    import sqlite3
+    import uuid
+
+    try:
+        # 1. Fetch eligibility data
+        conn = sqlite3.connect(data_pool.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT criteria_results
+            FROM eligibility_matrix
+            WHERE trial_nct_id = ? AND patient_mrn = ?
+        """, (nct_id, mrn))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No eligibility data found for patient {mrn} and trial {nct_id}"
+            )
+
+        criteria_results = json.loads(row[0]) if row[0] else {}
+
+        # 2. Filter for patient-review criteria that haven't been resolved
+        patient_criteria = []
+        for ctype in ["inclusion", "exclusion"]:
+            for c in criteria_results.get(ctype, []):
+                if (c.get("review_type") == "patient" and
+                        not c.get("manually_resolved")):
+                    patient_criteria.append({
+                        "criterion_number": c.get("criterion_number"),
+                        "criterion_type": ctype,
+                        "criterion_text": c.get("criterion_text", ""),
+                    })
+
+        if not patient_criteria:
+            return {
+                "success": False,
+                "message": "No unresolved patient-review criteria found for this trial"
+            }
+
+        # 3. Generate token and store
+        token = str(uuid.uuid4())
+        data_pool.create_review_token(
+            token=token,
+            patient_mrn=mrn,
+            trial_nct_id=nct_id,
+            criteria_snapshot=json.dumps(patient_criteria)
+        )
+
+        # 4. Build review URL (use frontend origin for Vite dev server)
+        review_url = f"http://localhost:3000/review/{token}"
+
+        return {
+            "success": True,
+            "token": token,
+            "review_url": review_url,
+            "criteria_count": len(patient_criteria)
+        }
+
     except HTTPException:
         raise
     except Exception as e:
