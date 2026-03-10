@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the full project (backend needs project root for imports)
 COPY . .
 
+# Add Backend to Python path so "from Utils.xxx" imports work alongside "from Backend.xxx"
+ENV PYTHONPATH="/app:/app/Backend"
+
 # Expose the port Cloud Run will use
 EXPOSE 8080
 
