@@ -8,3 +8,4 @@ fastapi
 uvicorn[standard]
 pydantic
 apscheduler>=3.10,<4.0
+PyPDF2
