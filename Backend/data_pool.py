@@ -424,6 +424,20 @@ class DataPool:
                         "not_eligible": 0
                     })
 
+                    # Extract stage from nested diagnosis structure
+                    # Priority: current_staging > initial_staging > flat ajcc_stage
+                    stage = "N/A"
+                    current_staging = diagnosis.get("current_staging", {})
+                    initial_staging = diagnosis.get("initial_staging", {})
+
+                    if current_staging and current_staging.get("ajcc_stage"):
+                        stage = current_staging.get("ajcc_stage")
+                    elif initial_staging and initial_staging.get("ajcc_stage"):
+                        stage = initial_staging.get("ajcc_stage")
+                    elif diagnosis.get("ajcc_stage"):
+                        # Backwards compatibility for flat structure
+                        stage = diagnosis.get("ajcc_stage")
+
                     patients.append({
                         "mrn": mrn,
                         "created_at": created_at,
@@ -432,7 +446,7 @@ class DataPool:
                         "age": demographics.get("Age", "N/A"),
                         "gender": demographics.get("Gender", "N/A"),
                         "cancerType": diagnosis.get("cancer_type", "N/A"),
-                        "stage": diagnosis.get("ajcc_stage", "N/A"),
+                        "stage": stage,
                         "status": diagnosis.get("disease_status", "N/A"),
                         "lastVisit": demographics.get("Last Visit", "N/A"),
                         # Trial match counts
@@ -1100,13 +1114,27 @@ class DataPool:
                         patient = json.loads(result["patient_data"])
                         demographics = patient.get("demographics") or {}
                         diagnosis = patient.get("diagnosis") or {}
+                                # Extract stage from nested diagnosis structure
+                        # Priority: current_staging > initial_staging > flat ajcc_stage
+                        stage = "N/A"
+                        current_staging = diagnosis.get("current_staging", {})
+                        initial_staging = diagnosis.get("initial_staging", {})
+
+                        if current_staging and current_staging.get("ajcc_stage"):
+                            stage = current_staging.get("ajcc_stage")
+                        elif initial_staging and initial_staging.get("ajcc_stage"):
+                            stage = initial_staging.get("ajcc_stage")
+                        elif diagnosis.get("ajcc_stage"):
+                            # Backwards compatibility for flat structure
+                            stage = diagnosis.get("ajcc_stage")
+
                         result["patient_summary"] = {
                             "mrn": result["patient_mrn"],
                             "name": demographics.get("Patient Name", "Unknown"),
                             "age": demographics.get("Age", "N/A"),
                             "gender": demographics.get("Gender", "N/A"),
                             "cancer_type": diagnosis.get("cancer_type", "N/A"),
-                            "stage": diagnosis.get("ajcc_stage", "N/A")
+                            "stage": stage
                         }
                         del result["patient_data"]
                     except json.JSONDecodeError:

@@ -43,18 +43,19 @@ extracted_instructions = (
     "- Use the 'Lab Resulted' or 'Resulted' date (NOT specimen collection date) when available. "
 
     "Targets: "
-    "- TUMOR MARKERS: CEA (ng/mL), NSE (ng/mL), proGRP (pg/mL), CYFRA 21-1 (ng/mL). "
-    "- CBC: WBC (10^3/μL or K/μL), Hemoglobin (g/dL), Platelets (10^3/μL or K/μL), ANC (10^3/μL or K/μL - if missing, use 'Segs#' or 'Polys, Abs'). "
-    "- METABOLIC: Creatinine (mg/dL), ALT (U/L or IU/L), AST (U/L or IU/L), Total Bilirubin (mg/dL - may also be labeled as 'Bilirubin' or 'Bili'). "
+    "- TUMOR MARKERS: CEA, NSE, proGRP, CYFRA 21-1. "
+    "- CBC: WBC, Hemoglobin, Platelets, ANC (if missing, use 'Segs#' or 'Polys, Abs'). "
+    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin (may also be labeled as 'Bilirubin' or 'Bili'). "
 
-    "UNIT CONVERSION REQUIREMENTS: "
-    "- If the lab report shows values in different units, CONVERT them to the standard units specified above. "
-    "- Common conversions: "
-    "  * Hemoglobin: g/L → g/dL (divide by 10) "
-    "  * Creatinine: μmol/L → mg/dL (divide by 88.4) "
-    "  * Total Bilirubin: μmol/L → mg/dL (divide by 17.1) "
-    "  * WBC/Platelets/ANC: cells/μL → 10^3/μL (divide by 1000) "
-    "- Always specify the unit after conversion in your output. "
+    "UNIT EXTRACTION (EXTRACT AS-IS): "
+    "- Extract the unit EXACTLY as it appears in the lab report. "
+    "- DO NOT perform any unit conversions. "
+    "- Keep all variations as-is: '10*3/uL', 'K/uL', 'g/L', 'μmol/L', etc. "
+    "- Examples: "
+    "  * Report shows '112 g/L' → Extract: value = 112, unit = 'g/L' (no conversion) "
+    "  * Report shows '88 μmol/L' → Extract: value = 88, unit = 'μmol/L' (no conversion) "
+    "  * Report shows '6850 /μL' → Extract: value = 6850, unit = '/μL' (no conversion) "
+    "- The system will automatically handle all unit conversions during post-processing. "
 
     "CLINICAL INTERPRETATION: "
     "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40 U/L), Neutropenia (ANC <1.5 K/μL)."
@@ -130,27 +131,27 @@ For EVERY biomarker listed below, extract:
 - The most recent value with its unit, date, status, reference range, and source context.
 
 ========================
-TARGET BIOMARKERS WITH STANDARD UNITS
+TARGET BIOMARKERS
 ========================
 
 TUMOR MARKERS:
-- CEA (Carcinoembryonic Antigen) → Standard unit: ng/mL
-- NSE (Neuron-Specific Enolase) → Standard unit: ng/mL
-- proGRP (Pro-Gastrin-Releasing Peptide) → Standard unit: pg/mL
-- CYFRA 21-1 (Cytokeratin 19 Fragment) → Standard unit: ng/mL
+- CEA (Carcinoembryonic Antigen)
+- NSE (Neuron-Specific Enolase)
+- proGRP (Pro-Gastrin-Releasing Peptide)
+- CYFRA 21-1 (Cytokeratin 19 Fragment)
 
 COMPLETE BLOOD COUNT (CBC):
-- WBC (White Blood Cell Count) → Standard unit: 10^3/μL (also written as K/μL, Thousand/μL)
-- Hemoglobin (Hgb) → Standard unit: g/dL
-- Platelets → Standard unit: 10^3/μL (also written as K/μL, Thousand/μL)
-- ANC (Absolute Neutrophil Count) → Standard unit: 10^3/μL (also written as K/μL, Thousand/μL)
+- WBC (White Blood Cell Count)
+- Hemoglobin (Hgb)
+- Platelets
+- ANC (Absolute Neutrophil Count)
   * If missing, use 'Segs#', 'Polys, Abs', or 'Neutrophils, Absolute'
 
 METABOLIC PANEL:
-- Creatinine → Standard unit: mg/dL
-- ALT (Alanine Aminotransferase) → Standard unit: U/L
-- AST (Aspartate Aminotransferase) → Standard unit: U/L
-- Total Bilirubin → Standard unit: mg/dL
+- Creatinine
+- ALT (Alanine Aminotransferase)
+- AST (Aspartate Aminotransferase)
+- Total Bilirubin
   * CRITICAL: Also appears as "Total Bili", "Bilirubin", "Bili", "T. Bili", "T Bili", "Bilirubin Total", "Bilirubin, Total"
 
 ========================
@@ -178,20 +179,19 @@ CRITICAL EXTRACTION RULES
    - Low: Below reference range
    - Use 'Pending' if not yet available
 
-4. UNIT STANDARDIZATION RULE (CRITICAL FOR CONSISTENCY)
-   - ALWAYS convert values to the standard units specified above
-   - Common conversions needed:
-     * WBC/Platelets/ANC: If unit shows "10*3/uL", "10^3/uL", "10**3/uL", "K/uL", or "Thousand/uL" → Keep value AS-IS, output unit as "10^3/μL"
-     * WBC/Platelets/ANC: If unit shows "/uL" or "cells/μL" (NO thousands indicator) → Divide value by 1000, output unit as "10^3/μL"
-     * Hemoglobin: If unit shows "g/L" → Divide value by 10, output unit as "g/dL"
-     * Hemoglobin: If unit shows "mg/dL" → Divide value by 1000, output unit as "g/dL"
-     * Creatinine: If unit shows "μmol/L" or "umol/L" → Divide value by 88.4, output unit as "mg/dL"
-     * Total Bilirubin: If unit shows "μmol/L" or "umol/L" → Divide value by 17.1, output unit as "mg/dL"
-     * Tumor markers: If unit differs from standard → Convert to standard unit
-   - CRITICAL: Recognize "10*3" (asterisk), "10^3" (caret), "10**3" (double asterisk) all mean 10³ (thousands)
-   - If value is already in standard unit, keep it unchanged
-   - Round converted values to 2 decimal places
-   - Preserve all digits for values already in standard units
+4. UNIT EXTRACTION RULE (EXTRACT AS-IS)
+   - Extract the unit EXACTLY as it appears in the lab report
+   - DO NOT perform any unit conversions
+   - DO NOT normalize or modify unit notation
+   - Keep all variations as-is: "10*3/uL", "K/uL", "g/L", "μmol/L", etc.
+   - Examples of correct extraction:
+     * Report shows "44.52 10*3/uL" → Extract: value = 44.52, unit = "10*3/uL"
+     * Report shows "112 g/L" → Extract: value = 112, unit = "g/L"
+     * Report shows "88 μmol/L" → Extract: value = 88, unit = "μmol/L"
+     * Report shows "6850 /μL" → Extract: value = 6850, unit = "/μL"
+     * Report shows "185 K/uL" → Extract: value = 185, unit = "K/uL"
+   - The system will automatically handle all unit conversions during post-processing
+   - Your task is to extract accurately, not to convert
 
 5. NULL POLICY
    - If value is missing or unclear, set to null
@@ -223,13 +223,13 @@ CRITICAL EXTRACTION RULES
 OUTPUT SCHEMA (STRICT)
 ========================
 
-IMPORTANT: All values MUST be converted to standard units as specified above.
+IMPORTANT: Extract values and units EXACTLY as they appear in the lab report.
 
 {
   "tumor_markers": {
     "CEA": {
-      "value": <float or "Pending" or null> (converted to standard unit if needed),
-      "unit": "ng/mL" (MUST be standard unit),
+      "value": <float or "Pending" or null> (extract as-is from report),
+      "unit": "<string>" (extract exactly as shown in report - e.g., "ng/mL", "ng/dL", "μg/L"),
       "date": "YYYY-MM-DD",
       "status": "<Normal|High|Low|Pending>",
       "reference_range": "<string>",
@@ -273,23 +273,26 @@ Provide a summary including:
 - Any other clinically significant abnormalities
 
 ========================
-UNIT CONVERSION EXAMPLES
+EXTRACTION EXAMPLES (AS-IS)
 ========================
 
 Example 1: WBC shows "44.52" with unit "10*3/uL" in report
-→ Extract: value = 44.52, unit = "10^3/μL" (NO conversion needed, asterisk means already in thousands)
+→ Extract: value = 44.52, unit = "10*3/uL" (EXACT as shown - no changes)
 
 Example 2: WBC shows "6850" with unit "/μL" in report
-→ Extract: value = 6.85, unit = "10^3/μL" (CONVERTED: 6850 ÷ 1000 = 6.85)
+→ Extract: value = 6850, unit = "/μL" (EXACT as shown - no changes)
 
 Example 3: Hemoglobin shows "112" with unit "g/L" in report
-→ Extract: value = 11.2, unit = "g/dL" (CONVERTED: 112 ÷ 10 = 11.2)
+→ Extract: value = 112, unit = "g/L" (EXACT as shown - no changes)
 
 Example 4: Creatinine shows "88" with unit "μmol/L" in report
-→ Extract: value = 1.0, unit = "mg/dL" (CONVERTED: 88 ÷ 88.4 ≈ 1.0)
+→ Extract: value = 88, unit = "μmol/L" (EXACT as shown - no changes)
 
 Example 5: Platelets shows "185 K/uL" in report
-→ Extract: value = 185, unit = "10^3/μL" (NO conversion needed, K means thousands)
+→ Extract: value = 185, unit = "K/uL" (EXACT as shown - no changes)
+
+Example 6: Total Bilirubin shows "1.2" with unit "mg/dL" in report
+→ Extract: value = 1.2, unit = "mg/dL" (EXACT as shown - no changes)
 
 ========================
 FINAL VALIDATION
@@ -298,8 +301,8 @@ FINAL VALIDATION
 Before returning output:
 - Ensure ALL target biomarkers are present in the output (even if null)
 - Ensure dates are in YYYY-MM-DD format
-- Ensure all values are in STANDARD UNITS (converted if necessary)
-- Ensure unit strings match the standard formats exactly (e.g., "10^3/μL" not "10*3/uL")
+- Ensure all values and units are extracted EXACTLY as they appear in the report
+- DO NOT modify or standardize unit strings (keep "10*3/uL", "K/uL", "g/L", etc. as-is)
 - Ensure schema consistency with all required fields
 
 ========================

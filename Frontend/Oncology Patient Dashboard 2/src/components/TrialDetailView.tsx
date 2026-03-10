@@ -183,7 +183,9 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
                 {nctId}
                 <ExternalLink className="h-3 w-3" />
               </a>
-              <Badge className={getPhaseColor(trial.phase)}>{trial.phase || 'N/A'}</Badge>
+              {trial.phase && trial.phase !== 'N/A' && trial.phase !== 'NA' && (
+                <Badge className={getPhaseColor(trial.phase)}>{trial.phase}</Badge>
+              )}
               <Badge className="bg-green-100 text-green-800">{trial.status?.replace(/_/g, ' ')}</Badge>
             </div>
             <h1 className="text-xl font-bold text-gray-900">{trial.title}</h1>

@@ -43,6 +43,7 @@ from Backend.Utils.Tabs.treatment_tab import extract_treatment_tab_info
 from Backend.Utils.Tabs.genomics_tab import extract_genomic_info
 from Backend.Utils.Tabs.diagnosis_tab import diagnosis_extraction
 from Backend.Utils.Tabs.pathology_tab import pathology_info, classify_pathology_report_with_gemini
+from Backend.Utils.classification_cache import get_cached_classification, cache_classification, get_classification_cache
 from Backend.Utils.logger_config import setup_logger
 
 # Setup logger
@@ -425,6 +426,8 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
         'molecular_results_documents': None,
         'pathology_documents': None,
         'md_notes_documents': None,
+        'genomic_info': None,
+        'genomics_reports': [],
         'error': None
     }
 
@@ -478,7 +481,7 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
         # Cache PDF bytes to avoid redundant downloads
         pdf_bytes_cache = {}  # {doc_url: pdf_bytes}
 
-        # Fetch and cache PDF bytes for Molecular Results (no classification needed)
+        # Step 3a: Fetch and cache PDF bytes for Molecular Results (no classification needed)
         if molecular_results_docs:
             if verbose:
                 print(f"\n      Fetching PDF bytes for {len(molecular_results_docs)} Molecular Results documents...")
@@ -494,8 +497,11 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
                     if verbose:
                         print(f"         ⚠️  Failed to fetch: {str(e)}")
 
+        # Step 3b: Separate MD notes from pathology reports
+        if verbose:
+            print(f"\n      Separating MD notes from pathology reports...")
+
         for doc in all_documents:
-            description = doc.get('description', '').lower()
             doc_type = doc.get('document_type', '').lower()
 
             # Check if it's an MD note
@@ -503,59 +509,130 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
                          'progress' in doc_type or 'visit' in doc_type)
 
             if is_md_note:
-                # Fetch and cache MD note PDF bytes
-                try:
-                    pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
-                    if pdf_bytes:
-                        pdf_bytes_cache[doc['url']] = pdf_bytes
-                        md_notes_docs.append(doc)
-                        if verbose:
-                            print(f"      ✓ MD Note identified and cached: {doc['date']}: {doc.get('description', 'Report')}")
-                except Exception as e:
-                    if verbose:
-                        print(f"      ⚠️  Failed to fetch MD note: {str(e)}")
-                    continue
+                md_notes_docs.append(doc)
             else:
-                # It's a pathology report - classify it
+                # It's a pathology report
                 pathology_docs.append(doc)
 
+        if verbose:
+            print(f"         ✓ Found {len(md_notes_docs)} MD note(s)")
+            print(f"         ✓ Found {len(pathology_docs)} pathology report(s)")
+
+        # Step 3c: Fetch MD note PDF bytes
+        if md_notes_docs:
+            if verbose:
+                print(f"\n      Fetching PDF bytes for {len(md_notes_docs)} MD note(s)...")
+
+            for doc in md_notes_docs:
+                try:
+                    pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
+                    if pdf_bytes:
+                        pdf_bytes_cache[doc['url']] = pdf_bytes
+                        if verbose:
+                            print(f"         ✓ Cached: {doc['date']}: {doc.get('description', 'Report')}")
+                except Exception as e:
+                    if verbose:
+                        print(f"         ⚠️  Failed to fetch MD note: {str(e)}")
+                    continue
+
+        # Step 3d: Classify pathology reports (using cache when possible)
+        if pathology_docs:
+            if verbose:
+                print(f"\n      Classifying {len(pathology_docs)} pathology report(s)...")
+
+        for doc in pathology_docs:
                 if verbose:
-                    print(f"      Classifying pathology report: {doc['date']}: {doc.get('description', 'Report')}")
+                    print(f"         Classifying: {doc['date']}: {doc.get('description', 'Report')}")
 
                 try:
-                    # Fetch PDF bytes for classification AND cache them
-                    pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
+                    # Check cache first (OPTIMIZATION)
+                    cached_classification = get_cached_classification(
+                        document_url=doc['url'],
+                        document_date=doc.get('date')
+                    )
 
-                    if pdf_bytes:
-                        # Cache the bytes to avoid re-downloading
-                        pdf_bytes_cache[doc['url']] = pdf_bytes
-
-                        # Classify the report
-                        classification = classify_pathology_report_with_gemini(pdf_bytes)
+                    if cached_classification:
+                        # Use cached classification - no API call needed!
+                        classification = cached_classification
                         doc['classification'] = classification
                         classification_results.append({
                             'document': doc,
                             'classification': classification
                         })
 
+                        # IMPORTANT: Fetch and cache PDF bytes even when classification is cached
+                        # This ensures bytes are available for combining PDFs without re-fetching
+                        if verbose:
+                            print(f"            Fetching PDF bytes for cached classification...")
+
+                        try:
+                            pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
+                            if pdf_bytes:
+                                pdf_bytes_cache[doc['url']] = pdf_bytes
+                                if verbose:
+                                    print(f"            ✓ PDF bytes cached for future use")
+                        except Exception as e:
+                            if verbose:
+                                print(f"            ⚠️  Failed to fetch PDF bytes: {str(e)}")
+
                         if classification['category'] == 'GENOMIC_ALTERATIONS':
                             genomic_pathology_docs.append(doc)
                             if verbose:
-                                print(f"         ✓ GENOMIC ALTERATIONS detected (confidence: {classification['confidence']})")
-                                print(f"           Reasoning: {classification['reasoning']}")
+                                print(f"            ✓ GENOMIC_ALTERATIONS (cached, confidence: {classification['confidence']})")
                         else:
                             typical_pathology_docs.append(doc)
                             if verbose:
-                                print(f"         ℹ️  TYPICAL PATHOLOGY (will be processed by pathology tab)")
+                                print(f"            ✓ TYPICAL_PATHOLOGY (cached, confidence: {classification['confidence']})")
+
                     else:
+                        # Not cached - fetch and classify
                         if verbose:
-                            print(f"         ⚠️  Could not fetch PDF bytes, skipping classification")
+                            print(f"            Fetching PDF and classifying with Gemini...")
+
+                        pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
+
+                        if pdf_bytes:
+                            # Cache the bytes to avoid re-downloading
+                            pdf_bytes_cache[doc['url']] = pdf_bytes
+
+                            # Classify the report (API call)
+                            classification = classify_pathology_report_with_gemini(pdf_bytes)
+                            doc['classification'] = classification
+                            classification_results.append({
+                                'document': doc,
+                                'classification': classification
+                            })
+
+                            # Store classification in cache for future use
+                            cache_classification(
+                                document_url=doc['url'],
+                                classification=classification,
+                                document_date=doc.get('date'),
+                                document_description=doc.get('description')
+                            )
+
+                            if classification['category'] == 'GENOMIC_ALTERATIONS':
+                                genomic_pathology_docs.append(doc)
+                                if verbose:
+                                    print(f"            ✓ GENOMIC_ALTERATIONS (confidence: {classification['confidence']})")
+                            else:
+                                typical_pathology_docs.append(doc)
+                                if verbose:
+                                    print(f"            ✓ TYPICAL_PATHOLOGY (confidence: {classification['confidence']})")
+                        else:
+                            if verbose:
+                                print(f"            ⚠️  Could not fetch PDF bytes, skipping classification")
 
                 except Exception as e:
                     if verbose:
                         print(f"         ⚠️  Classification failed: {str(e)}, including by default")
                     # If classification fails, include it by default to be safe
                     genomic_pathology_docs.append(doc)
+
+        if verbose and pathology_docs:
+            print(f"\n      Classification Summary:")
+            print(f"         ✓ Genomic Alterations Reports: {len(genomic_pathology_docs)}")
+            print(f"         ✓ Typical Pathology Reports: {len(typical_pathology_docs)}")
 
         # Use Molecular Results + Genomic Pathology Reports + MD Notes for genomic extraction
         all_documents_for_genomics = molecular_results_docs + genomic_pathology_docs + md_notes_docs
@@ -646,7 +723,20 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
             print(f"\n[5/5] Extracting genomic information from combined PDF bytes...")
 
         # Pass bytes directly instead of URL to avoid re-downloading
-        result['genomic_info'] = extract_genomic_info(pdf_input=combined_pdf_bytes)
+        try:
+            result['genomic_info'] = extract_genomic_info(pdf_input=combined_pdf_bytes)
+            if verbose:
+                print(f"      ✓ Genomic extraction completed successfully")
+        except Exception as e:
+            if verbose:
+                print(f"      ⚠️  Genomic extraction failed: {str(e)}")
+            # Set empty genomic info on failure
+            result['genomic_info'] = {
+                'detected_driver_mutations': [],
+                'immunotherapy_markers': {},
+                'additional_genomic_alterations': []
+            }
+            raise
 
         # Format genomics documents for Documents tab (molecular results + genomic pathology reports, not MD notes)
         genomic_documents_for_tab = []
@@ -672,6 +762,14 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
             })
 
         result['genomics_reports'] = genomic_documents_for_tab
+
+        # Clean up large PDF bytes from memory to prevent issues
+        combined_pdf_bytes = None
+        pdf_bytes_cache.clear()
+
+        # Force garbage collection to release memory
+        import gc
+        gc.collect()
 
         if verbose:
             print("\n" + "="*70)
@@ -778,14 +876,19 @@ def pathology_tab_info_pipeline(mrn: str, verbose: bool = True, use_gemini_api: 
                 print(f"      Classifying: {doc['date']}: {doc.get('description', 'Report')}")
 
             try:
-                # Fetch PDF bytes for classification
-                pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
+                # Check cache first (OPTIMIZATION)
+                cached_classification = get_cached_classification(
+                    document_url=doc['url'],
+                    document_date=doc.get('date')
+                )
 
-                if pdf_bytes:
-                    # Classify the report
-                    classification = classify_pathology_report_with_gemini(pdf_bytes)
+                if cached_classification:
+                    # Use cached classification - no API call needed!
+                    classification = cached_classification
                     doc['classification'] = classification
-                    doc['pdf_bytes'] = pdf_bytes  # Store temporarily for processing
+                    # Need to fetch PDF bytes for processing (but skip classification)
+                    pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
+                    doc['pdf_bytes'] = pdf_bytes if pdf_bytes else None
 
                     # Add to classification results WITHOUT pdf_bytes
                     classification_results.append({
@@ -793,18 +896,54 @@ def pathology_tab_info_pipeline(mrn: str, verbose: bool = True, use_gemini_api: 
                         'classification': classification
                     })
 
-                    if classification['category'] == 'TYPICAL_PATHOLOGY':
-                        typical_pathology_docs.append(doc)
-                        if verbose:
-                            print(f"         ✓ TYPICAL PATHOLOGY detected (confidence: {classification['confidence']})")
-                            print(f"           Reasoning: {classification['reasoning']}")
-                    else:
-                        genomic_pathology_docs.append(doc)
-                        if verbose:
-                            print(f"         ℹ️  GENOMIC ALTERATIONS (will be processed by genomics tab)")
-                else:
                     if verbose:
-                        print(f"         ⚠️  Could not fetch PDF bytes, skipping")
+                        print(f"         ✓ Using cached classification: {classification['category']} (confidence: {classification['confidence']})")
+
+                else:
+                    # Not cached - fetch and classify
+                    pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
+
+                    if pdf_bytes:
+                        # Classify the report (API call)
+                        classification = classify_pathology_report_with_gemini(pdf_bytes)
+                        doc['classification'] = classification
+                        doc['pdf_bytes'] = pdf_bytes  # Store temporarily for processing
+
+                        # Store classification in cache for future use
+                        cache_classification(
+                            document_url=doc['url'],
+                            classification=classification,
+                            document_date=doc.get('date'),
+                            document_description=doc.get('description')
+                        )
+
+                        # Add to classification results WITHOUT pdf_bytes
+                        classification_results.append({
+                            'document': {k: v for k, v in doc.items() if k != 'pdf_bytes'},
+                            'classification': classification
+                        })
+
+                        if classification['category'] == 'TYPICAL_PATHOLOGY':
+                            typical_pathology_docs.append(doc)
+                            if verbose:
+                                print(f"         ✓ TYPICAL PATHOLOGY detected (confidence: {classification['confidence']})")
+                                print(f"           Reasoning: {classification['reasoning']}")
+                        else:
+                            genomic_pathology_docs.append(doc)
+                            if verbose:
+                                print(f"         ℹ️  GENOMIC ALTERATIONS (will be processed by genomics tab)")
+                    else:
+                        if verbose:
+                            print(f"         ⚠️  Could not fetch PDF bytes, skipping")
+
+                # After cache check block - handle categorization
+                if classification:
+                    if classification['category'] == 'TYPICAL_PATHOLOGY':
+                        if doc not in typical_pathology_docs:
+                            typical_pathology_docs.append(doc)
+                    else:
+                        if doc not in genomic_pathology_docs:
+                            genomic_pathology_docs.append(doc)
 
             except Exception as e:
                 if verbose:

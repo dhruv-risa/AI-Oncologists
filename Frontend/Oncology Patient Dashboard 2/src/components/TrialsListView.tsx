@@ -20,7 +20,7 @@ interface TrialsListViewProps {
 
 export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListViewProps) {
   const [trials, setTrials] = useState<CachedTrial[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -29,11 +29,98 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
   const [total, setTotal] = useState(0);
   const [syncStatus, setSyncStatus] = useState<SyncStatusResponse | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [hasCachedData, setHasCachedData] = useState(false);
 
   const limit = 20;
 
-  const fetchTrials = async () => {
-    setLoading(true);
+  // Cache keys for localStorage
+  const getCacheKeys = (filter: string, pageNum: number) => ({
+    trials: `clinical_trials_cache_${filter}_${pageNum}`,
+    syncStatus: 'clinical_trials_sync_status',
+    pagination: `clinical_trials_pagination_${filter}`,
+  });
+
+  const CACHE_KEYS = getCacheKeys(statusFilter, page);
+
+  // Load cached data and fetch fresh data
+  useEffect(() => {
+    const loadAndFetch = async () => {
+      const keys = getCacheKeys(statusFilter, page);
+      let hasCache = false;
+
+      // Load from cache first
+      try {
+        // Load trials from cache
+        const cachedTrials = localStorage.getItem(keys.trials);
+        if (cachedTrials) {
+          const parsed = JSON.parse(cachedTrials);
+          setTrials(parsed);
+          hasCache = true;
+        }
+
+        // Load pagination from cache
+        const cachedPagination = localStorage.getItem(keys.pagination);
+        if (cachedPagination) {
+          const parsed = JSON.parse(cachedPagination);
+          setTotalPages(parsed.totalPages);
+          setTotal(parsed.total);
+        }
+
+        // Load sync status from cache
+        const cachedSyncStatus = localStorage.getItem(keys.syncStatus);
+        if (cachedSyncStatus) {
+          setSyncStatus(JSON.parse(cachedSyncStatus));
+        }
+      } catch (err) {
+        console.error('Failed to load cached trials data:', err);
+      }
+
+      // Only show loading if we don't have cached data
+      if (!hasCache) {
+        setLoading(true);
+      }
+
+      // Fetch fresh data in background
+      try {
+        const response = await apiService.listTrials({
+          status: statusFilter === 'all' ? undefined : statusFilter,
+          page,
+          limit,
+        });
+        setTrials(response.trials);
+        setTotalPages(response.total_pages);
+        setTotal(response.total);
+
+        // Cache the data
+        localStorage.setItem(keys.trials, JSON.stringify(response.trials));
+        localStorage.setItem(keys.pagination, JSON.stringify({
+          totalPages: response.total_pages,
+          total: response.total,
+        }));
+        setHasCachedData(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch trials');
+      } finally {
+        setLoading(false);
+      }
+
+      // Fetch sync status
+      try {
+        const status = await apiService.getSyncStatus();
+        setSyncStatus(status);
+        localStorage.setItem(keys.syncStatus, JSON.stringify(status));
+      } catch (err) {
+        console.error('Failed to fetch sync status:', err);
+      }
+    };
+
+    loadAndFetch();
+  }, [page, statusFilter]);
+
+  const fetchTrials = async (forceLoading = false) => {
+    if (forceLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const response = await apiService.listTrials({
@@ -44,6 +131,14 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
       setTrials(response.trials);
       setTotalPages(response.total_pages);
       setTotal(response.total);
+
+      // Cache the data
+      localStorage.setItem(CACHE_KEYS.trials, JSON.stringify(response.trials));
+      localStorage.setItem(CACHE_KEYS.pagination, JSON.stringify({
+        totalPages: response.total_pages,
+        total: response.total,
+      }));
+      setHasCachedData(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch trials');
     } finally {
@@ -55,21 +150,26 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
     try {
       const status = await apiService.getSyncStatus();
       setSyncStatus(status);
+
+      // Cache sync status
+      localStorage.setItem(CACHE_KEYS.syncStatus, JSON.stringify(status));
     } catch (err) {
       console.error('Failed to fetch sync status:', err);
     }
   };
 
-  useEffect(() => {
-    fetchTrials();
-    fetchSyncStatus();
-  }, [page, statusFilter]);
-
   const handleSync = async () => {
     setSyncing(true);
     try {
-      await apiService.fullSync({ background: false, maxTrialsPerQuery: 30, limitTrials: 50 });
-      await fetchTrials();
+      await apiService.fullSync({ background: false, maxTrialsPerQuery: 50, limitTrials: 50 });
+
+      // Clear all cached data to force fresh fetch
+      Object.values(CACHE_KEYS).forEach(key => {
+        localStorage.removeItem(key);
+      });
+      setHasCachedData(false);
+
+      await fetchTrials(true); // Force loading state
       await fetchSyncStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sync failed');
@@ -231,9 +331,11 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-mono text-blue-600">{trial.nct_id}</span>
                     <div className="flex gap-2">
-                      <Badge className={getPhaseColor(trial.phase || 'N/A')}>
-                        {trial.phase || 'N/A'}
-                      </Badge>
+                      {trial.phase && trial.phase !== 'N/A' && trial.phase !== 'NA' && (
+                        <Badge className={getPhaseColor(trial.phase)}>
+                          {trial.phase}
+                        </Badge>
+                      )}
                       <Badge className={getStatusColor(trial.status)}>
                         {trial.status?.replace(/_/g, ' ') || 'Unknown'}
                       </Badge>

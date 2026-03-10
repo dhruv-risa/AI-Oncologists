@@ -731,7 +731,7 @@ Just the pure JSON object following the schema above.
         raise
 
 
-def radiology_info(pdf_url_only_report, use_gemini_api=False):
+def radiology_info(pdf_url_only_report=None, pdf_input=None, use_gemini_api=False):
     """
     Extract radiology information from a radiology report PDF.
 
@@ -741,7 +741,8 @@ def radiology_info(pdf_url_only_report, use_gemini_api=False):
     2. Vertex AI SDK approach (use_gemini_api=True): Uses Vertex AI SDK with Gemini 2.5 Flash
 
     Args:
-        pdf_url_only_report (str): URL to the radiology report PDF (Google Drive URL or local path)
+        pdf_url_only_report (str, optional): URL to the radiology report PDF (Google Drive URL or local path)
+        pdf_input (bytes or str, optional): PDF bytes or path. If provided, takes precedence over pdf_url_only_report.
         use_gemini_api (bool): Toggle for extraction approach
             - False (default): Use legacy llmresponsedetailed approach with GPT-5
             - True: Use Vertex AI SDK with Gemini for extraction
@@ -757,7 +758,13 @@ def radiology_info(pdf_url_only_report, use_gemini_api=False):
                 - impression (array of clinical findings)
                 - recist_measurements (dual baseline RECIST tracking)
     """
-    log_extraction_start(logger, "Radiology Tab - Summary", pdf_url_only_report)
+    # Use pdf_input if provided, otherwise fall back to pdf_url_only_report
+    pdf_source = pdf_input if pdf_input is not None else pdf_url_only_report
+
+    if pdf_source is None:
+        raise ValueError("Either pdf_url_only_report or pdf_input must be provided")
+
+    log_extraction_start(logger, "Radiology Tab - Summary", str(pdf_source) if not isinstance(pdf_source, bytes) else f"PDF bytes ({len(pdf_source)} bytes)")
 
     logger.info("="*80)
     logger.info("RADIOLOGY REPORT EXTRACTION")
@@ -767,15 +774,15 @@ def radiology_info(pdf_url_only_report, use_gemini_api=False):
     if use_gemini_api:
         logger.info("🔧 Using Vertex AI SDK approach for extraction")
 
-        # Extract Report Summary using Vertex AI SDK
+        # Extract Report Summary using Vertex AI SDK (supports bytes)
         logger.info("🔄 Extracting radiology summary (1/2) via Vertex AI SDK...")
-        patient_radiology_summary = extract_radiology_summary_with_gemini_api(pdf_url_only_report)
+        patient_radiology_summary = extract_radiology_summary_with_gemini_api(pdf_source)
         log_extraction_output(logger, "Radiology Summary", patient_radiology_summary)
         log_extraction_complete(logger, "Radiology Summary", patient_radiology_summary.keys() if isinstance(patient_radiology_summary, dict) else None)
 
-        # Extract Impression and RECIST using Vertex AI SDK
+        # Extract Impression and RECIST using Vertex AI SDK (supports bytes)
         logger.info("🔄 Extracting radiology impression & RECIST (2/2) via Vertex AI SDK...")
-        patient_radiology_imp_RECIST = extract_radiology_imp_recist_with_gemini_api(pdf_url_only_report)
+        patient_radiology_imp_RECIST = extract_radiology_imp_recist_with_gemini_api(pdf_source)
         log_extraction_output(logger, "Radiology Impression & RECIST", patient_radiology_imp_RECIST)
         log_extraction_complete(logger, "Radiology Impression & RECIST", patient_radiology_imp_RECIST.keys() if isinstance(patient_radiology_imp_RECIST, dict) else None)
 
@@ -793,7 +800,7 @@ def radiology_info(pdf_url_only_report, use_gemini_api=False):
         # Extract Report Summary (Header data) using legacy approach
         logger.info("🔄 Extracting radiology summary (1/2) via llmresponsedetailed...")
         patient_radiology_summary = llmresponsedetailed(
-            pdf_url_only_report,
+            pdf_source,
             extraction_instructions=extracted_instructions_summary,
             description=description_summary,
             config=config
@@ -804,7 +811,7 @@ def radiology_info(pdf_url_only_report, use_gemini_api=False):
         # Extract Impression and Complex RECIST Table using legacy approach
         logger.info("🔄 Extracting radiology impression & RECIST (2/2) via llmresponsedetailed...")
         patient_radiology_imp_RECIST = llmresponsedetailed(
-            pdf_url_only_report,
+            pdf_source,
             extraction_instructions=extracted_instructions_imp_RECIST,
             description=description_imp_RECIST,
             config=config
@@ -820,7 +827,7 @@ def radiology_info(pdf_url_only_report, use_gemini_api=False):
 
 
 
-def extract_radiology_details_from_report(radiology_url, use_gemini_api=False):
+def extract_radiology_details_from_report(radiology_url=None, pdf_input=None, use_gemini_api=False):
     """
     Extract radiology details from a single report.
 
@@ -829,7 +836,8 @@ def extract_radiology_details_from_report(radiology_url, use_gemini_api=False):
     2. Impression and RECIST measurements from radiology report
 
     Args:
-        radiology_url (str): Google Drive URL for the radiology report
+        radiology_url (str, optional): Google Drive URL for the radiology report
+        pdf_input (bytes or str, optional): PDF bytes or path. If provided, takes precedence over radiology_url.
         use_gemini_api (bool): Toggle for extraction approach
             - False (default): Use legacy llmresponsedetailed approach with GPT-5
             - True: Use Vertex AI SDK with Gemini for extraction
@@ -839,6 +847,7 @@ def extract_radiology_details_from_report(radiology_url, use_gemini_api=False):
     """
     return radiology_info(
         pdf_url_only_report=radiology_url,
+        pdf_input=pdf_input,
         use_gemini_api=use_gemini_api
     )
 

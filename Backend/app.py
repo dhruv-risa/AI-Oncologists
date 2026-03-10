@@ -121,7 +121,7 @@ def scheduled_trial_sync():
         logger.info("SCHEDULED TRIAL SYNC STARTING")
         from Backend.Utils.batch_eligibility_engine import get_batch_engine
         engine = get_batch_engine()
-        result = engine.full_sync(max_trials_per_query=50, limit_trials=100)
+        result = engine.full_sync(max_trials_per_query=50, limit_trials=50)
         logger.info(f"Scheduled sync completed: {result}")
     except Exception as e:
         logger.error(f"Scheduled trial sync failed: {e}")
@@ -334,107 +334,208 @@ async def get_patient_data(request: MRNRequest):
             print(f"Returning cached data for MRN: {request.mrn}")
             return cached_data
 
-        # If not in cache, fetch fresh data in PARALLEL
+        # If not in cache, fetch fresh data with TWO SEQUENTIAL PIPELINES
         logger.info("="*80)
-        logger.info(f"🚀 STARTING PARALLEL EXTRACTION for MRN: {request.mrn}")
+        logger.info(f"🚀 STARTING DUAL PIPELINE EXTRACTION for MRN: {request.mrn}")
         logger.info("="*80)
-        logger.info("⚡ Running 4 extraction pipelines concurrently:")
-        logger.info("   1️⃣  Patient Data Pipeline (Demographics, Diagnosis, Treatment, etc.)")
-        logger.info("   2️⃣  Lab Results Pipeline")
-        logger.info("   3️⃣  Genomics Pipeline")
-        logger.info("   4️⃣  Pathology Pipeline")
+        logger.info("⚡ Running 2 pipelines SEQUENTIALLY (to optimize classification caching):")
+        logger.info("   📊 PIPELINE 1 (3 tasks in parallel):")
+        logger.info("      1️⃣  Patient Data (Demographics, Diagnosis, Treatment, etc.)")
+        logger.info("      2️⃣  Lab Results")
+        logger.info("      3️⃣  Pathology (classifies & caches reports)")
+        logger.info("   🧬 PIPELINE 2 (2 tasks in parallel - uses cached classifications):")
+        logger.info("      4️⃣  Genomics (reuses cached classifications - no duplicate API calls)")
+        logger.info("      5️⃣  Radiology")
         logger.info("="*80)
 
         # Define extraction tasks
         def extract_patient_task():
             try:
-                logger.info(f"📋 Starting patient data extraction for MRN: {request.mrn}...")
+                logger.info(f"📋 [Pipeline 1] Starting patient data extraction for MRN: {request.mrn}...")
                 result = extract_patient_data(request.mrn, False)
-                logger.info(f"✅ Patient data extraction completed")
+                logger.info(f"✅ [Pipeline 1] Patient data extraction completed")
                 return ('patient', result, None)
             except Exception as e:
-                logger.error(f"❌ Patient data extraction failed: {str(e)}")
+                logger.error(f"❌ [Pipeline 1] Patient data extraction failed: {str(e)}")
                 return ('patient', None, str(e))
 
         def extract_lab_task():
             try:
-                logger.info(f"🧪 Starting lab results extraction for MRN: {request.mrn}...")
+                logger.info(f"🧪 [Pipeline 1] Starting lab results extraction for MRN: {request.mrn}...")
                 lab_result = lab_tab_info(request.mrn, False)
-                logger.info(f"✅ Lab results extraction completed")
+                logger.info(f"✅ [Pipeline 1] Lab results extraction completed")
                 return ('lab', lab_result, None)
             except Exception as e:
-                logger.error(f"❌ Lab results extraction failed: {str(e)}")
+                logger.error(f"❌ [Pipeline 1] Lab results extraction failed: {str(e)}")
                 return ('lab', None, str(e))
 
         def extract_genomics_task():
             try:
-                logger.info(f"🧬 Starting genomics extraction for MRN: {request.mrn}...")
-                genomics_result = genomics_tab_info(request.mrn, False)
-                logger.info(f"✅ Genomics extraction completed")
+                logger.info(f"🧬 [Pipeline 2] Starting genomics extraction for MRN: {request.mrn}...")
+                genomics_result = genomics_tab_info(request.mrn, True)
+                logger.info(f"✅ [Pipeline 2] Genomics extraction completed")
                 return ('genomics', genomics_result, None)
             except Exception as e:
-                logger.error(f"❌ Genomics extraction failed: {str(e)}")
+                logger.error(f"❌ [Pipeline 2] Genomics extraction failed: {str(e)}")
                 return ('genomics', None, str(e))
 
         def extract_pathology_task():
             try:
-                logger.info(f"🔬 Starting pathology extraction for MRN: {request.mrn}...")
+                logger.info(f"🔬 [Pipeline 1] Starting pathology extraction for MRN: {request.mrn}...")
                 pathology_result = pathology_tab_info_pipeline(request.mrn, False, True)
-                logger.info(f"✅ Pathology extraction completed")
+                logger.info(f"✅ [Pipeline 1] Pathology extraction completed")
                 return ('pathology', pathology_result, None)
             except Exception as e:
-                logger.error(f"❌ Pathology extraction failed: {str(e)}")
+                logger.error(f"❌ [Pipeline 1] Pathology extraction failed: {str(e)}")
                 return ('pathology', None, str(e))
 
-        # Execute all tasks in parallel
-        tasks = [
-            extract_patient_task,
-            extract_lab_task,
-            extract_genomics_task,
-            extract_pathology_task
-        ]
+        def extract_radiology_task():
+            try:
+                logger.info(f"🏥 [Pipeline 2] Starting radiology extraction for MRN: {request.mrn}...")
+                radiology_reports = upload_individual_radiology_reports_with_MD_notes_to_drive(
+                    mrn=request.mrn
+                )
 
-        # Store results
-        result = None
-        lab_result = None
-        genomics_result = None
-        pathology_result = None
-        errors = []
+                if radiology_reports:
+                    detailed_radiology_reports = []
+                    for report in radiology_reports:
+                        try:
+                            # Use PDF bytes directly (no download needed!)
+                            radiology_summary, radiology_imp_RECIST = extract_radiology_details_from_report(
+                                pdf_input=report['pdf_bytes'],  # Direct bytes extraction
+                                use_gemini_api=True
+                            )
+                            detailed_radiology_reports.append({
+                                "drive_url": report['drive_url'],
+                                "drive_file_id": report['drive_file_id'],
+                                "date": report['date'],
+                                "document_type": report['document_type'],
+                                "description": report['description'],
+                                "document_id": report['document_id'],
+                                "radiology_summary": radiology_summary,
+                                "radiology_imp_RECIST": radiology_imp_RECIST
+                            })
+                        except Exception as e:
+                            logger.warning(f"[Pipeline 2] Failed to extract radiology details for {report['document_id']}: {str(e)}")
+                            detailed_radiology_reports.append({
+                                "drive_url": report['drive_url'],
+                                "drive_file_id": report['drive_file_id'],
+                                "date": report['date'],
+                                "document_type": report['document_type'],
+                                "description": report['description'],
+                                "document_id": report['document_id'],
+                                "radiology_summary": None,
+                                "radiology_imp_RECIST": None,
+                                "extraction_error": str(e)
+                            })
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            # Submit all tasks
-            future_to_task = {executor.submit(task): task.__name__ for task in tasks}
+                    # Sort by date
+                    detailed_radiology_reports = sort_reports_by_date(detailed_radiology_reports, descending=True)
+                    logger.info(f"✅ [Pipeline 2] Radiology extraction completed: {len(detailed_radiology_reports)} reports")
+                    return ('radiology', {'radiology_reports': detailed_radiology_reports}, None)
+                else:
+                    logger.info(f"✅ [Pipeline 2] Radiology extraction completed: No reports found")
+                    return ('radiology', {'radiology_reports': []}, None)
+            except Exception as e:
+                logger.error(f"❌ [Pipeline 2] Radiology extraction failed: {str(e)}")
+                return ('radiology', {'radiology_reports': []}, str(e))
 
-            # Collect results as they complete
-            for future in as_completed(future_to_task):
-                task_name = future_to_task[future]
-                try:
-                    data_type, data, error = future.result()
+        # Define pipeline runners
+        def run_pipeline_1():
+            """Run Pipeline 1: Patient Data, Lab, Pathology in parallel
 
-                    if error:
-                        errors.append(f"{data_type}: {error}")
-                        logger.error(f"⚠️  {data_type} extraction had errors: {error}")
-                    else:
-                        # Assign results to appropriate variables
-                        if data_type == 'patient':
-                            result = data
-                        elif data_type == 'lab':
-                            lab_result = data
-                        elif data_type == 'genomics':
-                            genomics_result = data
-                        elif data_type == 'pathology':
-                            pathology_result = data
+            NOTE: Pathology runs in Pipeline 1 to classify and cache reports first.
+            This allows Genomics in Pipeline 2 to reuse cached classifications.
+            """
+            logger.info("🚀 [Pipeline 1] Starting parallel execution...")
+            tasks = [extract_patient_task, extract_lab_task, extract_pathology_task]
+            results = {}
+            errors = []
 
-                except Exception as e:
-                    logger.error(f"⚠️  Task {task_name} failed unexpectedly: {str(e)}")
-                    errors.append(f"{task_name}: {str(e)}")
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                future_to_task = {executor.submit(task): task.__name__ for task in tasks}
+
+                for future in as_completed(future_to_task):
+                    task_name = future_to_task[future]
+                    try:
+                        data_type, data, error = future.result()
+                        if error:
+                            errors.append(f"{data_type}: {error}")
+                            logger.error(f"⚠️  [Pipeline 1] {data_type} extraction had errors: {error}")
+                        else:
+                            results[data_type] = data
+                    except Exception as e:
+                        logger.error(f"⚠️  [Pipeline 1] Task {task_name} failed unexpectedly: {str(e)}")
+                        errors.append(f"{task_name}: {str(e)}")
+
+            logger.info("✅ [Pipeline 1] All parallel tasks completed")
+            return results, errors
+
+        def run_pipeline_2():
+            """Run Pipeline 2: Genomics and Radiology in parallel
+
+            NOTE: Genomics runs in Pipeline 2 to reuse cached classifications from Pipeline 1.
+            This eliminates duplicate Gemini API calls and reduces processing time by ~50%.
+            """
+            logger.info("🚀 [Pipeline 2] Starting parallel execution...")
+            tasks = [extract_genomics_task, extract_radiology_task]
+            results = {}
+            errors = []
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_to_task = {executor.submit(task): task.__name__ for task in tasks}
+
+                for future in as_completed(future_to_task):
+                    task_name = future_to_task[future]
+                    try:
+                        data_type, data, error = future.result()
+                        if error:
+                            errors.append(f"{data_type}: {error}")
+                            logger.error(f"⚠️  [Pipeline 2] {data_type} extraction had errors: {error}")
+                        else:
+                            results[data_type] = data
+                    except Exception as e:
+                        logger.error(f"⚠️  [Pipeline 2] Task {task_name} failed unexpectedly: {str(e)}")
+                        errors.append(f"{task_name}: {str(e)}")
+
+            logger.info("✅ [Pipeline 2] All parallel tasks completed")
+            return results, errors
+
+        # Execute pipelines SEQUENTIALLY (Pipeline 1 then Pipeline 2)
+        # This ensures Pathology classifies first, then Genomics reuses cached classifications
+        logger.info("🔄 Launching Pipeline 1 first (Patient + Lab + Pathology)...")
+
+        pipeline1_results = {}
+        pipeline2_results = {}
+        all_errors = []
+
+        # Run Pipeline 1 first
+        pipeline1_results, pipeline1_errors = run_pipeline_1()
+        all_errors.extend(pipeline1_errors)
+
+        logger.info("✅ Pipeline 1 completed. Classifications cached for Pipeline 2.")
+
+        # Run Pipeline 2 second (Genomics will use cached classifications)
+        logger.info("🔄 Launching Pipeline 2 (Genomics + Radiology)...")
+        pipeline2_results, pipeline2_errors = run_pipeline_2()
+        all_errors.extend(pipeline2_errors)
+
+        # Combine results from both pipelines
+        result = pipeline1_results.get('patient')
+        lab_result = pipeline1_results.get('lab')
+        pathology_result = pipeline1_results.get('pathology')  # Now in Pipeline 1
+        genomics_result = pipeline2_results.get('genomics')    # Now in Pipeline 2
+        radiology_result = pipeline2_results.get('radiology')
+        errors = all_errors
 
         # Check if we got the essential patient data
         if result is None:
             raise Exception(f"Failed to extract patient data. Errors: {', '.join(errors)}")
 
         logger.info("="*80)
-        logger.info(f"✅ ALL PARALLEL EXTRACTIONS COMPLETED for MRN: {request.mrn}")
+        logger.info(f"✅ DUAL PIPELINE EXTRACTION COMPLETED for MRN: {request.mrn}")
+        logger.info(f"   📊 Pipeline 1 (Parallel): Patient Data, Lab, Pathology")
+        logger.info(f"   🧬 Pipeline 2 (Parallel): Genomics, Radiology")
         if errors:
             logger.warning(f"⚠️  Some extractions had errors: {', '.join(errors)}")
         logger.info("="*80)
@@ -521,62 +622,9 @@ async def get_patient_data(request: MRNRequest):
         print(f"   - Genomic Alterations Reports: {len(genomic_alterations_reports)}")
         print(f"   - No Test Performed Reports: {len(no_test_performed_reports)}")
 
-        # Extract individual radiology reports with details (during initial load)
-        print(f"Extracting individual radiology reports for MRN: {request.mrn}")
-        try:
-            radiology_reports = upload_individual_radiology_reports_with_MD_notes_to_drive(
-                mrn=request.mrn
-            )
-
-            if radiology_reports:
-                # Extract radiology details for each report
-                detailed_radiology_reports = []
-                for report in radiology_reports:
-                    try:
-                        radiology_summary, radiology_imp_RECIST = extract_radiology_details_from_report(
-                            radiology_url=report['drive_url_with_MD'],
-                            use_gemini_api=True
-                        )
-                        detailed_radiology_reports.append({
-                            "drive_url": report['drive_url'],
-                            "drive_url_with_MD": report['drive_url_with_MD'],
-                            "drive_file_id": report['drive_file_id'],
-                            "drive_file_id_with_MD": report['drive_file_id_with_MD'],
-                            "date": report['date'],
-                            "document_type": report['document_type'],
-                            "description": report['description'],
-                            "document_id": report['document_id'],
-                            "radiology_summary": radiology_summary,
-                            "radiology_imp_RECIST": radiology_imp_RECIST
-                        })
-                    except Exception as e:
-                        # If extraction fails for a report, include error but continue
-                        print(f"Warning: Failed to extract radiology details for {report['document_id']}: {str(e)}")
-                        detailed_radiology_reports.append({
-                            "drive_url": report['drive_url'],
-                            "drive_url_with_MD": report['drive_url_with_MD'],
-                            "drive_file_id": report['drive_file_id'],
-                            "drive_file_id_with_MD": report['drive_file_id_with_MD'],
-                            "date": report['date'],
-                            "document_type": report['document_type'],
-                            "description": report['description'],
-                            "document_id": report['document_id'],
-                            "radiology_summary": None,
-                            "radiology_imp_RECIST": None,
-                            "extraction_error": str(e)
-                        })
-
-                # Sort radiology reports by date (most recent first)
-                detailed_radiology_reports = sort_reports_by_date(detailed_radiology_reports, descending=True)
-                logger.info(f"✅ Sorted {len(detailed_radiology_reports)} radiology reports by date (most recent first)")
-
-                result['radiology_reports'] = detailed_radiology_reports
-            else:
-                result['radiology_reports'] = []
-        except Exception as e:
-            # If radiology extraction completely fails, continue with other data
-            print(f"Warning: Failed to extract radiology reports: {str(e)}")
-            result['radiology_reports'] = []
+        # Merge radiology results from parallel extraction
+        result['radiology_reports'] = radiology_result.get('radiology_reports', []) if radiology_result else []
+        logger.info(f"📊 Radiology Reports: {len(result['radiology_reports'])} reports")
 
         # Auto-store in data pool
         data_pool.store_patient_data(mrn=request.mrn, data=result)
@@ -2287,7 +2335,7 @@ async def compute_eligibility_batch(
 @app.post("/api/admin/full-sync", tags=["Admin"])
 async def full_sync_batch(
     max_trials_per_query: int = 50,
-    limit_trials: int = 100,
+    limit_trials: int = 50,
     background: bool = True
 ):
     """

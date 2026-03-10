@@ -10,6 +10,7 @@ Supports filtering by:
 """
 import re
 import time
+import gc
 from typing import List, Dict, Optional, Any, Union
 from datetime import datetime, timedelta
 try:
@@ -478,7 +479,11 @@ def extract_report_with_MD(
 
         # For molecular results, match only "Molecular Results" (not "Molecular Tests")
         if report_type == "molecular":
-            if not document_type.startswith("Molecular Results"):
+            # Case-insensitive matching for molecular results variations
+            document_type_lower = document_type.lower()
+            # Match "molecular results", "molecular result", "genomic testing", "ngs results", etc.
+            molecular_keywords = ["molecular result", "genomic testing", "ngs panel", "ngs result"]
+            if not any(keyword in document_type_lower for keyword in molecular_keywords):
                 continue
         # For other types (pathology, radiology), use contains match
         elif report_type not in document_type.lower():
@@ -738,25 +743,55 @@ def fetch_and_combine_pdfs_from_urls(
 
     # Step 3: Combine all PDFs
     print(f"\nCombining {len(pdf_bytes_list)} PDFs...")
-    merger = PdfMerger()
 
-    for idx, pdf_bytes in enumerate(pdf_bytes_list, 1):
-        try:
-            pdf_stream = BytesIO(pdf_bytes)
-            merger.append(pdf_stream)
-            print(f"  Added PDF {idx} to merger")
-        except Exception as e:
-            print(f"  Warning: Failed to add PDF {idx} to merger: {str(e)}")
-            continue
+    # Keep references to all streams to prevent premature garbage collection
+    input_streams = []
+    merger = None
+    combined_pdf_stream = None
 
-    # Write combined PDF to bytes
-    combined_pdf_stream = BytesIO()
-    merger.write(combined_pdf_stream)
-    merger.close()
-    combined_pdf_bytes = combined_pdf_stream.getvalue()
-    combined_pdf_stream.close()
+    try:
+        merger = PdfMerger()
 
-    print(f"Successfully combined PDFs (total size: {len(combined_pdf_bytes)} bytes)")
+        for idx, pdf_bytes in enumerate(pdf_bytes_list, 1):
+            try:
+                pdf_stream = BytesIO(pdf_bytes)
+                input_streams.append(pdf_stream)  # Keep reference
+                merger.append(pdf_stream)
+                print(f"  Added PDF {idx} to merger")
+            except Exception as e:
+                print(f"  Warning: Failed to add PDF {idx} to merger: {str(e)}")
+                continue
+
+        # Write combined PDF to bytes
+        combined_pdf_stream = BytesIO()
+        merger.write(combined_pdf_stream)
+        combined_pdf_bytes = combined_pdf_stream.getvalue()
+
+        print(f"Successfully combined PDFs (total size: {len(combined_pdf_bytes)} bytes)")
+
+    finally:
+        # Proper cleanup order: close merger first, then streams
+        if merger is not None:
+            try:
+                merger.close()
+            except Exception as e:
+                print(f"  Warning: Error closing merger: {str(e)}")
+
+        if combined_pdf_stream is not None:
+            try:
+                combined_pdf_stream.close()
+            except Exception as e:
+                print(f"  Warning: Error closing output stream: {str(e)}")
+
+        # Close all input streams
+        for stream in input_streams:
+            try:
+                stream.close()
+            except Exception as e:
+                print(f"  Warning: Error closing input stream: {str(e)}")
+
+        # Force garbage collection after large PDF operations
+        gc.collect()
 
     # Step 4: Upload to Google Drive
     print(f"\nUploading combined PDF to Google Drive...")
@@ -816,25 +851,55 @@ def combine_pdf_bytes_and_upload(
 
     # Step 1: Combine all PDFs
     print(f"\nCombining {len(pdf_bytes_list)} PDFs from cached bytes...")
-    merger = PdfMerger()
 
-    for idx, pdf_bytes in enumerate(pdf_bytes_list, 1):
-        try:
-            pdf_stream = BytesIO(pdf_bytes)
-            merger.append(pdf_stream)
-            print(f"  Added PDF {idx} to merger ({len(pdf_bytes)} bytes)")
-        except Exception as e:
-            print(f"  Warning: Failed to add PDF {idx} to merger: {str(e)}")
-            continue
+    # Keep references to all streams to prevent premature garbage collection
+    input_streams = []
+    merger = None
+    combined_pdf_stream = None
 
-    # Write combined PDF to bytes
-    combined_pdf_stream = BytesIO()
-    merger.write(combined_pdf_stream)
-    merger.close()
-    combined_pdf_bytes = combined_pdf_stream.getvalue()
-    combined_pdf_stream.close()
+    try:
+        merger = PdfMerger()
 
-    print(f"Successfully combined PDFs (total size: {len(combined_pdf_bytes)} bytes)")
+        for idx, pdf_bytes in enumerate(pdf_bytes_list, 1):
+            try:
+                pdf_stream = BytesIO(pdf_bytes)
+                input_streams.append(pdf_stream)  # Keep reference
+                merger.append(pdf_stream)
+                print(f"  Added PDF {idx} to merger ({len(pdf_bytes)} bytes)")
+            except Exception as e:
+                print(f"  Warning: Failed to add PDF {idx} to merger: {str(e)}")
+                continue
+
+        # Write combined PDF to bytes
+        combined_pdf_stream = BytesIO()
+        merger.write(combined_pdf_stream)
+        combined_pdf_bytes = combined_pdf_stream.getvalue()
+
+        print(f"Successfully combined PDFs (total size: {len(combined_pdf_bytes)} bytes)")
+
+    finally:
+        # Proper cleanup order: close merger first, then streams
+        if merger is not None:
+            try:
+                merger.close()
+            except Exception as e:
+                print(f"  Warning: Error closing merger: {str(e)}")
+
+        if combined_pdf_stream is not None:
+            try:
+                combined_pdf_stream.close()
+            except Exception as e:
+                print(f"  Warning: Error closing output stream: {str(e)}")
+
+        # Close all input streams
+        for stream in input_streams:
+            try:
+                stream.close()
+            except Exception as e:
+                print(f"  Warning: Error closing input stream: {str(e)}")
+
+        # Force garbage collection after large PDF operations
+        gc.collect()
 
     # Step 2: Upload to Google Drive
     print(f"\nUploading combined PDF to Google Drive...")
@@ -1101,18 +1166,15 @@ def upload_individual_radiology_reports_with_MD_notes_to_drive(
     content_type: str = "application/pdf"
 ) -> List[Dict[str, Any]]:
     """
-    Extract individual radiology reports, combine each with latest and initial MD notes,
-    upload to Google Drive, and return URLs.
+    Extract individual radiology reports, upload to Google Drive, and return with PDF bytes.
 
-    This function:
+    OPTIMIZED VERSION - NO MD NOTES:
     1. Extracts radiology reports from FHIR
     2. For each report:
-       - Fetches the radiology report PDF
-       - Fetches the most recent MD note PDF
-       - Fetches the initial MD note PDF
-       - Combines all three into a single PDF
-    3. Uploads combined PDFs to Google Drive in a "Radiology Reports" folder
-    4. Returns list of documents with Google Drive URLs
+       - Fetches the radiology report PDF bytes
+       - Uploads to Google Drive (for UI/storage)
+       - Keeps PDF bytes in memory for direct LLM extraction
+    3. Returns list with both Drive URLs AND PDF bytes
 
     Args:
         mrn (str): Patient's Medical Record Number
@@ -1120,20 +1182,18 @@ def upload_individual_radiology_reports_with_MD_notes_to_drive(
         content_type (str): MIME type to filter (default: "application/pdf")
 
     Returns:
-        List[Dict]: List of radiology reports with Google Drive URLs
-                   Each dict contains: original_url, drive_url (radiology only),
-                   drive_url_with_MD (combined with MD notes), drive_file_id,
-                   date, document_type, description, document_id
+        List[Dict]: List of radiology reports with:
+                   - drive_url: Google Drive URL
+                   - drive_file_id: Drive file ID
+                   - pdf_bytes: PDF content as bytes (for direct extraction)
+                   - date, document_type, description, document_id
                    Returns empty list if no reports found
-
-    Raises:
-        Exception: If upload fails
 
     Example:
         >>> result = upload_individual_radiology_reports_with_MD_notes_to_drive("A2451440")
         >>> for doc in result:
-        ...     print(f"Radiology URL: {doc['drive_url']}")
-        ...     print(f"Combined URL: {doc['drive_url_with_MD']}")
+        ...     # Use bytes directly, no download needed!
+        ...     extract_with_llm(doc['pdf_bytes'])
     """
     # Step 1: Extract radiology report URLs from FHIR (excluding MD notes from list)
     print(f"Extracting radiology reports for MRN: {mrn}")
@@ -1151,36 +1211,20 @@ def upload_individual_radiology_reports_with_MD_notes_to_drive(
 
     print(f"Found {len(radiology_docs)} radiology report(s)")
 
-    # Step 2: Get MD notes
-    print("\nFetching MD notes...")
-    latest_md_note = get_md_notes(mrn, most_recent_only=True, initial_only=False)
-    initial_md_note = get_md_notes(mrn, most_recent_only=False, initial_only=True)
-
-    if not latest_md_note:
-        print("Warning: No latest MD note found")
-    else:
-        print(f"  Latest MD note: {latest_md_note['date']}")
-
-    if not initial_md_note:
-        print("Warning: No initial MD note found")
-    else:
-        print(f"  Initial MD note: {initial_md_note['date']}")
+    # Step 2: Authenticate for FHIR API
+    bearer_token = generate_bearer_token()
+    onco_emr_token = generate_onco_emr_token(bearer_token)
+    headers = {
+        "Authorization": f"Bearer {onco_emr_token}",
+        "Accept": "application/fhir+json"
+    }
 
     # Step 3: Create or get Google Drive folder
     folder_name = "Radiology Reports"
     print(f"\nCreating/getting Google Drive folder: {folder_name}")
     folder_id = create_or_get_folder(folder_name)
 
-    # Step 4: Authenticate with FHIR API
-    bearer_token = generate_bearer_token()
-    onco_emr_token = generate_onco_emr_token(bearer_token)
-
-    headers = {
-        "Authorization": f"Bearer {onco_emr_token}",
-        "Accept": "application/fhir+json"
-    }
-
-    # Step 5: Process each radiology report
+    # Step 4: Process each radiology report
     uploaded_docs = []
 
     for idx, doc in enumerate(radiology_docs, 1):
@@ -1221,138 +1265,30 @@ def upload_individual_radiology_reports_with_MD_notes_to_drive(
 
             print(f"  Fetched radiology PDF ({len(radiology_pdf_bytes)} bytes)")
 
-            # Upload radiology report only (without MD notes)
+            # Upload radiology report to Google Drive
             date_str = doc['date'].split('T')[0]
-            radiology_only_file_name = f"{mrn}_radiology_{date_str}_{doc['document_id']}.pdf"
+            radiology_file_name = f"{mrn}_radiology_{date_str}_{doc['document_id']}.pdf"
 
-            print(f"  Uploading radiology report only to Google Drive...")
-            radiology_only_result = upload_and_share_pdf_bytes(
+            print(f"  Uploading radiology report to Google Drive...")
+            upload_result = upload_and_share_pdf_bytes(
                 pdf_bytes=radiology_pdf_bytes,
-                file_name=radiology_only_file_name,
+                file_name=radiology_file_name,
                 folder_id=folder_id
             )
 
-            # Now combine with MD notes if available
-            pdf_bytes_list = [radiology_pdf_bytes]
-            combined_file_name = f"{mrn}_radiology_with_MD_{date_str}_{doc['document_id']}.pdf"
-
-            # Fetch and add latest MD note
-            if latest_md_note:
-                print(f"  Fetching latest MD note...")
-                try:
-                    # Add rate limiting delay to avoid 429 errors
-                    time.sleep(1.5)
-
-                    md_response = requests.get(latest_md_note['url'], headers=headers)
-                    md_response.raise_for_status()
-                    md_document_data = md_response.json()
-
-                    md_pdf_url = None
-                    md_pdf_data = None
-                    for content in md_document_data.get("content", []):
-                        attachment = content.get("attachment", {})
-                        if attachment.get("contentType") == "application/pdf":
-                            md_pdf_url = attachment.get("url")
-                            md_pdf_data = attachment.get("data")
-                            break
-
-                    if md_pdf_url:
-                        md_pdf_response = requests.get(md_pdf_url, headers=headers)
-                        md_pdf_response.raise_for_status()
-                        latest_md_pdf_bytes = md_pdf_response.content
-                    elif md_pdf_data:
-                        latest_md_pdf_bytes = base64.b64decode(md_pdf_data)
-                    else:
-                        latest_md_pdf_bytes = None
-
-                    if latest_md_pdf_bytes:
-                        pdf_bytes_list.append(latest_md_pdf_bytes)
-                        print(f"    Added latest MD note ({len(latest_md_pdf_bytes)} bytes)")
-                except Exception as e:
-                    print(f"    Warning: Failed to fetch latest MD note: {str(e)}")
-
-            # Fetch and add initial MD note
-            if initial_md_note:
-                print(f"  Fetching initial MD note...")
-                try:
-                    # Add rate limiting delay to avoid 429 errors
-                    time.sleep(1.5)
-
-                    md_response = requests.get(initial_md_note['url'], headers=headers)
-                    md_response.raise_for_status()
-                    md_document_data = md_response.json()
-
-                    md_pdf_url = None
-                    md_pdf_data = None
-                    for content in md_document_data.get("content", []):
-                        attachment = content.get("attachment", {})
-                        if attachment.get("contentType") == "application/pdf":
-                            md_pdf_url = attachment.get("url")
-                            md_pdf_data = attachment.get("data")
-                            break
-
-                    if md_pdf_url:
-                        md_pdf_response = requests.get(md_pdf_url, headers=headers)
-                        md_pdf_response.raise_for_status()
-                        initial_md_pdf_bytes = md_pdf_response.content
-                    elif md_pdf_data:
-                        initial_md_pdf_bytes = base64.b64decode(md_pdf_data)
-                    else:
-                        initial_md_pdf_bytes = None
-
-                    if initial_md_pdf_bytes:
-                        pdf_bytes_list.append(initial_md_pdf_bytes)
-                        print(f"    Added initial MD note ({len(initial_md_pdf_bytes)} bytes)")
-                except Exception as e:
-                    print(f"    Warning: Failed to fetch initial MD note: {str(e)}")
-
-            # Combine all PDFs
-            print(f"  Combining {len(pdf_bytes_list)} PDFs...")
-            merger = PdfMerger()
-
-            for pdf_idx, pdf_bytes in enumerate(pdf_bytes_list, 1):
-                try:
-                    pdf_stream = BytesIO(pdf_bytes)
-                    merger.append(pdf_stream)
-                except Exception as e:
-                    print(f"    Warning: Failed to add PDF {pdf_idx} to merger: {str(e)}")
-                    continue
-
-            # Write combined PDF to bytes
-            combined_pdf_stream = BytesIO()
-            merger.write(combined_pdf_stream)
-            merger.close()
-            combined_pdf_bytes = combined_pdf_stream.getvalue()
-            combined_pdf_stream.close()
-
-            print(f"  Combined PDF size: {len(combined_pdf_bytes)} bytes")
-
-            # Upload combined PDF to Google Drive
-            print(f"  Uploading combined PDF to Google Drive as: {combined_file_name}")
-            combined_upload_result = upload_and_share_pdf_bytes(
-                pdf_bytes=combined_pdf_bytes,
-                file_name=combined_file_name,
-                folder_id=folder_id
-            )
-
-            # Add to results
+            # Add to results - include bytes for direct extraction (no MD notes)
             uploaded_docs.append({
                 "original_url": fhir_url,
-                "drive_url": radiology_only_result['shareable_url'],
-                "drive_file_id": radiology_only_result['file_id'],
-                "drive_url_with_MD": combined_upload_result['shareable_url'],
-                "drive_file_id_with_MD": combined_upload_result['file_id'],
+                "drive_url": upload_result['shareable_url'],
+                "drive_file_id": upload_result['file_id'],
+                "pdf_bytes": radiology_pdf_bytes,  # For direct LLM extraction
                 "date": doc['date'],
                 "document_type": doc['document_type'],
                 "description": doc['description'],
-                "document_id": doc['document_id'],
-                "has_latest_md_note": latest_md_note is not None,
-                "has_initial_md_note": initial_md_note is not None
+                "document_id": doc['document_id']
             })
 
-            print(f"  Successfully uploaded!")
-            print(f"    Radiology only: {radiology_only_result['shareable_url']}")
-            print(f"    Combined with MD: {combined_upload_result['shareable_url']}")
+            print(f"  Successfully uploaded: {upload_result['shareable_url']}")
 
         except Exception as e:
             print(f"  Error processing report {idx}: {str(e)}")

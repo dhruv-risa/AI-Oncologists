@@ -3079,7 +3079,22 @@ def build_search_queries_from_patient(patient_data: Dict) -> List[str]:
         if cancer_type:
             queries.append(f"metastatic {cancer_type.lower()}")
 
-    current_stage = diagnosis.get("current_stage", diagnosis.get("ajcc_stage", "")).upper() if diagnosis else ""
+    # Extract stage from nested diagnosis structure
+    # Priority: current_staging > initial_staging > flat ajcc_stage
+    current_stage = ""
+    if diagnosis:
+        current_staging = diagnosis.get("current_staging", {})
+        initial_staging = diagnosis.get("initial_staging", {})
+
+        if current_staging and current_staging.get("ajcc_stage"):
+            current_stage = current_staging.get("ajcc_stage", "")
+        elif initial_staging and initial_staging.get("ajcc_stage"):
+            current_stage = initial_staging.get("ajcc_stage", "")
+        elif diagnosis.get("ajcc_stage"):
+            # Backwards compatibility for flat structure
+            current_stage = diagnosis.get("ajcc_stage", "")
+
+    current_stage = current_stage.upper()
     if "IV" in current_stage or "4" in current_stage:
         queries.append("stage IV cancer")
         queries.append("advanced cancer")

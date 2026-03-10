@@ -106,28 +106,54 @@ description = {
 }
 
 
-def fetch_individual_pdf_bytes(fhir_url: str, bearer_token: str, onco_emr_token: str) -> bytes:
+def fetch_individual_pdf_bytes(fhir_url: str, bearer_token: str, onco_emr_token: str, max_retries: int = 5) -> bytes:
     """
-    Fetch PDF bytes from a single FHIR DocumentReference URL.
+    Fetch PDF bytes from a single FHIR DocumentReference URL with retry logic.
 
     Args:
         fhir_url: The FHIR DocumentReference URL
         bearer_token: Bearer token for authentication
         onco_emr_token: OncoEMR token for FHIR API
+        max_retries: Maximum number of retry attempts for 429 errors
 
     Returns:
         PDF bytes
     """
+    import base64
+
     headers = {
         "Authorization": f"Bearer {onco_emr_token}",
         "Accept": "application/fhir+json"
     }
 
-    response = requests.get(fhir_url, headers=headers)
-    response.raise_for_status()
+    # Fetch FHIR DocumentReference with retry logic
+    for attempt in range(max_retries):
+        try:
+            # Add delay before request to space out API calls
+            if attempt > 0:
+                # Exponential backoff: 2^attempt seconds (2, 4, 8, 16, 32)
+                backoff_time = 2 ** attempt
+                logger.info(f"   Retry attempt {attempt + 1}/{max_retries} after {backoff_time}s delay...")
+                time.sleep(backoff_time)
+            else:
+                # Initial delay to prevent overwhelming the API
+                time.sleep(1.5)
 
-    # Add rate limiting delay to avoid 429 errors (1.5 seconds between API calls)
-    time.sleep(1.5)
+            response = requests.get(fhir_url, headers=headers)
+            response.raise_for_status()
+            break  # Success - exit retry loop
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:  # Too Many Requests
+                if attempt < max_retries - 1:
+                    logger.warning(f"   ⚠️  Rate limit hit (429), will retry...")
+                    continue
+                else:
+                    logger.error(f"   ❌ Rate limit hit after {max_retries} attempts")
+                    raise
+            else:
+                # Other HTTP errors - don't retry
+                raise
 
     document_data = response.json()
 
@@ -138,14 +164,33 @@ def fetch_individual_pdf_bytes(fhir_url: str, bearer_token: str, onco_emr_token:
             # Try URL first
             pdf_url = attachment.get("url")
             if pdf_url:
-                # Add rate limiting delay before PDF download
-                time.sleep(1.5)
-                pdf_response = requests.get(pdf_url)
-                pdf_response.raise_for_status()
-                return pdf_response.content
+                # Fetch PDF with retry logic
+                for attempt in range(max_retries):
+                    try:
+                        # Add delay before PDF download
+                        if attempt > 0:
+                            backoff_time = 2 ** attempt
+                            logger.info(f"   PDF retry attempt {attempt + 1}/{max_retries} after {backoff_time}s delay...")
+                            time.sleep(backoff_time)
+                        else:
+                            time.sleep(1.5)
+
+                        pdf_response = requests.get(pdf_url)
+                        pdf_response.raise_for_status()
+                        return pdf_response.content
+
+                    except requests.exceptions.HTTPError as e:
+                        if e.response.status_code == 429:
+                            if attempt < max_retries - 1:
+                                logger.warning(f"   ⚠️  PDF download rate limit hit (429), will retry...")
+                                continue
+                            else:
+                                logger.error(f"   ❌ PDF download rate limit hit after {max_retries} attempts")
+                                raise
+                        else:
+                            raise
 
             # Try base64 data
-            import base64
             pdf_data = attachment.get("data")
             if pdf_data:
                 return base64.b64decode(pdf_data)

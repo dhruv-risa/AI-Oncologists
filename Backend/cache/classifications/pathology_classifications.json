@@ -1,0 +1,542 @@
+{
+  "5b3029386c1fe22ed9f2a8eebda3c8481907d9c4d1bd9f157376e8519b747ef5": {
+    "classification": {
+      "category": "GENOMIC_ALTERATIONS",
+      "confidence": "high",
+      "reasoning": "The report is titled \"Solid Tumor Profile Plus\" and is explicitly described as a Next-Generation Sequencing (NGS) test. It details specific genomic alterations like mutations in TP53 and PIK3CB, reports on Tumor Mutational Burden (TMB) and Microsatellite Instability (MSI), and includes a large panel of tested genes, all of which are hallmarks of a genomic profiling report.",
+      "key_indicators": [
+        "Solid Tumor Profile Plus",
+        "Detected Genomic Alterations",
+        "Next Generation Sequencing (NGS)",
+        "Tumor Mutation Burden Low: 3 Mut/Mb"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CKHMSBVY7QHM92818V.PD--11573003853784124--1",
+      "date": "2025-09-11T08:49:47.46+00:00",
+      "description": "Solid Tumor Profile Plus"
+    },
+    "cached_at": "2026-03-06T16:49:30.662174",
+    "expires_at": "2026-04-05T16:49:30.662178"
+  },
+  "c99b31b6c5ef52a4aeda1a989ca9b04c095d9c3c54841cdc4b906c19adb2b6bb": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a non-gyn cytology report that provides a definitive diagnosis of 'Squamous cell carcinoma' based on the examination of a lymph node specimen. It includes standard pathology sections like 'Final Diagnosis' and 'Gross Description', as well as an ancillary PD-L1 IHC test result, which is a common component of a modern pathology workup, not a genomic sequencing report.",
+      "key_indicators": [
+        "NON-GYN CYTOLOGY REPORT",
+        "Final Diagnosis",
+        "Positive for malignant cells. Squamous cell carcinoma.",
+        "PD-L1 IHC 22C3 pharmDx Result"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CKAVAZDBSXD3Z5FZH9.PD--11573003853784124--1",
+      "date": "2025-09-10T16:59:44.357+00:00",
+      "description": "Addended Report: FINENEEDASP. JFC25-01300. HMH"
+    },
+    "cached_at": "2026-03-06T16:49:50.722681",
+    "expires_at": "2026-04-05T16:49:50.722686"
+  },
+  "aa9293c25b19591afdf69077b709f9bcc83bfd3b5ea99cf8530452d91e760ce8": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report's primary finding is a definitive histopathological diagnosis of metastatic adenocarcinoma based on tissue examination and immunohistochemistry. Although an ancillary genomic test failed due to an inadequate sample (QNS), the core of the document is the successful surgical pathology diagnosis.",
+      "key_indicators": [
+        "SURGICAL PATHOLOGY REPORT",
+        "Final Diagnosis: Metastatic adenocarcinoma, compatible with lung origin.",
+        "Immunohistochemical stains are performed.",
+        "Results Summary: QNS: After repeated attempts, we are unable to obtain reliable results for testing."
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06DFXRDF5V18EQNB55XZ.PD--09073189503742257--1",
+      "date": "2025-12-08T09:14:57+00:00",
+      "description": "JFK"
+    },
+    "cached_at": "2026-03-06T18:10:54.103291",
+    "expires_at": "2026-04-05T18:10:54.103300"
+  },
+  "f5ae0bec27cdf54c4cd25d63f27c18689f2f34a0a594580586fadb9ed748a7b9": {
+    "classification": {
+      "category": "NO_TEST_PERFORMED",
+      "confidence": "high",
+      "reasoning": "The report for the \"GENOMIC SOLID TUMOR PLUS ANTHOLOGY\" test explicitly states \"QNS\" (Quantity Not Sufficient) and that the lab was \"unable to obtain reliable results for testing\" due to an inadequate sample.",
+      "key_indicators": [
+        "QNS: After repeated attempts, we are unable to obtain reliable results for testing.",
+        "GENOMIC SOLID TUMOR PLUS ANTHOLOGY",
+        "low-level of sample submitted",
+        "please submit another sample for testing"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06DEYG2FNYS83JSB4N2V.PD--09073189503742257--1",
+      "date": "2025-12-05T06:47:00+00:00",
+      "description": "JFK"
+    },
+    "cached_at": "2026-03-06T18:11:08.611689",
+    "expires_at": "2026-04-05T18:11:08.611693"
+  },
+  "61f6546712e80ca0f4ffff66cad8a8d87654aed4ded9e2589d99efc2b3168983": {
+    "classification": {
+      "category": "NO_TEST_PERFORMED",
+      "confidence": "high",
+      "reasoning": "The report explicitly states in the 'Results Summary' section that the test could not be completed due to an inadequate sample. The abbreviation 'QNS' stands for Quantity Not Sufficient.",
+      "key_indicators": [
+        "QNS",
+        "unable to obtain reliable results for testing",
+        "degraded nucleic acid",
+        "low-level of sample submitted"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06DEX73SVRXV577F68WY.PD--09073189503742257--1",
+      "date": "2025-12-04T17:03:23+00:00",
+      "description": "Tumor Profile"
+    },
+    "cached_at": "2026-03-06T18:11:23.598227",
+    "expires_at": "2026-04-05T18:11:23.598234"
+  },
+  "865472379c05e48be81861985aaef4f9339ff16bcf1402a0d67d73832c9eb1d1": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a standard surgical pathology report that provides a histopathological diagnosis based on a tissue biopsy. It includes a gross description, a final diagnosis of metastatic adenocarcinoma, and results from immunohistochemical (IHC) stains, all of which are characteristic of a typical pathology report.",
+      "key_indicators": [
+        "SURGICAL PATHOLOGY REPORT",
+        "Final Diagnosis",
+        "Immunohistochemical stains are performed",
+        "Gross Description"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06DEKZSJBC366VNDSC0E.PD--09073189503742257--1",
+      "date": "2025-12-01T11:19:11+00:00",
+      "description": "Jfk"
+    },
+    "cached_at": "2026-03-06T18:11:41.259863",
+    "expires_at": "2026-04-05T18:11:41.259867"
+  },
+  "de544a3999c36a06be5a6df13524bab220266bed9fcfac57c77e2441e03fe330": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a standard surgical pathology report that provides a histopathological diagnosis ('Metastatic adenocarcinoma') based on tissue examination and immunohistochemical staining. While it mentions that a sample was prepared for next-generation sequencing, it explicitly states a 'Separate next-generation sequencing report to follow', meaning this document does not contain genomic results.",
+      "key_indicators": [
+        "SURGICAL PATHOLOGY REPORT",
+        "Final Diagnosis",
+        "Immunohistochemical stains",
+        "Gross Description"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06DBECTGRRJ8CH5NX1D1.PD--09073189503742257--1",
+      "date": "2025-11-24T11:48:38+00:00",
+      "description": "jfk"
+    },
+    "cached_at": "2026-03-06T18:11:55.440951",
+    "expires_at": "2026-04-05T18:11:55.440960"
+  },
+  "dce2273dc3db76af513a1521971941cc2902ea0b1dd46db237f645bf302b5336": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a standard surgical pathology analysis of a bone biopsy. It includes a final diagnosis based on tissue examination and immunohistochemical (IHC) staining, which are characteristic of a typical pathology report, not genomic sequencing.",
+      "key_indicators": [
+        "SURGICAL PATHOLOGY REPORT",
+        "Final Diagnosis: Metastatic adenocarcinoma",
+        "Immunohistochemical stains are performed",
+        "Gross Description"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06DAEHQC4526Q7CRV0Z0.PD--09073189503742257--1",
+      "date": "2025-11-18T17:22:08+00:00",
+      "description": "jfk"
+    },
+    "cached_at": "2026-03-06T18:12:10.275704",
+    "expires_at": "2026-04-05T18:12:10.275714"
+  },
+  "2d17d0388a571723f97f491e4f241020a86155d51b747b4374617ee1e4d0b5a7": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a cytology analysis of a urine specimen. The diagnosis is based on the morphological description of cells ('Atypical urothelial cells', 'high N/C ratio', 'irregular nuclear membranes'), which is characteristic of a standard pathology report.",
+      "key_indicators": [
+        "Cytology (Non-Gynecologic)",
+        "Final Diagnosis",
+        "Atypical urothelial cells",
+        "Gross Description"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CK9MRK58YTSR2MG8Z2.PD--11573003853784124--1",
+      "date": "2025-09-10T14:11:12.283+00:00",
+      "description": "JFC23-00736"
+    },
+    "cached_at": "2026-03-06T18:39:24.942982",
+    "expires_at": "2026-04-05T18:39:24.942998"
+  },
+  "7a17c828da131a7a41c07557cc716c504ca7bad8c8911997bf997f40a882cd4e": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a non-gynecologic cytology analysis of a bronchoalveolar lavage (BAL) specimen. It provides a final diagnosis based on the morphological examination of cells, which is characteristic of a typical pathology report.",
+      "key_indicators": [
+        "Cytology (Non-Gynecologic)",
+        "Final Diagnosis",
+        "Negative for malignant cells",
+        "Specimen Information: Lung, Right Middle Lobe; BAL"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CK9M4WGZJCVR0FP532.PD--11573003853784124--1",
+      "date": "2025-09-10T14:08:30.84+00:00",
+      "description": "JFC25-01302"
+    },
+    "cached_at": "2026-03-06T18:39:40.283184",
+    "expires_at": "2026-04-05T18:39:40.283195"
+  },
+  "71429c54839a34e5a3766e8ea851aa376cca7c241d56147f150691dc82cd56b4": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is a Non-Gyn Cytology Report that provides a final diagnosis based on the microscopic examination of a bronchoalveolar lavage (BAL) specimen. The diagnosis describes the cellular components observed, which is characteristic of a standard pathology report, not genomic testing.",
+      "key_indicators": [
+        "NON-GYN CYTOLOGY REPORT",
+        "Final Diagnosis",
+        "Negative for malignant cells",
+        "Lung, Right Middle Lobe, right middle lobe BAL"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CJP0TZEWB1TS17MJS1.PD--11573003853784124--1",
+      "date": "2025-09-08T16:27:45.393+00:00",
+      "description": "NON-GYN CYTOLOGY REPORT"
+    },
+    "cached_at": "2026-03-06T18:39:55.712157",
+    "expires_at": "2026-04-05T18:39:55.712173"
+  },
+  "266a1cbde84366f5ab3311a9ef993147af1c8bc56643bf37ff208b486cf8a2ba": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is a standard surgical pathology report detailing the histopathological examination of a lymph node biopsy. It includes a final diagnosis based on morphology and immunohistochemistry (IHC) stains, which is characteristic of a typical pathology report.",
+      "key_indicators": [
+        "SURGICAL PATHOLOGY REPORT",
+        "Final Diagnosis: Metastatic small cell carcinoma",
+        "Comment: Sections show core tissue fragments of lymph node...",
+        "Immunostains were necessary for subclassification"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--0681G5QCS4ZJT7C3T59R.PD--10385452498247072--1",
+      "date": "2024-06-11T13:18:46+00:00",
+      "description": "JFS24-05799a"
+    },
+    "cached_at": "2026-03-10T15:49:51.267184",
+    "expires_at": "2026-04-09T15:49:51.267205"
+  },
+  "4963247a7b14bc5001bce0d3830dda09b2cf834d188b64583ab576f212504a4f": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a cytology analysis of a fine needle aspiration specimen. It provides a morphological diagnosis based on the examination of stained slides, identifying malignant cells and diagnosing adenocarcinoma, which is characteristic of a standard pathology report.",
+      "key_indicators": [
+        "Cytology Submitted Slides Order",
+        "Fine needle aspiration",
+        "5 Stained Slides",
+        "Positive for malignant cells. Adenocarcinoma."
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CZ5MSY0S1KVVX2213E.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-17T11:39:14.3+00:00",
+      "description": "Cytology C2532442"
+    },
+    "cached_at": "2026-03-10T16:20:52.643201",
+    "expires_at": "2026-04-09T16:20:52.643219"
+  },
+  "aa436624359862825762ac67d70dbebc3542be10ffd6f601d6be508aafc116b9": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is a cytopathology report for a fine needle aspiration of a lymph node. It provides a definitive diagnosis of 'Lung adenocarcinoma' based on cellular examination and supportive immunohistochemistry (TTF1 and Napsin A), which are standard procedures in histopathological diagnosis.",
+      "key_indicators": [
+        "Cytology Non-gynecologic",
+        "CYTOPATHOLOGY REPORT",
+        "Fine Needle Aspiration",
+        "Final Diagnosis: ... Lung adenocarcinoma"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CWZQE8S8JDC3TR9J79.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T16:44:02.623+00:00",
+      "description": "CO25-5967 Lymph Node, Level 7"
+    },
+    "cached_at": "2026-03-10T16:21:09.517775",
+    "expires_at": "2026-04-09T16:21:09.517783"
+  },
+  "91fea10071d17a704d6d92335cc820a390384acd1a8a5f15b83d87644b07ea2f": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is a cytopathology report detailing the findings from a fine needle aspiration of the lung. It provides a morphological diagnosis of 'Lung adenocarcinoma' based on the examination of cells, which is characteristic of a typical pathology report.",
+      "key_indicators": [
+        "Cytology Non-gynecologic",
+        "CYTOPATHOLOGY REPORT",
+        "Fine Needle Aspiration",
+        "Final Diagnosis: ... Positive for malignant cells. - Lung adenocarcinoma"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CWZQ4QWNGT0JVMWGJT.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T16:42:44.573+00:00",
+      "description": "CO25-5970 Right Lung"
+    },
+    "cached_at": "2026-03-10T16:21:25.985996",
+    "expires_at": "2026-04-09T16:21:25.986019"
+  },
+  "4848494877e53a07dace3c5ccf33943d1d30243d5f22d25f1d18afc4d50797ff": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is a standard Surgical Pathology Report that provides a histopathological diagnosis of tissue biopsies. It includes a gross description of the specimens and a final diagnosis based on tissue morphology, such as 'tubular adenoma' and 'serrated polyp', which are characteristic of a typical pathology examination.",
+      "key_indicators": [
+        "SURGICAL PATHOLOGY REPORT",
+        "Final Diagnosis",
+        "Fragments of tubular adenoma",
+        "Gross Description"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CWZPREVGECR51X85KJ.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T16:41:03.957+00:00",
+      "description": "MS-25-0011272 Colon"
+    },
+    "cached_at": "2026-03-10T16:21:42.263138",
+    "expires_at": "2026-04-09T16:21:42.263145"
+  },
+  "f42c8dbebf76c0baf76fa1e359a5cc63e421b8a1984672cfb2101e1c06041a06": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a Non-Gyn Cytology Final Report, which details the diagnosis based on the morphological examination of fluid specimens. It includes a gross description, a final diagnosis of adenocarcinoma, and results from immunohistochemical studies (IHC) to classify the tumor, all of which are characteristic of a typical pathology report.",
+      "key_indicators": [
+        "Non-Gyn Cytology Final Report",
+        "Gross Description",
+        "Diagnosis: Positive for malignant cells",
+        "Immunohistochemical studies"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWXFFX2DC37Y4NSA7.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A. Right Upper Lobe Lavage Thinprep, B. Mediastinal Mass 01 Fluid Thinprep And Cell Block, C. Mediastinal Mass #2 fluid thin PREP And Cell Block, D. Mediastinal Mass #3 Fluid Thin prep; Accession (# CY-21-0001582)"
+    },
+    "cached_at": "2026-03-10T16:21:55.670514",
+    "expires_at": "2026-04-09T16:21:55.670521"
+  },
+  "04cf44cd077c38388ec8ca36372a6e10f447de71acef5e30e9a22798e1d079e2": {
+    "classification": {
+      "category": "GENOMIC_ALTERATIONS",
+      "confidence": "high",
+      "reasoning": "The report details results from a \"NeoTYPET\u2122 Lung Tumor FISH Panel\" and other molecular tests, identifying specific gene alterations like \"PTEN deletion\" and the status of ALK, ROS1, and MET genes. This is a molecular profiling report used to guide targeted therapy.",
+      "key_indicators": [
+        "NeoTYPET\u2122 Lung Tumor FISH Panel",
+        "PTEN deletion: DETECTED",
+        "ALK rearrangement: Not Detected",
+        "MET amplification: Not Detected"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWWV18GZZWE2XJ3G0.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Addendum-Specimens: A. Neogenomics Neo-Type Lung Tumor FISH Panel; Accession (# CY-21-0001582)"
+    },
+    "cached_at": "2026-03-10T16:22:12.990396",
+    "expires_at": "2026-04-09T16:22:12.990407"
+  },
+  "7554ea87be1f783650e34d8fa1b18d24ade50a49f1af560560df3aa5d4a04f8c": {
+    "classification": {
+      "category": "GENOMIC_ALTERATIONS",
+      "confidence": "high",
+      "reasoning": "The document contains an addendum report from Neogenomics for a 'NeoTYPE\u2122 Analysis Lung Profile', which is a genomic test. This section explicitly lists a clinically significant variant in the EGFR gene, results for TMB and MSI, and the status of other genes like ALK, BRAF, and KRAS, which are all hallmarks of a genomic alterations report.",
+      "key_indicators": [
+        "NeoTYPE\u2122 Analysis",
+        "Lung Profile",
+        "Variant Detected: EGFR E709_T710delinsD (Exon 16)",
+        "Tumor Mutation Burden: Low"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWWE9XXDRQXFG8D7W.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A.Right Upper Lobe Lavage ThinPrep, B. Mediastinal Mass #1 Fluid, C. Mediastinal Mass #2 Fluid, Mediastinal Mass #3 Fluid Thin prep ; Accession (# CY-21-0001582)"
+    },
+    "cached_at": "2026-03-10T16:22:32.644905",
+    "expires_at": "2026-04-09T16:22:32.644916"
+  },
+  "1c52c01fa674efa5bec8cdb873948f156c239cfd64006a860ebaf4194eaf6fdd": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is a cytopathology report that provides a diagnosis based on the morphological examination of cells from lavage and fluid specimens. It includes immunocytochemical staining results (TTF-1, napsin A, CK7) to classify the tumor, which is characteristic of a standard pathology workup, not genomic sequencing.",
+      "key_indicators": [
+        "CYTOPATHOLOGY REPORT",
+        "CYTOLOGIC DIAGNOSIS",
+        "Positive for malignant cells, Carcinoma",
+        "Immunocytochemical findings"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWVW7RQZGMZ6GAN3H.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A. Right Upper Lobe Lavage-Lung Adenocarcinoma ; Accession (# C23-39590)"
+    },
+    "cached_at": "2026-03-10T16:22:51.477256",
+    "expires_at": "2026-04-09T16:22:51.477264"
+  },
+  "62e0ff4a4ce642edeb8a7691f0ca5d27ab39bb6e343d0130b33e619ac57f0835": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report details the results of a HER2 Immunohistochemistry (IHC) analysis, which is a standard pathology test that uses antibodies to detect protein expression in tissue. This is distinct from genomic sequencing, which analyzes gene alterations.",
+      "key_indicators": [
+        "HER2 IHC Analysis",
+        "IHC Score: 0",
+        "immunohistochemical testing",
+        "stained with a primary antibody"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWVJJDV1A9ZAXZ7HV.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A.HER2 IHC Analysis ; Accession (# SP-21-0016353)"
+    },
+    "cached_at": "2026-03-10T16:23:05.260304",
+    "expires_at": "2026-04-09T16:23:05.260313"
+  },
+  "907e6935722729431d4e10cd3ca206214d5623a03bbc29e3328449bfe5f3e5be": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is a classic Surgical Pathology Report detailing the examination of two separate tissue biopsies (cervical lymph node and rib bone). It includes sections for 'Gross Description', a definitive 'Diagnosis' based on morphology, and 'Comment' sections that describe the results of standard immunohistochemistry (IHC) stains (MCK, CK7, TTF-1) used for diagnostic purposes, not genomic sequencing.",
+      "key_indicators": [
+        "Surgical Pathology Report",
+        "Gross Description",
+        "Diagnosis: Cervical lymph node, right core biopsy",
+        "Diagnosis: Bone, right 5th rib, core biopsy - Bone with metastatic adenocarcinoma"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWVBR33Y9XFFFG1X5.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A. Cervical Lymph node Right Core Biopsy ; Accession (# SP-22-0000444)"
+    },
+    "cached_at": "2026-03-10T16:23:24.788175",
+    "expires_at": "2026-04-09T16:23:24.788185"
+  },
+  "b2a9fa26bdbeed8bc70d970ed5737af0da5601068de3b48a5cc3eb39cde0b897": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is explicitly titled \"Flow Cytometry Final Report\" and details an immunophenotypic analysis of a lymph node. It evaluates cell populations based on cell surface markers (e.g., CD45, T cells, B cells), which is a standard diagnostic procedure that falls under typical pathology, not genomic sequencing.",
+      "key_indicators": [
+        "Flow Cytometry Final Report",
+        "Immunophenotypic analysis",
+        "Markers run: CD45, CD2, CD3, CD4...",
+        "Specimen Submitted: Right cervical lymph node for flow cytometry"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWTHZPYWYK1PH39GZ.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A. Right Cervical Lymph node Flow Cytometry ; Accession (# FL-22-00000012)"
+    },
+    "cached_at": "2026-03-10T16:23:41.038738",
+    "expires_at": "2026-04-09T16:23:41.038751"
+  },
+  "0a3a92c3e35f42d5ee65ad58389b4854c049291711b6ee9258a0cbfad35c3bfd": {
+    "classification": {
+      "category": "GENOMIC_ALTERATIONS",
+      "confidence": "high",
+      "reasoning": "The report, while providing a histopathological diagnosis, contains a detailed note section summarizing the results of molecular testing. It explicitly mentions an 'exon 18 EGFR mutation', a 'PTEN deletion', 'MSI stable', 'low tumor mutation burden', and the status of a panel of genes including ALK, BRAF, KRAS, and ROS.",
+      "key_indicators": [
+        "exon 18 EGFR mutation",
+        "a PTEN deletion are noted",
+        "MSI stable with a low tumor mutation burden",
+        "no abnormalities are detected in ALK, BRAF, KRAS, MET, and ROS"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWT9PKWJGV8Y3KA1W.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A. Right Cervical Lymph node ; Accession (# SC22-428)"
+    },
+    "cached_at": "2026-03-10T16:24:01.578924",
+    "expires_at": "2026-04-09T16:24:01.578932"
+  },
+  "e6fcb4a5491a68f1f0ebf3e4b9073a5b43f106abbe305e86413f40cc209cb281": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The document is a classic surgical pathology report detailing the histopathological examination of resected brain tissue. It includes sections for 'Specimens Submitted', 'Diagnosis', 'Gross Description', and 'Intraoperative Consultation', all of which are standard components of a typical pathology report. The diagnosis is based on morphology and supported by immunohistochemistry (IHC) stains.",
+      "key_indicators": [
+        "SURGICAL PATHOLOGY REPORT",
+        "DIAGNOSIS: - Metastatic, poorly-differentiated adenocarcinoma",
+        "Gross Description:",
+        "Immunohistochemical studies"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWT06SMZYGSQ1F9D9.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A. Brain Left Frontal ; Accession (# S24-81518)"
+    },
+    "cached_at": "2026-03-10T16:24:17.640746",
+    "expires_at": "2026-04-09T16:24:17.640759"
+  },
+  "d7191aa0e50c022d804a804ed44ad22eb0c50d3432c6e7057a875d10372f4500": {
+    "classification": {
+      "category": "GENOMIC_ALTERATIONS",
+      "confidence": "high",
+      "reasoning": "The report is a \"LABORATORY OF DIAGNOSTIC MOLECULAR PATHOLOGY REPORT\" for a test called \"MSK-REACT Solid\". It explicitly identifies a specific gene alteration (EGFR exon18 deletion) with its variant allele frequency (VAF), and details the sequencing methodology and the panel of 12 genes tested.",
+      "key_indicators": [
+        "LABORATORY OF DIAGNOSTIC MOLECULAR PATHOLOGY REPORT",
+        "MSK-REACT Solid",
+        "POSITIVE FOR THE FOLLOWING ALTERATIONS: 1. EGFR exon18 p.E709_T710delinsD",
+        "VAF 14.0%"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06CXWST2N3B8GW5070S0.PD--06CQTJXCQA41JSJ63B2D",
+      "date": "2025-10-10T15:49:19+00:00",
+      "description": "Specimens: A. Brain Left Frontal Small Central Nodule #2 Left Excision/Resection; Accession (# M24-53443)"
+    },
+    "cached_at": "2026-03-10T16:24:39.760259",
+    "expires_at": "2026-04-09T16:24:39.760275"
+  },
+  "6aa37c77e6b10c676ab5440c9ca875b6a925545ff9134af2391cba1d2fbb36d3": {
+    "classification": {
+      "category": "NO_TEST_PERFORMED",
+      "confidence": "high",
+      "reasoning": "The report's 'FINAL RESULTS SUMMARY' section explicitly states 'Quantity Not Sufficient' and that 'Laboratory processing could not proceed due to poor DNA quality and/or quantity', indicating the test was not completed.",
+      "key_indicators": [
+        "Quantity Not Sufficient",
+        "Request for Additional Tissue",
+        "Laboratory processing could not proceed",
+        "poor DNA quality and/or quantity"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06BKNY15B34MMDY5W66Q.PD--063DS85MBTBZ0ECXHD26",
+      "date": "2025-06-03T18:15:52+00:00",
+      "description": "Signatera"
+    },
+    "cached_at": "2026-03-10T16:35:53.245555",
+    "expires_at": "2026-04-09T16:35:53.245564"
+  }
+}
