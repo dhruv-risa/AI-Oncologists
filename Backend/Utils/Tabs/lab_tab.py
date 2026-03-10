@@ -6,7 +6,6 @@ import requests
 import base64
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
-from Backend.Utils.Tabs.llmparser import llmresponsedetailed
 from datetime import datetime
 from io import BytesIO
 
@@ -15,8 +14,14 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from Backend.Utils.Tabs.lab_postprocessor import process_lab_data_for_ui
-from Backend.Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
+from Utils.Tabs.llmparser import llmresponsedetailed
+from Utils.Tabs.lab_postprocessor import process_lab_data_for_ui
+from Utils.Tabs.fhir_lab_integration import (
+    fetch_fhir_observations,
+    convert_fhir_observations_to_lab_schema,
+    merge_lab_data_with_fhir
+)
+from Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -38,19 +43,28 @@ extracted_instructions = (
     "- Use the 'Lab Resulted' or 'Resulted' date (NOT specimen collection date) when available. "
 
     "Targets: "
-    "- TUMOR MARKERS: CEA, NSE, proGRP, CYFRA 21-1. "
-    "- CBC: WBC, Hemoglobin, Platelets, ANC (if missing, use 'Segs#' or 'Polys, Abs'). "
-    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin. "
+    "- TUMOR MARKERS: CEA (ng/mL), NSE (ng/mL), proGRP (pg/mL), CYFRA 21-1 (ng/mL). "
+    "- CBC: WBC (10^3/μL or K/μL), Hemoglobin (g/dL), Platelets (10^3/μL or K/μL), ANC (10^3/μL or K/μL - if missing, use 'Segs#' or 'Polys, Abs'). "
+    "- METABOLIC: Creatinine (mg/dL), ALT (U/L or IU/L), AST (U/L or IU/L), Total Bilirubin (mg/dL - may also be labeled as 'Bilirubin' or 'Bili'). "
+
+    "UNIT CONVERSION REQUIREMENTS: "
+    "- If the lab report shows values in different units, CONVERT them to the standard units specified above. "
+    "- Common conversions: "
+    "  * Hemoglobin: g/L → g/dL (divide by 10) "
+    "  * Creatinine: μmol/L → mg/dL (divide by 88.4) "
+    "  * Total Bilirubin: μmol/L → mg/dL (divide by 17.1) "
+    "  * WBC/Platelets/ANC: cells/μL → 10^3/μL (divide by 1000) "
+    "- Always specify the unit after conversion in your output. "
 
     "CLINICAL INTERPRETATION: "
-    "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40), Neutropenia (ANC <1.5)."
+    "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40 U/L), Neutropenia (ANC <1.5 K/μL)."
 )
 
 def biomarker_schema():
     return {
         "value": "Float or 'Pending' or null - The most recent value for this biomarker in this document",
         "unit": "String - The unit of measurement (e.g., 'g/dL', 'Thousand/uL')",
-        "date": "YYYY-MM-DD - Date of the measurement (use Lab Resulted date)",
+        "date": "MM/DD/YYYY - Date of the measurement (use Lab Resulted date)",
         "status": "String (e.g., 'Normal', 'High', 'Low') - Status based on reference range",
         "reference_range": "String - The reference range for this biomarker",
         "source_context": "String - Brief description of source (e.g., 'Lab Report Page 1')"
@@ -116,35 +130,42 @@ For EVERY biomarker listed below, extract:
 - The most recent value with its unit, date, status, reference range, and source context.
 
 ========================
-TARGET BIOMARKERS
+TARGET BIOMARKERS WITH STANDARD UNITS
 ========================
 
 TUMOR MARKERS:
-- CEA (Carcinoembryonic Antigen)
-- NSE (Neuron-Specific Enolase)
-- proGRP (Pro-Gastrin-Releasing Peptide)
-- CYFRA 21-1 (Cytokeratin 19 Fragment)
+- CEA (Carcinoembryonic Antigen) → Standard unit: ng/mL
+- NSE (Neuron-Specific Enolase) → Standard unit: ng/mL
+- proGRP (Pro-Gastrin-Releasing Peptide) → Standard unit: pg/mL
+- CYFRA 21-1 (Cytokeratin 19 Fragment) → Standard unit: ng/mL
 
 COMPLETE BLOOD COUNT (CBC):
-- WBC (White Blood Cell Count)
-- Hemoglobin (Hgb)
-- Platelets
-- ANC (Absolute Neutrophil Count) - if missing, use 'Segs#' or 'Polys, Abs'
+- WBC (White Blood Cell Count) → Standard unit: 10^3/μL (also written as K/μL, Thousand/μL)
+- Hemoglobin (Hgb) → Standard unit: g/dL
+- Platelets → Standard unit: 10^3/μL (also written as K/μL, Thousand/μL)
+- ANC (Absolute Neutrophil Count) → Standard unit: 10^3/μL (also written as K/μL, Thousand/μL)
+  * If missing, use 'Segs#', 'Polys, Abs', or 'Neutrophils, Absolute'
 
 METABOLIC PANEL:
-- Creatinine
-- ALT (Alanine Aminotransferase)
-- AST (Aspartate Aminotransferase)
-- Total Bilirubin
+- Creatinine → Standard unit: mg/dL
+- ALT (Alanine Aminotransferase) → Standard unit: U/L
+- AST (Aspartate Aminotransferase) → Standard unit: U/L
+- Total Bilirubin → Standard unit: mg/dL
+  * CRITICAL: Also appears as "Total Bili", "Bilirubin", "Bili", "T. Bili", "T Bili", "Bilirubin Total", "Bilirubin, Total"
 
 ========================
 CRITICAL EXTRACTION RULES
 ========================
 
 1. DATE RULE (MANDATORY)
-   - Use ONLY "Lab Resulted" or "Resulted" dates for lab values
-   - Ignore specimen collection dates unless no resulted date exists
-   - Date format: YYYY-MM-DD
+   - For the date field, use the report date (the date of the lab report document itself)
+   - The report date is typically found at the top of the document as "Date:", "Report Date:", "Lab Date:", "Collection Date:", "Specimen Date:", or similar
+   - Look for dates near patient information or document headers
+   - CRITICAL: DO NOT use the patient's date of birth (DOB) - this is typically much older (e.g., from the 1940s-1980s)
+   - DO NOT use admission dates or other non-lab dates
+   - If multiple dates exist, prefer the most recent date that appears to be the report/lab date
+   - Format: YYYY-MM-DD
+   - IMPORTANT: All lab values from the same report should use the same report date
 
 2. VALUE EXTRACTION RULE
    - Extract the MOST RECENT measurement for each biomarker from THIS document
@@ -157,29 +178,58 @@ CRITICAL EXTRACTION RULES
    - Low: Below reference range
    - Use 'Pending' if not yet available
 
-4. VALUE FIDELITY RULE
-   - Preserve numeric values EXACTLY as shown
-   - Preserve original units (e.g., 'g/dL', 'K/uL', 'ng/mL', 'U/L', 'mg/dL')
-   - DO NOT round, normalize, or convert
+4. UNIT STANDARDIZATION RULE (CRITICAL FOR CONSISTENCY)
+   - ALWAYS convert values to the standard units specified above
+   - Common conversions needed:
+     * WBC/Platelets/ANC: If unit shows "10*3/uL", "10^3/uL", "10**3/uL", "K/uL", or "Thousand/uL" → Keep value AS-IS, output unit as "10^3/μL"
+     * WBC/Platelets/ANC: If unit shows "/uL" or "cells/μL" (NO thousands indicator) → Divide value by 1000, output unit as "10^3/μL"
+     * Hemoglobin: If unit shows "g/L" → Divide value by 10, output unit as "g/dL"
+     * Hemoglobin: If unit shows "mg/dL" → Divide value by 1000, output unit as "g/dL"
+     * Creatinine: If unit shows "μmol/L" or "umol/L" → Divide value by 88.4, output unit as "mg/dL"
+     * Total Bilirubin: If unit shows "μmol/L" or "umol/L" → Divide value by 17.1, output unit as "mg/dL"
+     * Tumor markers: If unit differs from standard → Convert to standard unit
+   - CRITICAL: Recognize "10*3" (asterisk), "10^3" (caret), "10**3" (double asterisk) all mean 10³ (thousands)
+   - If value is already in standard unit, keep it unchanged
+   - Round converted values to 2 decimal places
+   - Preserve all digits for values already in standard units
 
 5. NULL POLICY
    - If value is missing or unclear, set to null
    - If biomarker is not found in this report, still include it with null values
    - DO NOT guess or infer missing information
 
-6. SOURCE CONTEXT RULE
-   - Include brief context about where in the document the value was found
-   - Example: 'Lab Report Page 1 - CBC Panel', 'Page 2 - Tumor Markers'
+6. SOURCE CONTEXT RULE (CRITICAL FOR PRIORITIZATION)
+   - Include document type and location in the source_context field
+   - Document type MUST be one of these (in priority order):
+     * 'LAB_REPORT' - Official laboratory result reports (HIGHEST PRIORITY)
+     * 'LAB_PANEL' - Lab panel summaries with resulted dates
+     * 'LAB_SUMMARY' - Lab value summaries
+     * 'MD_NOTE' - Lab values mentioned in physician notes (LOWEST PRIORITY)
+   - Format: '<DOCUMENT_TYPE> - <location details>'
+   - Examples:
+     * 'LAB_REPORT - Page 1 CBC Panel'
+     * 'LAB_PANEL - Page 2 Comprehensive Metabolic Panel'
+     * 'MD_NOTE - Progress Note mentioning recent labs'
+   - This prioritization helps when multiple measurements exist for the same date
+
+7. BIOMARKER NAME VARIATIONS RULE (CRITICAL)
+   - Total Bilirubin may appear as: "Total Bili", "Total Bilirubin", "Bilirubin", "Bili", "T. Bili", "T Bili", "Bilirubin Total", "Bilirubin, Total", "TBIL"
+   - When you find ANY of these variations (especially "Total Bili"), extract it as "Total Bilirubin" in the output schema
+   - ANC may appear as: "ANC", "Absolute Neutrophil Count", "Segs#", "Polys, Abs", "Neutrophils, Absolute"
+   - Always map variations to the standardized names in the output schema
+   - Case-insensitive matching should be applied to all variations
 
 ========================
 OUTPUT SCHEMA (STRICT)
 ========================
 
+IMPORTANT: All values MUST be converted to standard units as specified above.
+
 {
   "tumor_markers": {
     "CEA": {
-      "value": <float or "Pending" or null>,
-      "unit": "<string>",
+      "value": <float or "Pending" or null> (converted to standard unit if needed),
+      "unit": "ng/mL" (MUST be standard unit),
       "date": "YYYY-MM-DD",
       "status": "<Normal|High|Low|Pending>",
       "reference_range": "<string>",
@@ -199,7 +249,7 @@ OUTPUT SCHEMA (STRICT)
     "Creatinine": { <same structure> },
     "ALT": { <same structure> },
     "AST": { <same structure> },
-    "Total_Bilirubin": { <same structure> }
+    "Total Bilirubin": { <same structure> }
   },
   "clinical_interpretation": [
     "<Summary of abnormal findings from this document>",
@@ -223,13 +273,33 @@ Provide a summary including:
 - Any other clinically significant abnormalities
 
 ========================
+UNIT CONVERSION EXAMPLES
+========================
+
+Example 1: WBC shows "44.52" with unit "10*3/uL" in report
+→ Extract: value = 44.52, unit = "10^3/μL" (NO conversion needed, asterisk means already in thousands)
+
+Example 2: WBC shows "6850" with unit "/μL" in report
+→ Extract: value = 6.85, unit = "10^3/μL" (CONVERTED: 6850 ÷ 1000 = 6.85)
+
+Example 3: Hemoglobin shows "112" with unit "g/L" in report
+→ Extract: value = 11.2, unit = "g/dL" (CONVERTED: 112 ÷ 10 = 11.2)
+
+Example 4: Creatinine shows "88" with unit "μmol/L" in report
+→ Extract: value = 1.0, unit = "mg/dL" (CONVERTED: 88 ÷ 88.4 ≈ 1.0)
+
+Example 5: Platelets shows "185 K/uL" in report
+→ Extract: value = 185, unit = "10^3/μL" (NO conversion needed, K means thousands)
+
+========================
 FINAL VALIDATION
 ========================
 
 Before returning output:
 - Ensure ALL target biomarkers are present in the output (even if null)
 - Ensure dates are in YYYY-MM-DD format
-- Ensure all numeric values are preserved exactly as shown
+- Ensure all values are in STANDARD UNITS (converted if necessary)
+- Ensure unit strings match the standard formats exactly (e.g., "10^3/μL" not "10*3/uL")
 - Ensure schema consistency with all required fields
 
 ========================
@@ -246,7 +316,7 @@ Just the JSON object following the schema above.
     logger.info("🤖 Generating extraction with Vertex AI Gemini...")
 
     # Initialize the model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
@@ -304,18 +374,25 @@ Just the JSON object following the schema above.
         logger.error(f"💾 Saved raw response to: {error_file}")
         raise
 
-def extract_lab_info(pdf_url=None, pdf_bytes=None, return_raw=False, use_gemini=True):
+def extract_lab_info(pdf_url=None, pdf_bytes=None, return_raw=False, use_gemini=True,
+                     patient_id=None, onco_emr_token=None):
     """
-    Extract and process lab information from PDF.
+    Extract and process lab information from PDF, optionally merging with FHIR Observation API data.
 
     Args:
         pdf_url: URL to the PDF containing lab reports (optional if pdf_bytes provided)
         pdf_bytes: PDF content as bytes (optional if pdf_url provided)
         return_raw: If True, returns raw unprocessed data. If False (default), returns UI-ready data.
         use_gemini: If True (default), uses Gemini pipeline. If False, uses legacy llmresponsedetailed (requires pdf_url).
+        patient_id: FHIR patient ID for fetching lab observations from FHIR API (optional)
+        onco_emr_token: OncoEMR access token for FHIR API authentication (optional)
 
     Returns:
         Processed lab data ready for UI consumption (or raw data if return_raw=True)
+
+    Note:
+        If patient_id and onco_emr_token are provided, lab data will be fetched from FHIR
+        Observation API and merged with PDF-extracted data before postprocessing.
     """
     if pdf_bytes is None and pdf_url is None:
         raise ValueError("Either pdf_url or pdf_bytes must be provided")
@@ -368,12 +445,46 @@ def extract_lab_info(pdf_url=None, pdf_bytes=None, return_raw=False, use_gemini=
 
     log_extraction_output(logger, "Lab Raw Data", raw_data)
 
-    if return_raw:
-        return raw_data
+    # Convert raw_data to list format for merging
+    # (Postprocessor handles both dict and list, but FHIR merge needs list)
+    if isinstance(raw_data, dict):
+        llm_data_list = [raw_data]
+    else:
+        llm_data_list = raw_data if isinstance(raw_data, list) else [raw_data]
 
-    # Postprocess the data for UI
+    # Fetch and merge FHIR Observation data if credentials provided
+    if patient_id and onco_emr_token:
+        logger.info("🔍 FHIR Integration enabled - fetching lab observations from FHIR API...")
+        try:
+            # Fetch FHIR observations
+            fhir_entries = fetch_fhir_observations(
+                patient_id=patient_id,
+                onco_emr_token=onco_emr_token,
+                category="laboratory"
+            )
+
+            if fhir_entries:
+                # Convert FHIR data to lab schema
+                fhir_lab_data = convert_fhir_observations_to_lab_schema(fhir_entries)
+
+                # Merge with LLM data
+                llm_data_list = merge_lab_data_with_fhir(llm_data_list, fhir_lab_data)
+                logger.info(f"✅ FHIR data merged successfully - total documents: {len(llm_data_list)}")
+            else:
+                logger.info("ℹ️  No FHIR observations found for this patient")
+
+        except Exception as e:
+            logger.error(f"⚠️  FHIR integration failed: {e}")
+            logger.info("ℹ️  Continuing with PDF-extracted data only")
+    else:
+        logger.info("ℹ️  FHIR integration disabled - using PDF-extracted data only")
+
+    if return_raw:
+        return llm_data_list
+
+    # Postprocess the data for UI (without AI refinement - done at consolidated level)
     logger.info("🔄 Postprocessing lab data for UI...")
-    processed_data = process_lab_data_for_ui(raw_data)
+    processed_data = process_lab_data_for_ui(llm_data_list, use_ai_refinement=False)
 
     log_extraction_output(logger, "Lab Processed Data", processed_data)
     log_extraction_complete(logger, "Lab Tab", processed_data.keys() if isinstance(processed_data, dict) else None)

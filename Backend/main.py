@@ -14,6 +14,7 @@ import requests
 import base64
 from io import BytesIO
 import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     import PyPDF2
 except ImportError:
@@ -126,60 +127,89 @@ def extract_patient_data(mrn: str, verbose: bool = True):
         if verbose:
             print(f"      ✓ URL: {result['pdf_url']}")
 
-        # Step 3: Extract Demographics
+        # Step 3-7: Extract all tab information in parallel
         if verbose:
-            print("\n[3/6] Extracting patient demographics...")
+            print("\n[3/6] Extracting all tab information in parallel...")
+            print("      🔄 Running 5 extraction tasks concurrently...")
 
-        demographics = extract_patient_demographics(pdf_url=result['pdf_url'])
-        result['demographics'] = demographics
+        # Define extraction tasks
+        def extract_demographics_task():
+            try:
+                return ('demographics', extract_patient_demographics(pdf_url=result['pdf_url']), None)
+            except Exception as e:
+                return ('demographics', None, str(e))
 
-        if verbose:
-            print(f"      ✓ Extracted {len(demographics)} demographic fields")
+        def extract_diagnosis_status_task():
+            try:
+                return ('diagnosis', extract_diagnosis_status(pdf_url=result['pdf_url']), None)
+            except Exception as e:
+                return ('diagnosis', None, str(e))
 
-        # Step 4: Extract Diagnosis Status
-        if verbose:
-            print("\n[4/6] Extracting diagnosis status...")
+        def extract_comorbidities_task():
+            try:
+                return ('comorbidities', extract_comorbidities_status(pdf_url=result['pdf_url']), None)
+            except Exception as e:
+                return ('comorbidities', None, str(e))
 
-        diagnosis = extract_diagnosis_status(pdf_url=result['pdf_url'])
-        result['diagnosis'] = diagnosis
+        def extract_treatment_task():
+            try:
+                lot, timeline = extract_treatment_tab_info(pdf_url=result['pdf_url'])
+                return ('treatment', {'lot': lot, 'timeline': timeline}, None)
+            except Exception as e:
+                return ('treatment', None, str(e))
 
-        if verbose:
-            print(f"      ✓ Extracted {len(diagnosis)} diagnosis fields")
+        def extract_diagnosis_tab_task():
+            try:
+                header, timeline, footer = diagnosis_extraction(pdf_input=result['pdf_url'])
+                return ('diagnosis_tab', {'header': header, 'timeline': timeline, 'footer': footer}, None)
+            except Exception as e:
+                return ('diagnosis_tab', None, str(e))
 
-        if verbose:
-            print("\n[5/6] Extracting Comorbidities status...")
+        # Execute all tasks in parallel
+        tasks = [
+            extract_demographics_task,
+            extract_diagnosis_status_task,
+            extract_comorbidities_task,
+            extract_treatment_task,
+            extract_diagnosis_tab_task
+        ]
 
-        comorbidities = extract_comorbidities_status(pdf_url=result['pdf_url'])
-        result['comorbidities'] = comorbidities
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all tasks
+            future_to_task = {executor.submit(task): task.__name__ for task in tasks}
 
-        if verbose:
-            print(f"      ✓ Extracted {len(comorbidities)} comorbidities fields")
+            # Collect results as they complete
+            for future in as_completed(future_to_task):
+                task_name = future_to_task[future]
+                try:
+                    data_type, data, error = future.result()
 
-        if verbose:
-            print("\n[6/6] Extracting Treatment Tab info status...")
+                    if error:
+                        if verbose:
+                            print(f"      ⚠️  {data_type} extraction failed: {error}")
+                        result[f'{data_type}_error'] = error
+                    else:
+                        # Handle different data types
+                        if data_type == 'treatment':
+                            result['treatment_tab_info_LOT'] = data['lot']
+                            result['treatment_tab_info_timeline'] = data['timeline']
+                            if verbose:
+                                print(f"      ✓ Treatment tab extracted ({len(data['lot'])} LOT, {len(data['timeline'])} timeline)")
+                        elif data_type == 'diagnosis_tab':
+                            result['diagnosis_header'] = data['header']
+                            result['diagnosis_evolution_timeline'] = data['timeline']
+                            result['diagnosis_footer'] = data['footer']
+                            if verbose:
+                                print(f"      ✓ Diagnosis tab extracted ({len(data['header'])} header, {len(data['timeline'])} timeline, {len(data['footer'])} footer)")
+                        else:
+                            result[data_type] = data
+                            if verbose:
+                                print(f"      ✓ {data_type.capitalize()} extracted ({len(data)} fields)")
 
-        treatment_tab_info_LOT, treatment_tab_info_timeline = extract_treatment_tab_info(pdf_url=result['pdf_url'])
-        result['treatment_tab_info_LOT'] = treatment_tab_info_LOT
-        result['treatment_tab_info_timeline'] = treatment_tab_info_timeline
+                except Exception as e:
+                    if verbose:
+                        print(f"      ⚠️  Task {task_name} failed: {str(e)}")
 
-        if verbose:
-            print(f"      ✓ Extracted {len(treatment_tab_info_LOT)} treatment_tab_info_LOT fields")
-            print(f"      ✓ Extracted {len(treatment_tab_info_timeline)} treatment_tab_info_timeline fields")
-
-
-        if verbose:
-            print("\n[6/6] Extracting Diagnosis Tab info status...")
-
-        diagnosis_header, diagnosis_evolution_timeline, diagnosis_footer = diagnosis_extraction(pdf_input=result['pdf_url'])
-        result['diagnosis_header'] = diagnosis_header
-        result['diagnosis_evolution_timeline'] = diagnosis_evolution_timeline
-        result['diagnosis_footer'] = diagnosis_footer
-        result
-
-        if verbose:
-            print(f"      ✓ Extracted {len(diagnosis_header)} diagnosis_header fields")
-            print(f"      ✓ Extracted {len(diagnosis_evolution_timeline)} diagnosis_evolution_timeline fields")
-            print(f"      ✓ Extracted {len(diagnosis_footer)} diagnosis_footer fields")
         result['success'] = True
 
         if verbose:
@@ -227,6 +257,7 @@ def lab_tab_info(mrn: str, verbose: bool = True):
             'lab_results_count': int,
             'processed_documents': int,
             'lab_info': dict,  # Consolidated lab data in UI-ready format
+            'lab_reports': list,  # List of lab document URLs with metadata
             'metadata': dict,  # Processing metadata
             'validation_summary': dict,  # Validation statistics
             'error': str (if failed)
@@ -240,6 +271,7 @@ def lab_tab_info(mrn: str, verbose: bool = True):
         'lab_results_count': 0,
         'processed_documents': 0,
         'lab_info': None,
+        'lab_reports': [],
         'metadata': None,
         'error': None
     }
@@ -266,6 +298,28 @@ def lab_tab_info(mrn: str, verbose: bool = True):
         result['lab_info'] = processing_result['combined_data']
         result['metadata'] = processing_result['metadata']
 
+        # Include FHIR metadata
+        if 'fhir_metadata' in processing_result:
+            result['fhir_metadata'] = processing_result['fhir_metadata']
+            # Add summary counts for clarity
+            fhir_meta = processing_result['fhir_metadata']
+            if fhir_meta.get('fhir_integration_successful'):
+                result['total_data_sources'] = result['lab_results_count'] + 1  # PDFs + FHIR
+                result['fhir_observations_count'] = fhir_meta.get('fhir_observations_fetched', 0)
+
+        # Format lab documents for Documents tab
+        if 'lab_documents' in processing_result and processing_result['lab_documents']:
+            result['lab_reports'] = [
+                {
+                    'url': doc.get('url'),  # FHIR URL (will need Drive upload for user access)
+                    'date': doc.get('date'),
+                    'document_type': 'Lab Results',
+                    'description': doc.get('description', 'Lab Results'),
+                    'document_id': doc.get('document_id')
+                }
+                for doc in processing_result['lab_documents']
+            ]
+
         # Include validation summary
         if 'validation_summary' in processing_result:
             result['validation_summary'] = processing_result['validation_summary']
@@ -278,8 +332,16 @@ def lab_tab_info(mrn: str, verbose: bool = True):
                 print("\n" + "="*70)
                 print("  LAB EXTRACTION COMPLETE")
                 print("="*70)
-                print(f"Total Lab Documents: {result['lab_results_count']}")
+                print(f"Total Lab Documents (PDFs): {result['lab_results_count']}")
                 print(f"Successfully Processed: {result['processed_documents']}")
+                if 'fhir_metadata' in result:
+                    fhir_meta = result['fhir_metadata']
+                    if fhir_meta.get('fhir_integration_successful'):
+                        print(f"FHIR Observations Fetched: {fhir_meta.get('fhir_observations_fetched', 0)}")
+                        print(f"FHIR Biomarkers Converted: {fhir_meta.get('fhir_observations_converted', 0)}")
+                        print(f"Total Data Sources: {result.get('total_data_sources', result['lab_results_count'])}")
+                    else:
+                        print("FHIR Integration: Not available")
                 if 'validation_summary' in result:
                     val_sum = result['validation_summary']
                     print(f"Validation: {val_sum['total_passed']}/{val_sum['total_validated']} passed")
@@ -306,21 +368,23 @@ def lab_tab_info(mrn: str, verbose: bool = True):
 
 def genomics_tab_info(mrn: str, verbose: bool = True):
     """
-    Extract genomic alterations data from pathology reports containing genomic/molecular profiling.
+    Extract genomic alterations data from molecular results and pathology reports containing genomic/molecular profiling.
 
     Pipeline:
+    - First fetches "Molecular Results" documents (automatically included as genomic)
     - Uses AI classification to identify pathology reports containing genomic alterations
     - ONLY includes pathology reports classified as GENOMIC_ALTERATIONS (NGS panels, molecular profiling)
     - ALWAYS includes MD notes for clinical context
     - Filters out typical pathology reports (histological examinations without genomic data)
 
     Workflow:
-    1. Fetches all pathology report documents and MD notes from the last 6 months
-    2. Classifies each pathology report to identify genomic alterations
-    3. Filters to keep only genomic pathology reports and MD notes
-    4. Combines filtered documents into a single PDF
-    5. Uploads to Google Drive
-    6. Extracts genomic information from the filtered combined PDF
+    1. Fetches "Molecular Results" documents (auto-included as genomic)
+    2. Fetches pathology report documents and MD notes from the last 6 months
+    3. Classifies each pathology report to identify genomic alterations
+    4. Filters to keep only genomic reports (molecular + genomic pathology) and MD notes
+    5. Combines filtered documents into a single PDF
+    6. Uploads to Google Drive
+    7. Extracts genomic information from the filtered combined PDF
 
     Args:
         mrn (str): Patient's Medical Record Number
@@ -331,13 +395,15 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
         {
             'success': bool,
             'mrn': str,
+            'molecular_results_count': int,  # Molecular Results documents found
             'pathology_reports_count': int,  # Total pathology reports found
             'genomic_pathology_reports_count': int,  # Reports with genomic alterations
             'typical_pathology_reports_count': int,  # Reports excluded (typical pathology)
             'md_notes_count': int,  # Number of MD notes included
-            'total_documents_count': int,  # Total documents used (genomic path + MD notes)
+            'total_documents_count': int,  # Total documents used (molecular + genomic path + MD notes)
             'pdf_url': str,
             'file_id': str,
+            'molecular_results_documents': list,  # Molecular Results documents
             'pathology_documents': list,  # All pathology report documents
             'genomic_pathology_documents': list,  # Pathology reports with genomic alterations
             'typical_pathology_documents': list,  # Typical pathology reports (excluded)
@@ -350,11 +416,13 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
     result = {
         'success': False,
         'mrn': mrn,
+        'molecular_results_count': 0,
         'pathology_reports_count': 0,
         'md_notes_count': 0,
         'total_documents_count': 0,
         'pdf_url': None,
         'file_id': None,
+        'molecular_results_documents': None,
         'pathology_documents': None,
         'md_notes_documents': None,
         'error': None
@@ -367,21 +435,35 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
             print("="*70)
             print(f"\nMRN: {mrn}")
 
-        # Step 1: Get pathology report URLs (INCLUDING MD notes)
+        # Step 1: Fetch "Molecular Results" documents (automatically genomic)
         if verbose:
-            print("\n[1/4] Fetching pathology reports and MD notes from FHIR API...")
+            print("\n[1/5] Fetching Molecular Results documents from FHIR API...")
+
+        molecular_results_docs = get_pathology_reports_urls(mrn=mrn, report_type="molecular", include_md_notes=False)
+
+        if verbose:
+            if molecular_results_docs:
+                print(f"      ✓ Found {len(molecular_results_docs)} Molecular Results documents")
+                for doc in molecular_results_docs:
+                    print(f"         - {doc['date']}: {doc.get('description', 'Molecular Results')}")
+            else:
+                print(f"      ℹ️  No Molecular Results documents found")
+
+        # Step 2: Get pathology report URLs (INCLUDING MD notes)
+        if verbose:
+            print("\n[2/5] Fetching pathology reports and MD notes from FHIR API...")
 
         all_documents = get_pathology_reports_urls(mrn=mrn, include_md_notes=True)
 
-        if not all_documents:
-            raise ValueError(f"No pathology reports or MD notes found for MRN: {mrn}")
+        if not all_documents and not molecular_results_docs:
+            raise ValueError(f"No molecular results, pathology reports, or MD notes found for MRN: {mrn}")
 
         if verbose:
-            print(f"      ✓ Found {len(all_documents)} documents total")
+            print(f"      ✓ Found {len(all_documents)} pathology/MD documents")
 
-        # Step 2: Classify and filter pathology reports for genomic extraction
+        # Step 3: Classify and filter pathology reports for genomic extraction
         if verbose:
-            print("\n[2/4] Classifying pathology reports to identify genomic alterations...")
+            print("\n[3/5] Classifying pathology reports to identify genomic alterations...")
 
         # Authenticate once for all document fetches
         bearer_token = generate_bearer_token()
@@ -395,6 +477,22 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
 
         # Cache PDF bytes to avoid redundant downloads
         pdf_bytes_cache = {}  # {doc_url: pdf_bytes}
+
+        # Fetch and cache PDF bytes for Molecular Results (no classification needed)
+        if molecular_results_docs:
+            if verbose:
+                print(f"\n      Fetching PDF bytes for {len(molecular_results_docs)} Molecular Results documents...")
+
+            for doc in molecular_results_docs:
+                try:
+                    pdf_bytes = fetch_pdf_bytes_from_fhir_url(doc['url'], bearer_token, onco_emr_token)
+                    if pdf_bytes:
+                        pdf_bytes_cache[doc['url']] = pdf_bytes
+                        if verbose:
+                            print(f"         ✓ Cached: {doc['date']}: {doc.get('description', 'Molecular Results')}")
+                except Exception as e:
+                    if verbose:
+                        print(f"         ⚠️  Failed to fetch: {str(e)}")
 
         for doc in all_documents:
             description = doc.get('description', '').lower()
@@ -459,17 +557,19 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
                     # If classification fails, include it by default to be safe
                     genomic_pathology_docs.append(doc)
 
-        # Use ONLY genomic pathology reports + MD notes for genomic extraction
-        all_documents_for_genomics = genomic_pathology_docs + md_notes_docs
+        # Use Molecular Results + Genomic Pathology Reports + MD Notes for genomic extraction
+        all_documents_for_genomics = molecular_results_docs + genomic_pathology_docs + md_notes_docs
 
         if not all_documents_for_genomics:
-            raise ValueError(f"No genomic pathology reports or MD notes found for MRN: {mrn}")
+            raise ValueError(f"No molecular results, genomic pathology reports, or MD notes found for MRN: {mrn}")
 
+        result['molecular_results_documents'] = molecular_results_docs
         result['pathology_documents'] = pathology_docs
         result['genomic_pathology_documents'] = genomic_pathology_docs
         result['typical_pathology_documents'] = typical_pathology_docs
         result['md_notes_documents'] = md_notes_docs
         result['classification_results'] = classification_results
+        result['molecular_results_count'] = len(molecular_results_docs)
         result['pathology_reports_count'] = len(pathology_docs)
         result['genomic_pathology_reports_count'] = len(genomic_pathology_docs)
         result['typical_pathology_reports_count'] = len(typical_pathology_docs)
@@ -478,18 +578,24 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
 
         if verbose:
             print(f"\n      ✓ Classification Complete:")
+            print(f"         - Molecular Results: {len(molecular_results_docs)}")
             print(f"         - Total Pathology Reports: {len(pathology_docs)}")
             print(f"         - Genomic Alterations Reports: {len(genomic_pathology_docs)}")
             print(f"         - Typical Pathology Reports (for pathology tab): {len(typical_pathology_docs)}")
             print(f"         - MD Notes: {len(md_notes_docs)}")
             print(f"\n      Documents selected for genomic extraction ({len(all_documents_for_genomics)} total):")
             for idx, doc in enumerate(all_documents_for_genomics, 1):
-                doc_type_label = "MD NOTE" if doc in md_notes_docs else "GENOMIC PATH"
+                if doc in molecular_results_docs:
+                    doc_type_label = "MOLECULAR RESULTS"
+                elif doc in md_notes_docs:
+                    doc_type_label = "MD NOTE"
+                else:
+                    doc_type_label = "GENOMIC PATH"
                 print(f"        {idx}. [{doc_type_label}] {doc['date']}: {doc.get('description', 'Report')}")
 
-        # Step 3: Combine cached PDF bytes and upload to Drive
+        # Step 4: Combine cached PDF bytes and upload to Drive
         if verbose:
-            print(f"\n[3/4] Combining {len(all_documents_for_genomics)} filtered documents from cached bytes...")
+            print(f"\n[4/5] Combining {len(all_documents_for_genomics)} filtered documents from cached bytes...")
 
         # Collect cached bytes for selected documents
         cached_pdf_bytes_list = []
@@ -529,17 +635,43 @@ def genomics_tab_info(mrn: str, verbose: bool = True):
             print("="*70)
             print(f"Combined PDF URL: {result['pdf_url']}")
             print(f"Total documents used for genomic extraction: {result['total_documents_count']}")
+            print(f"   - Molecular Results: {len(molecular_results_docs)}")
             print(f"   - Genomic Pathology Reports: {len(genomic_pathology_docs)}")
             print(f"   - MD Notes: {len(md_notes_docs)}")
-            print(f"   - Typical Pathology Reports (for pathology tab): {len(typical_pathology_docs)}")
+            print(f"   - Typical Pathology Reports (excluded, for pathology tab): {len(typical_pathology_docs)}")
             print("="*70)
 
-        # Step 4: Extract genomic information using cached bytes (no download needed!)
+        # Step 5: Extract genomic information using cached bytes (no download needed!)
         if verbose:
-            print(f"\n[4/4] Extracting genomic information from combined PDF bytes...")
+            print(f"\n[5/5] Extracting genomic information from combined PDF bytes...")
 
         # Pass bytes directly instead of URL to avoid re-downloading
         result['genomic_info'] = extract_genomic_info(pdf_input=combined_pdf_bytes)
+
+        # Format genomics documents for Documents tab (molecular results + genomic pathology reports, not MD notes)
+        genomic_documents_for_tab = []
+
+        # Add molecular results
+        for doc in molecular_results_docs:
+            genomic_documents_for_tab.append({
+                'url': doc.get('url'),  # FHIR URL
+                'date': doc.get('date'),
+                'document_type': 'Molecular Results',
+                'description': doc.get('description', 'Molecular Results'),
+                'document_id': doc.get('document_id')
+            })
+
+        # Add genomic pathology reports
+        for doc in genomic_pathology_docs:
+            genomic_documents_for_tab.append({
+                'url': doc.get('url'),  # FHIR URL
+                'date': doc.get('date'),
+                'document_type': 'Genomic Report',
+                'description': doc.get('description', 'Genomic Pathology Report'),
+                'document_id': doc.get('document_id')
+            })
+
+        result['genomics_reports'] = genomic_documents_for_tab
 
         if verbose:
             print("\n" + "="*70)

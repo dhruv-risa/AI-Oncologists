@@ -11,8 +11,8 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from Backend.Utils.Tabs.llmparser import llmresponsedetailed
-from Backend.Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
+from Utils.Tabs.llmparser import llmresponsedetailed
+from Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -36,9 +36,9 @@ extracted_instructions_summary = (
 description_summary = {
     "report_summary": {
         "study_type": "String - The modality and body part (e.g., 'CT Chest with contrast')",
-        "study_date": "String - Date of the current scan (e.g., 'December 8, 2024')",
+        "study_date": "String - Date of the current scan in MM/DD/YYYY format (e.g., '12/08/2024')",
         "overall_response": "String - The summary response status (e.g., 'Partial Response (PR)')",
-        "prior_comparison": "String - Date of the prior scan used for comparison (e.g., 'September 10, 2024')"
+        "prior_comparison": "String - Date of the prior scan used for comparison in MM/DD/YYYY format (e.g., '09/10/2024')"
     }
 }
 
@@ -98,7 +98,8 @@ description_imp_RECIST = {
                 },
                 "current_treatment_data": {
                     "baseline_val": "String - Measurement at start of current treatment (e.g., '3.2 cm')",
-                    "change_percentage": "String - Percentage change vs current (e.g., '-34%')"
+                    "current_val": "String - Current measurement on this study (e.g., '2.1 cm')",
+                    "change_percentage": "String - Percentage change from baseline to current (e.g., '-34%')"
                 }
             },
             "Extract ONE object per target lesion found."
@@ -111,7 +112,8 @@ description_imp_RECIST = {
             },
             "current_treatment_data": {
                 "baseline_val": "String - Total SOD at current treatment start (e.g., '7.4 cm')",
-                "change_percentage": "String - Total % change (e.g., '-28%')"
+                "current_val": "String - Current total SOD on this study (e.g., '5.3 cm')",
+                "change_percentage": "String - Total % change from baseline to current (e.g., '-28%')"
             }
         }
     },
@@ -198,7 +200,7 @@ DETAILED EXTRACTION RULES & EXAMPLES
 2. STUDY DATE EXTRACTION
    Rule: Extract the date when the current imaging study was performed
 
-   Format: Use natural date format (e.g., "December 8, 2024" or "12/08/2024")
+   Format: Use MM/DD/YYYY format ONLY (e.g., "12/08/2024")
 
    Location: Look in:
    - Report header section
@@ -206,9 +208,9 @@ DETAILED EXTRACTION RULES & EXAMPLES
    - "Date of Service" field
 
    Examples:
-   - "Exam Date: 12/08/2024" → "December 8, 2024"
-   - "Study performed on: 08-Dec-2024" → "December 8, 2024"
-   - "Date of Service: 2024-12-08" → "December 8, 2024"
+   - "Exam Date: 12/08/2024" → "12/08/2024"
+   - "Study performed on: 08-Dec-2024" → "12/08/2024"
+   - "Date of Service: 2024-12-08" → "12/08/2024"
 
 3. OVERALL RESPONSE ASSESSMENT
    Rule: Extract the radiologist's overall assessment of disease status following RECIST criteria
@@ -236,15 +238,17 @@ DETAILED EXTRACTION RULES & EXAMPLES
 4. PRIOR COMPARISON DATE
    Rule: Extract the date of the specific prior imaging study used for comparison
 
+   Format: Use MM/DD/YYYY format ONLY (e.g., "09/10/2024")
+
    Location: Look for:
    - "Comparison" section in report header
    - "Prior study dated:" phrase
    - "Compared to [date]" in findings
 
    Examples:
-   - "Comparison: CT Chest dated 09/10/2024" → "September 10, 2024"
-   - "Prior study from 2024-09-10 for comparison" → "September 10, 2024"
-   - "Compared to exam dated 10-Sep-2024" → "September 10, 2024"
+   - "Comparison: CT Chest dated 09/10/2024" → "09/10/2024"
+   - "Prior study from 2024-09-10 for comparison" → "09/10/2024"
+   - "Compared to exam dated 10-Sep-2024" → "09/10/2024"
 
    Special Cases:
    - If multiple prior studies mentioned, use the one explicitly stated as the comparison
@@ -255,9 +259,9 @@ QUALITY CHECKS BEFORE SUBMISSION
 ========================
 
 1. ✓ Study type includes modality, body region, and contrast details
-2. ✓ Study date is in readable format (Month DD, YYYY or MM/DD/YYYY)
+2. ✓ Study date is in MM/DD/YYYY format (e.g., 12/08/2024)
 3. ✓ Overall response is mapped to RECIST category with abbreviation
-4. ✓ Prior comparison date is in the same format as study date
+4. ✓ Prior comparison date is in MM/DD/YYYY format (e.g., 09/10/2024)
 5. ✓ All fields are populated (use "Not specified" for truly missing data)
 6. ✓ No extraneous text or explanations in the values
 
@@ -283,7 +287,7 @@ Just the pure JSON object following the schema above.
     logger.info("🤖 Requesting radiology summary extraction using Vertex AI SDK...")
 
     # Initialize model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     pdf_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
@@ -475,10 +479,12 @@ DETAILED EXTRACTION RULES & EXAMPLES
      "lesion_name": "RUL mass",
      "initial_diagnosis_data": {{
        "baseline_val": "3.5 cm",
+       "current_val": "2.1 cm",
        "change_percentage": "-40%"
      }},
      "current_treatment_data": {{
        "baseline_val": "3.2 cm",
+       "current_val": "2.1 cm",
        "change_percentage": "-34%"
      }}
    }}
@@ -525,10 +531,12 @@ DETAILED EXTRACTION RULES & EXAMPLES
      "lesion_name": "Sum",
      "initial_diagnosis_data": {{
        "baseline_val": "8.1 cm",        // 3.5 + 2.8 + 1.8
+       "current_val": "5.3 cm",         // 2.1 + 1.9 + 1.3
        "change_percentage": "-35%"       // ((5.3 - 8.1) / 8.1) × 100
      }},
      "current_treatment_data": {{
        "baseline_val": "7.4 cm",         // 3.2 + 2.5 + 1.7
+       "current_val": "5.3 cm",          // 2.1 + 1.9 + 1.3
        "change_percentage": "-28%"       // ((5.3 - 7.4) / 7.4) × 100
      }}
    }}
@@ -668,7 +676,7 @@ Just the pure JSON object following the schema above.
     logger.info("🤖 Requesting radiology impression & RECIST extraction using Vertex AI SDK...")
 
     # Initialize model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     pdf_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")

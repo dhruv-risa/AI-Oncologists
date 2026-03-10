@@ -7,6 +7,9 @@ A comprehensive system for extracting and managing oncology patient data from El
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Features](#features)
+- [Clinical Trials Matching](#clinical-trials-matching)
+- [Progressive Eligibility Loading](#progressive-eligibility-loading)
+- [Patient Review Links](#patient-review-links)
 - [Prerequisites](#prerequisites)
 - [Setup Instructions](#setup-instructions)
 - [Running the Application](#running-the-application)
@@ -65,10 +68,152 @@ The AI Oncologist system automates the extraction and processing of patient data
 
 - **Automated Data Extraction**: Extract patient information from unstructured medical documents
 - **Multi-Tab Dashboard**: Comprehensive view across diagnosis, treatment, labs, genomics, pathology, and radiology
+- **Clinical Trials Matching**: Intelligent matching of patients to eligible clinical trials from ClinicalTrials.gov
 - **Parallel Processing**: Three extraction pipelines run simultaneously for optimal performance
 - **Intelligent Caching**: SQLite-based data pool for instant subsequent loads
 - **Test Endpoints**: Isolated test APIs for validating individual workflows
 - **Real-time Updates**: RESTful API with CORS support for frontend integration
+
+## Clinical Trials Matching
+
+The system includes intelligent clinical trial matching that automatically identifies eligible trials for each patient.
+
+### How It Works
+
+1. **Trial Synchronization**: Fetch recruiting trials from ClinicalTrials.gov for major cancer types
+2. **Pre-filtering**: Quick programmatic checks eliminate obviously ineligible trials:
+   - Age requirements (patient age vs trial min/max age)
+   - Gender requirements (trial sex restrictions)
+   - ECOG performance status (patient functional status vs trial requirements)
+   - Disease matching (filters non-oncology trials)
+3. **AI Eligibility Analysis**: For trials that pass pre-filtering, AI analyzes detailed eligibility criteria against patient medical records
+4. **Results Storage**: Eligibility results are stored for instant retrieval
+
+### Eligibility Categories
+
+- **Likely Eligible** (70-100%): Patient meets most inclusion criteria with no exclusion flags
+- **Potentially Eligible** (40-69%): Patient may qualify but has some unknown or uncertain criteria
+- **Not Eligible** (0-39%): Patient fails critical criteria or triggers exclusion criteria
+
+### Automatic Patient Matching
+
+When a new patient is added to the system, the Clinical Trials feature automatically:
+1. Retrieves all available trials from the database
+2. Runs pre-filtering to eliminate obviously ineligible trials
+3. Performs AI-based eligibility analysis on remaining trials
+4. Stores results for instant access in the Clinical Trials tab
+
+### Using the Clinical Trials Feature
+
+**From the Patient Dashboard:**
+1. Search for a patient by MRN
+2. Navigate to the "Clinical Trials" tab
+3. View pre-analyzed eligibility for all available trials
+4. Click on any trial to see detailed eligibility breakdown
+
+**From the Clinical Trials Home:**
+1. Click "Clinical Trials" in the navigation
+2. Browse all available trials with eligible patient counts
+3. Click on a trial to see which patients are eligible
+4. Use "Sync Trials" to fetch latest trials from ClinicalTrials.gov
+
+### Administrative Criteria Handling
+
+Some trial criteria cannot be verified from medical records (e.g., ability to sign consent, willingness to travel). The system handles these based on patient functional status:
+
+- **ECOG 0-2 (Active/Stable)**: Administrative criteria assumed met (patient is ambulatory and functional)
+- **ECOG 3-4 (Critical)**: Administrative criteria marked as unknown
+
+### Three-Bucket Criteria Resolution
+
+Unknown eligibility criteria are classified into three actionable buckets:
+
+- **Patient Review** (dark blue): Questions only the patient can answer (e.g., "Are you pregnant?", "Do you have a pacemaker?")
+- **Clinician Review** (maroon): Items requiring physician input (e.g., lab values present in records but needing interpretation)
+- **Needs Testing** (amber): Data not available in medical records, requiring new lab tests or imaging
+
+Classification uses a hybrid approach: keyword-based pre-classification handles obvious cases, while an LLM (Stage 2) resolves ambiguous criteria.
+
+### Clinical Trials API Endpoints
+
+```bash
+# Sync trials from ClinicalTrials.gov
+POST /api/admin/sync-trials?max_per_query=50&background=false
+
+# List all available trials
+GET /api/trials?status=RECRUITING&page=1&limit=20
+
+# Get trial details
+GET /api/trials/{nct_id}
+
+# Get cached eligible trials for a patient
+GET /api/patients/{mrn}/eligible-trials
+
+# Get eligible patients for a trial
+GET /api/trials/{nct_id}/patients
+
+# Resolve unknown criteria manually
+POST /api/patients/{mrn}/trials/{nct_id}/resolve-criteria
+
+# Refresh a single trial's eligibility (re-run LLM)
+POST /api/patients/{mrn}/trials/{nct_id}/refresh-eligibility
+
+# Check eligibility computation progress
+GET /api/patients/{mrn}/eligibility-progress
+```
+
+## Progressive Eligibility Loading
+
+When a new patient is added, eligibility is computed against hundreds of trials. Each trial takes 15-20 seconds (LLM call), so the full computation can take 40-60+ minutes.
+
+Instead of waiting for all trials to finish, results appear progressively:
+
+- Each trial result is stored to the database immediately as it completes
+- A `computation_progress` table tracks total/completed/eligible counts per patient
+- The frontend polls `GET /api/patients/{mrn}/eligibility-progress` every 10 seconds
+- A progress banner shows "Analyzing trial 47/420..." with an animated progress bar
+- Trial results appear in the list as they finish computing
+
+### Computation States
+
+| State | Meaning |
+|-------|---------|
+| `not_started` | No computation has been initiated |
+| `computing` | Actively processing trials |
+| `completed` | All trials have been analyzed |
+| `stale` | Server restarted mid-computation (Resume button shown) |
+| `error` | Computation failed with an error |
+
+## Patient Review Links
+
+For criteria classified as "Patient Review Needed", clinicians can generate a shareable link that the patient opens in their browser to answer Yes/No questions.
+
+### How It Works
+
+1. Clinician clicks **"Send to Patient"** on a trial card next to "Patient Review Needed"
+2. A modal appears with a generated URL and a **"Copy Link"** button
+3. The patient opens the link in any browser (mobile-friendly)
+4. A standalone page shows the trial name and Yes/No questions for each criterion
+5. The patient submits their answers
+6. Eligibility is **recalculated in real-time** using the patient's responses
+7. The clinician refreshes the dashboard to see updated eligibility
+
+### Patient Review API Endpoints
+
+```bash
+# Generate a shareable patient review link
+POST /api/patients/{mrn}/trials/{nct_id}/send-patient-review
+
+# Get review page data (public, no auth)
+GET /api/review/{token}
+
+# Submit patient responses (public, no auth)
+POST /api/review/{token}/submit
+```
+
+### Demo Mode
+
+The current implementation is demo-only: no SMS is actually sent. The clinician copies the generated link and shares it manually. The patient review page is a standalone mobile-friendly page that works without the dashboard.
 
 ## Prerequisites
 
@@ -569,9 +714,13 @@ AI Oncologist/
 │           ├── genomics_tab.py       # Genomics extraction
 │           ├── pathology_tab.py      # Pathology extraction
 │           ├── radiology_tab.py      # Radiology extraction
+│           ├── clinical_trials_tab.py # Clinical trials eligibility matching
 │           ├── llmparser.py          # LLM parsing utilities
 │           ├── lab_postprocessor.py  # Lab data post-processing
 │           └── lab_chart_helper.py   # Lab chart generation
+│
+│   └── Utils/
+│       └── batch_eligibility_engine.py   # Batch trial eligibility computation
 │
 ├── Frontend/
 │   └── Oncology Patient Dashboard 2/
@@ -584,13 +733,17 @@ AI Oncologist/
 │       │   │   ├── MRNInput.tsx          # MRN input screen
 │       │   │   ├── PatientHeader.tsx     # Patient header component
 │       │   │   ├── DiseaseSummary.tsx    # Disease summary component
+│       │   │   ├── TrialsListView.tsx    # Clinical trials browse view
+│       │   │   ├── TrialDetailView.tsx  # Single trial detail view
+│       │   │   ├── PatientReviewPage.tsx # Standalone patient review page
 │       │   │   └── tabs/
 │       │   │       ├── DiagnosisTab.tsx
 │       │   │       ├── TreatmentTab.tsx
 │       │   │       ├── LabsTab.tsx
 │       │   │       ├── GenomicsTab.tsx
 │       │   │       ├── PathologyTab.tsx
-│       │   │       └── RadiologyTab.tsx
+│       │   │       ├── RadiologyTab.tsx
+│       │   │       └── ClinicalTrialsTab.tsx
 │       │   └── App.tsx
 │       ├── .env                    # Frontend configuration
 │       ├── package.json
@@ -770,5 +923,24 @@ For more detailed information, refer to:
 Copyright © 2024. All rights reserved.
 
 ## Version
+
+**Version 1.3** - Patient Review Links & Progressive Loading
+- Patient review link generation for shareable patient questionnaires
+- Standalone mobile-friendly patient review page with Yes/No questions
+- Real-time eligibility recalculation on patient response submission
+- Token-based review system with completion tracking
+- Progressive eligibility loading with polling and progress banner
+- Per-trial result storage for incremental updates
+- Stale computation detection and resume capability
+- Three-bucket criteria classification (Patient/Clinician/Testing) with hybrid keyword+LLM approach
+- Color-coded review buckets (dark blue for patient, maroon for clinician)
+
+**Version 1.1** - Clinical Trials Matching
+- Added clinical trials synchronization from ClinicalTrials.gov
+- Intelligent eligibility matching with pre-filtering (age, gender, ECOG, disease type)
+- AI-powered detailed eligibility analysis
+- Automatic eligibility computation for new patients
+- Clinical Trials tab in patient dashboard
+- Clinical Trials browse view with patient counts
 
 **Version 1.0** - Initial Release

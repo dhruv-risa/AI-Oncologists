@@ -1,6 +1,7 @@
 import { FileText, Download, User, AlertTriangle, CheckCircle } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { PatientData } from '../services/api';
+import { normalizePatientName } from '../utils/stringFormatters';
 
 interface PatientHeaderProps {
   patient: PatientData;
@@ -8,7 +9,7 @@ interface PatientHeaderProps {
 
 export function PatientHeader({ patient }: PatientHeaderProps) {
   // Extract data using exact backend keys with optional chaining
-  const name = patient.demographics?.["Patient Name"] || "Unknown Patient";
+  const name = normalizePatientName(patient.demographics?.["Patient Name"]) || "Unknown Patient";
   const mrn = patient.demographics?.["MRN"];
   const dob = patient.demographics?.["Date of Birth"];
   const age = patient.demographics?.["Age"];

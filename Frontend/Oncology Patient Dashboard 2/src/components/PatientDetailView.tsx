@@ -13,16 +13,24 @@ import { RadiologyTab } from './tabs/RadiologyTab';
 import { LabsTab } from './tabs/LabsTab';
 import { TreatmentTab } from './tabs/TreatmentTab';
 import { ComorbiditiesTab } from './tabs/ComorbiditiesTab';
+import { ClinicalTrialsTab } from './tabs/ClinicalTrialsTab';
 import { usePatient } from '../contexts/PatientContext';
 
 interface PatientDetailViewProps {
   patientId: string;
   onBack: () => void;
+  initialTab?: string;
+  focusTrialId?: string;
 }
 
-export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps) {
-  const [activeTab, setActiveTab] = useState('diagnosis');
+export function PatientDetailView({ patientId, onBack, initialTab, focusTrialId }: PatientDetailViewProps) {
+  const [activeTab, setActiveTab] = useState(initialTab || 'diagnosis');
   const { currentPatient, fetchPatientData, loading, error } = usePatient();
+
+  // Switch tab when navigated with a specific initialTab
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Fetch patient data when component mounts or patientId changes
   useEffect(() => {
@@ -46,6 +54,8 @@ export function PatientDetailView({ patientId, onBack }: PatientDetailViewProps)
         return <TreatmentTab patientData={currentPatient} />;
       case 'comorbidities':
         return <ComorbiditiesTab patientData={currentPatient} />;
+      case 'clinical-trials':
+        return <ClinicalTrialsTab focusTrialId={focusTrialId} />;
       case 'documents':
         return <DocumentsSection patientData={currentPatient} />;
       default:

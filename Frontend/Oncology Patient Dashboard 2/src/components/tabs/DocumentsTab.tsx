@@ -23,12 +23,25 @@ export function DocumentsTab({ patientData }: DocumentsTabProps) {
     });
   }
 
+  // Lab Results
+  if (patientData?.lab_reports && patientData.lab_reports.length > 0) {
+    documents.push({
+      category: 'Lab Results',
+      items: patientData.lab_reports.map((report, idx) => ({
+        name: report.description || report.type || 'Lab Results',
+        date: formatDate(report.date),
+        id: report.document_id || `LAB-${idx + 1}`,
+        url: report.url,
+      })),
+    });
+  }
+
   // Genomic Reports
   if (patientData?.genomics_reports && patientData.genomics_reports.length > 0) {
     documents.push({
       category: 'Genomic Reports',
       items: patientData.genomics_reports.map((report, idx) => ({
-        name: report.type || 'Genomic Report',
+        name: report.type || report.description || 'Genomic Report',
         date: formatDate(report.date),
         id: `GEN-${idx + 1}`,
         url: report.url,

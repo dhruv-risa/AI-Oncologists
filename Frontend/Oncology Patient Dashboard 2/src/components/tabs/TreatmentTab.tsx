@@ -19,33 +19,180 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
 
   // Helper function to check if treatment is adjuvant
   const isAdjuvant = (treatment: any) => {
-    return treatment.header.line_number.toString().toLowerCase().includes('adjuvant');
+    return treatment.header?.line_number?.toString().toLowerCase().includes('adjuvant') || false;
   };
 
-  // Helper function to get discontinuation reason or ongoing status
-  const getDiscontinuationReason = (treatment: any) => {
-    const isOngoing = treatment.dates?.end_date === 'Ongoing' ||
-                      treatment.header?.status_badge?.toLowerCase().includes('current') ||
-                      treatment.header?.status_badge?.toLowerCase().includes('ongoing');
+  // Helper function to check if treatment is local therapy only
+  const isLocalTherapyOnly = (treatment: any) => {
+    return treatment.local_therapy && !treatment.systemic_regimen && !treatment.regimen_details?.display_name;
+  };
 
-    if (isOngoing) {
-      return 'Ongoing treatment';
+  // Helper function to parse local therapy details
+  const parseLocalTherapy = (localTherapyText: string) => {
+    if (!localTherapyText) return { therapyType: 'N/A', site: 'N/A' };
+
+    const text = localTherapyText.toLowerCase();
+    let therapyType = 'N/A';
+    let site = 'N/A';
+
+    // Extract therapy type
+    if (text.includes('wbrt') || text.includes('whole brain radiation')) {
+      therapyType = 'WBRT (Whole Brain Radiation Therapy)';
+      site = 'Brain';
+    } else if (text.includes('sbrt')) {
+      therapyType = 'SBRT (Stereotactic Body Radiation Therapy)';
+    } else if (text.includes('srs') || text.includes('stereotactic radiosurgery')) {
+      therapyType = 'SRS (Stereotactic Radiosurgery)';
+    } else if (text.includes('radiation')) {
+      therapyType = 'Radiation Therapy';
+    } else if (text.includes('lobectomy')) {
+      therapyType = 'Lobectomy';
+      site = text.includes('right') ? 'Right lung' : text.includes('left') ? 'Left lung' : 'Lung';
+    } else if (text.includes('resection')) {
+      therapyType = 'Surgical Resection';
+    } else if (text.includes('surgery')) {
+      therapyType = 'Surgery';
     }
 
-    return treatment.reason_for_discontinuation || null;
+    // Extract site if not already set
+    if (site === 'N/A') {
+      if (text.includes('brain') || text.includes('hippocampal')) {
+        site = 'Brain';
+      } else if (text.includes('lung')) {
+        site = 'Lung';
+      } else if (text.includes('liver')) {
+        site = 'Liver';
+      } else if (text.includes('bone')) {
+        site = 'Bone';
+      } else if (text.includes('spine')) {
+        site = 'Spine';
+      } else {
+        site = localTherapyText; // Use full text as fallback
+      }
+    }
+
+    return { therapyType, site };
+  };
+
+  // Helper function to format date display (single date if start and end are the same)
+  const formatDateDisplay = (treatment: any) => {
+    const displayText = treatment.dates?.display_text;
+    const startDate = treatment.dates?.start_date;
+    const endDate = treatment.dates?.end_date;
+
+    if (!displayText) return '';
+
+    // Check if display text contains an arrow
+    const arrowIndex = displayText.indexOf('->');
+    if (arrowIndex > 0) {
+      const firstPart = displayText.substring(0, arrowIndex).trim();
+      const secondPart = displayText.substring(arrowIndex + 2).trim();
+
+      // If both parts are identical (same date repeated), show only once
+      if (firstPart === secondPart) {
+        return firstPart;
+      }
+
+      // If backend dates are the same (and not Ongoing/NA), show only first date
+      if (startDate && endDate &&
+          startDate === endDate &&
+          startDate !== 'Ongoing' &&
+          startDate !== 'NA' &&
+          endDate !== 'Ongoing' &&
+          endDate !== 'NA') {
+        return firstPart;
+      }
+    }
+
+    return displayText;
+  };
+
+  // Helper function to check if dates should be displayed
+  const shouldShowDates = (treatment: any) => {
+    const displayText = treatment.dates?.display_text;
+    const startDate = treatment.dates?.start_date;
+
+    // Don't show dates if display_text is missing or invalid
+    if (!displayText || displayText === 'NA' || displayText === 'Date not available') {
+      return false;
+    }
+
+    // Don't show dates if they contain "NA ->" (e.g., "NA -> Ongoing", "NA -> NA")
+    if (displayText.includes('NA ->') || displayText.includes('NA->')) {
+      return false;
+    }
+
+    // Don't show dates if start_date is NA or missing
+    if (!startDate || startDate === 'NA' || startDate === 'N/A') {
+      return false;
+    }
+
+    return true;
+  };
+
+  // Helper function to check if clinical details should be displayed
+  const shouldShowClinicalDetails = (treatment: any) => {
+    const details = treatment.outcome?.details;
+    if (!details || details === 'NA' || details.trim() === '' ||
+        details.toLowerCase().includes('treatment planned but not yet started')) {
+      return false;
+    }
+    return true;
+  };
+
+  // Helper function to check if response badge should be displayed
+  const shouldShowResponseBadge = (treatment: any) => {
+    const responseTag = treatment.outcome?.response_tag;
+    if (!responseTag || responseTag === 'NA' || responseTag.trim() === '') {
+      return false;
+    }
+    return true;
+  };
+
+  // Helper function to check if cycles should be displayed
+  const shouldShowCycles = (treatment: any) => {
+    const displayText = treatment.cycles_data?.display_text;
+    if (!displayText || displayText === 'NA' || displayText === 'N/A' || displayText.trim() === '') {
+      return false;
+    }
+    return true;
+  };
+
+  // Helper function to get discontinuation reason (only for discontinued treatments)
+  const getDiscontinuationReason = (treatment: any) => {
+    const status = treatment.header?.status_badge?.toLowerCase() || '';
+
+    // Don't show discontinuation reason for ongoing, current, or planned treatments
+    if (status.includes('current') ||
+        status.includes('ongoing') ||
+        status.includes('planned') ||
+        treatment.dates?.end_date === 'Ongoing') {
+      return null;
+    }
+
+    // Only return reason if it exists and is not "NA" or empty
+    const reason = treatment.reason_for_discontinuation;
+    if (reason && reason !== 'NA' && reason.trim() !== '') {
+      return reason;
+    }
+
+    return null;
   };
 
   // Function to nest adjuvant therapies inside their corresponding lines based on dates
   const nestAdjuvantTherapies = (treatments: any[]) => {
     const adjuvantTherapies: any[] = [];
+    const localTherapies: any[] = [];
     const mainLines: any[] = [];
 
-    // Separate adjuvant and non-adjuvant therapies
+    // Separate adjuvant, local therapy only, and regular therapies
     treatments.forEach(treatment => {
       if (isAdjuvant(treatment)) {
         adjuvantTherapies.push(treatment);
+      } else if (isLocalTherapyOnly(treatment)) {
+        localTherapies.push(treatment);
       } else {
-        mainLines.push({ ...treatment, adjuvant_therapies: [] });
+        mainLines.push({ ...treatment, adjuvant_therapies: [], regimen_modifications: [] });
       }
     });
 
@@ -128,44 +275,125 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
       }
     });
 
-    return mainLines;
+    // Group treatments by line number to handle regimen modifications
+    const lineNumberGroups: { [key: string]: any[] } = {};
+    mainLines.forEach(line => {
+      const lineNum = line.header?.line_number?.toString() || 'unknown';
+      if (!lineNumberGroups[lineNum]) {
+        lineNumberGroups[lineNum] = [];
+      }
+      lineNumberGroups[lineNum].push(line);
+    });
+
+    // Process each group: first entry is main, rest are regimen modifications
+    const consolidatedLines: any[] = [];
+    Object.keys(lineNumberGroups).forEach(lineNum => {
+      const group = lineNumberGroups[lineNum];
+
+      if (group.length === 1) {
+        // Single entry, just add it
+        consolidatedLines.push(group[0]);
+      } else {
+        // Multiple entries with same line number - treat as regimen modifications
+        // Sort by start date to get chronological order
+        const sortedGroup = group.sort((a, b) => {
+          const dateA = a.dates?.start_date;
+          const dateB = b.dates?.start_date;
+          if (!dateA || dateA === 'NA') return 1;
+          if (!dateB || dateB === 'NA') return -1;
+          try {
+            return new Date(dateA).getTime() - new Date(dateB).getTime();
+          } catch {
+            return 0;
+          }
+        });
+
+        // First entry is the main treatment
+        const mainTreatment = sortedGroup[0];
+
+        // Rest are regimen modifications
+        mainTreatment.regimen_modifications = sortedGroup.slice(1);
+
+        consolidatedLines.push(mainTreatment);
+      }
+    });
+
+    return { mainLines: consolidatedLines, localTherapies };
   };
 
   // Process and nest adjuvant therapies
-  const processedTreatments = nestAdjuvantTherapies([...rawTreatmentHistory]);
+  const { mainLines: processedTreatments, localTherapies } = nestAdjuvantTherapies([...rawTreatmentHistory]);
 
-  // Sort treatment history: Current first, then by start date (most recent first)
-  const treatmentHistory = processedTreatments.sort((a, b) => {
-    // Current treatments always come first
-    const aIsCurrent = a.header.status_badge.toLowerCase().includes('current');
-    const bIsCurrent = b.header.status_badge.toLowerCase().includes('current');
+  // Merge main lines and local therapies, then sort chronologically
+  const allTreatments = [
+    ...processedTreatments.map(t => ({ ...t, isLocalTherapy: false })),
+    ...localTherapies.map(t => ({ ...t, isLocalTherapy: true }))
+  ];
 
-    if (aIsCurrent && !bIsCurrent) return -1;
-    if (!aIsCurrent && bIsCurrent) return 1;
+  // Sort all treatments: By date if available (most recent first), otherwise by line number (highest first)
+  const treatmentHistory = allTreatments.sort((a, b) => {
+    const aLineNum = parseInt(a.header?.line_number) || 0;
+    const bLineNum = parseInt(b.header?.line_number) || 0;
+    const aStartDate = a.dates?.start_date;
+    const bStartDate = b.dates?.start_date;
 
-    // Otherwise sort by start date (most recent first)
-    const aDate = new Date(a.dates.start_date);
-    const bDate = new Date(b.dates.start_date);
-    return bDate.getTime() - aDate.getTime();
+    const aHasValidDate = aStartDate && aStartDate !== 'NA' && aStartDate !== 'Ongoing';
+    const bHasValidDate = bStartDate && bStartDate !== 'NA' && bStartDate !== 'Ongoing';
+
+    // If both have valid dates, sort by date (most recent first)
+    if (aHasValidDate && bHasValidDate) {
+      try {
+        const dateA = new Date(aStartDate);
+        const dateB = new Date(bStartDate);
+        return dateB.getTime() - dateA.getTime(); // Most recent first
+      } catch {
+        // If date parsing fails, fall back to line number
+        return bLineNum - aLineNum;
+      }
+    }
+
+    // If neither has valid dates, sort by line number (highest first)
+    if (!aHasValidDate && !bHasValidDate) {
+      return bLineNum - aLineNum;
+    }
+
+    // If only one has a valid date, prioritize the one with a date
+    if (aHasValidDate && !bHasValidDate) return -1;
+    if (!aHasValidDate && bHasValidDate) return 1;
+
+    return 0;
   });
 
   // Helper function to get response tag color
   const getResponseColor = (responseTag: string) => {
-    if (!responseTag) return 'bg-gray-100 border-gray-200 text-gray-700';
+    if (!responseTag) return 'bg-gray-200 text-gray-800 font-medium';
     const tag = responseTag.toLowerCase();
-    if (tag.includes('complete response') || tag.includes('cr')) {
-      return 'bg-emerald-100 border-emerald-200 text-emerald-700';
+
+    // Check for progressive disease FIRST (before partial response)
+    // because "progressive" contains "pr" which would match partial response
+    if (tag.includes('progressive disease') || tag.includes('progression') ||
+        (tag.includes('pd') && !tag.includes('partial'))) {
+      return 'bg-red-600 text-white font-medium';
+    }
+    if (tag.includes('excellent response')) {
+      return 'bg-green-600 text-white font-medium';
+    }
+    if (tag.includes('complete response') || tag.includes('cr') || tag.includes('remission')) {
+      return 'bg-emerald-500 text-white font-medium';
     }
     if (tag.includes('partial response') || tag.includes('pr')) {
-      return 'bg-green-100 border-green-200 text-green-700';
+      return 'bg-green-500 text-white font-medium';
     }
     if (tag.includes('stable disease') || tag.includes('sd')) {
-      return 'bg-blue-100 border-blue-200 text-blue-700';
+      return 'bg-blue-500 text-white font-medium';
     }
-    if (tag.includes('progressive disease') || tag.includes('pd')) {
-      return 'bg-red-100 border-red-200 text-red-700';
+    if (tag.includes('mixed response')) {
+      return 'bg-yellow-500 text-white font-medium';
     }
-    return 'bg-gray-100 border-gray-200 text-gray-700';
+    if (tag.includes('completed') || tag.includes('complete')) {
+      return 'bg-gray-600 text-white font-medium';
+    }
+    return 'bg-gray-400 text-white font-medium';
   };
 
   // Helper function to get status badge color
@@ -186,6 +414,16 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
     return 'bg-yellow-100 text-yellow-800';
   };
 
+  // Helper function to parse clinical details into bullet points
+  const parseClinicalDetails = (details: string) => {
+    if (!details) return [];
+    // Split by bullet point character (•) and clean up
+    return details
+      .split('•')
+      .map(item => item.trim())
+      .filter(item => item.length > 0);
+  };
+
   return (
     <div className="bg-white border border-t-0 border-gray-200 p-6">
       <div className="space-y-6 mb-6">
@@ -202,16 +440,112 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                 No treatment history available
               </div>
             ) : (
-              treatmentHistory.map((treatment, index) => {
-                const hasAdjuvants = treatment.adjuvant_therapies && treatment.adjuvant_therapies.length > 0;
+              <>
+                {treatmentHistory.map((treatment, index) => {
+                  // Check if this is a local therapy card
+                  if (treatment.isLocalTherapy) {
+                    const { therapyType, site } = parseLocalTherapy(treatment.local_therapy);
 
-                return (
-                  <div
-                    key={index}
-                    className="bg-white border border-gray-300 rounded-lg p-5 shadow-sm"
-                  >
-                    {/* Main line of therapy */}
-                    <div className={hasAdjuvants ? 'pb-4' : ''}>
+                    return (
+                      <div
+                        key={`local-${index}`}
+                        className="bg-white border border-purple-400 rounded-lg p-5 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <p className="text-gray-900 font-medium">
+                              {treatment.header.primary_drug_name || 'Local Therapy'}
+                            </p>
+                            <span className={`px-2 py-1 rounded text-xs ${getStatusBadgeStyle(treatment.header.status_badge)}`}>
+                              {treatment.header.status_badge}
+                            </span>
+                            <span className="px-2 py-1 bg-purple-600 text-white rounded text-xs font-medium">
+                              Local Therapy
+                            </span>
+                          </div>
+                          {shouldShowResponseBadge(treatment) && (
+                            <span className={`px-2.5 py-1 rounded-md text-xs ${getResponseColor(treatment.outcome?.response_tag || '')}`}>
+                              {treatment.outcome?.response_tag}
+                            </span>
+                          )}
+                        </div>
+
+                        {shouldShowDates(treatment) && (
+                          <p className="text-sm text-gray-600 mb-3">
+                            {formatDateDisplay(treatment)}
+                          </p>
+                        )}
+
+                        <div className="flex justify-between items-start gap-4 mb-3">
+                          {therapyType !== 'N/A' && (
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500 mb-1">Therapy Type</p>
+                              <p className="text-sm text-gray-900">
+                                {therapyType}
+                              </p>
+                            </div>
+                          )}
+                          <div className="flex-shrink-0 ml-auto" style={{ minWidth: '200px' }}>
+                            <p className="text-xs text-gray-500 mb-1">Site / Target Area</p>
+                            <p className="text-sm text-gray-900">
+                              {site}
+                            </p>
+                          </div>
+                        </div>
+
+                        {treatment.toxicities && treatment.toxicities.length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-xs text-gray-500 mb-1">Toxicities</p>
+                            <div className="flex flex-wrap gap-2">
+                              {treatment.toxicities.map((toxicity: any, idx: number) => (
+                                <span
+                                  key={idx}
+                                  className={`px-2 py-1 rounded text-xs ${getToxicityColor(toxicity.grade)}`}
+                                >
+                                  {toxicity.display_tag}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {shouldShowClinicalDetails(treatment) && (
+                          <div className="mb-3">
+                            <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
+                            <div className="space-y-1">
+                              {parseClinicalDetails(treatment.outcome.details).map((point, idx) => (
+                                <div key={idx} className="flex gap-2 items-start">
+                                  <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
+                                  <p className="text-sm text-gray-900 flex-1 leading-normal">{point}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {(() => {
+                          const reason = getDiscontinuationReason(treatment);
+                          return reason ? (
+                            <div>
+                              <p className="text-xs text-gray-500 mb-1">Reason for discontinuation</p>
+                              <p className="text-sm text-gray-900">{reason}</p>
+                            </div>
+                          ) : null;
+                        })()}
+                      </div>
+                    );
+                  }
+
+                  // Regular line of therapy card
+                  const hasAdjuvants = treatment.adjuvant_therapies && treatment.adjuvant_therapies.length > 0;
+                  const hasRegimenModifications = treatment.regimen_modifications && treatment.regimen_modifications.length > 0;
+
+                  return (
+                    <div
+                      key={index}
+                      className="bg-white border border-gray-300 rounded-lg p-5 shadow-sm"
+                    >
+                      {/* Main line of therapy */}
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-3">
                           <p className="text-gray-900 font-medium">
@@ -220,34 +554,45 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                           <span className={`px-2 py-1 rounded text-xs ${getStatusBadgeStyle(treatment.header.status_badge)}`}>
                             {treatment.header.status_badge}
                           </span>
+                          {hasRegimenModifications && (
+                            <span className="px-2 py-1 bg-amber-600 text-white rounded text-xs font-medium">
+                              {treatment.regimen_modifications.length} Modification{treatment.regimen_modifications.length > 1 ? 's' : ''}
+                            </span>
+                          )}
                           {hasAdjuvants && (
                             <span className="px-2 py-1 bg-purple-600 text-white rounded text-xs font-medium">
                               {treatment.adjuvant_therapies.length} Adjuvant{treatment.adjuvant_therapies.length > 1 ? 's' : ''}
                             </span>
                           )}
                         </div>
-                        <span className={`px-2 py-1 border rounded text-xs ${getResponseColor(treatment.outcome?.response_tag || '')}`}>
-                          {treatment.outcome?.response_tag || 'N/A'}
-                        </span>
+                        {shouldShowResponseBadge(treatment) && (
+                          <span className={`px-2.5 py-1 rounded-md text-xs ${getResponseColor(treatment.outcome?.response_tag || '')}`}>
+                            {treatment.outcome?.response_tag}
+                          </span>
+                        )}
                       </div>
 
-                      <p className="text-sm text-gray-600 mb-3">
-                        {treatment.dates?.display_text || 'Date not available'}
-                      </p>
+                      {shouldShowDates(treatment) && (
+                        <p className="text-sm text-gray-600 mb-3">
+                          {formatDateDisplay(treatment)}
+                        </p>
+                      )}
 
-                      <div className="grid grid-cols-2 gap-4 mb-3">
-                        <div>
+                      <div className="flex justify-between items-start gap-4 mb-3">
+                        <div className="flex-1">
                           <p className="text-xs text-gray-500 mb-1">Regimen</p>
                           <p className="text-sm text-gray-900">
-                            {treatment.regimen_details?.display_name || 'N/A'}
+                            {treatment.systemic_regimen || treatment.regimen_details?.display_name || 'N/A'}
                           </p>
                         </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
-                          <p className="text-sm text-gray-900">
-                            {treatment.cycles_data?.display_text || 'N/A'}
-                          </p>
-                        </div>
+                        {shouldShowCycles(treatment) && (
+                          <div className="flex-shrink-0 ml-auto" style={{ minWidth: '200px' }}>
+                            <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
+                            <p className="text-sm text-gray-900">
+                              {treatment.cycles_data?.display_text}
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       {treatment.toxicities && treatment.toxicities.length > 0 && (
@@ -266,10 +611,17 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                         </div>
                       )}
 
-                      {treatment.outcome?.details && (
+                      {shouldShowClinicalDetails(treatment) && (
                         <div className="mb-3">
-                          <p className="text-xs text-gray-500 mb-1">Response Details</p>
-                          <p className="text-sm text-gray-900">{treatment.outcome.details}</p>
+                          <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
+                          <div className="space-y-1">
+                            {parseClinicalDetails(treatment.outcome.details).map((point, idx) => (
+                              <div key={idx} className="flex gap-2 items-start">
+                                <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
+                                <p className="text-sm text-gray-900 flex-1 leading-normal">{point}</p>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -282,10 +634,111 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                           </div>
                         ) : null;
                       })()}
-                    </div>
 
-                    {/* Nested adjuvant therapies */}
-                    {hasAdjuvants && (
+                      {/* Regimen Modifications */}
+                      {hasRegimenModifications && (
+                        <div className="border-t-2 border-gray-200 pt-4 mt-4 space-y-3">
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="h-px flex-1 bg-gray-300"></div>
+                            <span className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                              Regimen Modifications ({treatment.regimen_modifications.length})
+                            </span>
+                            <div className="h-px flex-1 bg-gray-300"></div>
+                          </div>
+
+                          {treatment.regimen_modifications.map((modification: any, modIndex: number) => (
+                            <div
+                              key={modIndex}
+                              className="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-lg p-4 shadow-md"
+                            >
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-3">
+                                  <span className="px-2 py-1 bg-amber-200 text-amber-800 rounded text-xs font-semibold">
+                                    Modification {modIndex + 1}
+                                  </span>
+                                  <p className="text-amber-900 font-medium">
+                                    {modification.header.primary_drug_name}
+                                  </p>
+                                  <span className={`px-2 py-1 rounded text-xs ${getStatusBadgeStyle(modification.header.status_badge)}`}>
+                                    {modification.header.status_badge}
+                                  </span>
+                                </div>
+                                {shouldShowResponseBadge(modification) && (
+                                  <span className={`px-2.5 py-1 rounded-md text-xs ${getResponseColor(modification.outcome?.response_tag || '')}`}>
+                                    {modification.outcome?.response_tag}
+                                  </span>
+                                )}
+                              </div>
+
+                              {shouldShowDates(modification) && (
+                                <p className="text-sm text-gray-600 mb-3">
+                                  {formatDateDisplay(modification)}
+                                </p>
+                              )}
+
+                              <div className="flex justify-between items-start gap-4 mb-3">
+                                <div className="flex-1">
+                                  <p className="text-xs text-gray-500 mb-1">Regimen</p>
+                                  <p className="text-sm text-gray-900">
+                                    {modification.systemic_regimen || modification.regimen_details?.display_name || 'N/A'}
+                                  </p>
+                                </div>
+                                {shouldShowCycles(modification) && (
+                                  <div className="flex-shrink-0 ml-auto" style={{ minWidth: '200px' }}>
+                                    <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
+                                    <p className="text-sm text-gray-900">
+                                      {modification.cycles_data?.display_text}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+
+                              {modification.toxicities && modification.toxicities.length > 0 && (
+                                <div className="mb-3">
+                                  <p className="text-xs text-gray-500 mb-1">Toxicities</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {modification.toxicities.map((toxicity: any, idx: number) => (
+                                      <span
+                                        key={idx}
+                                        className={`px-2 py-1 rounded text-xs ${getToxicityColor(toxicity.grade)}`}
+                                      >
+                                        {toxicity.display_tag}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {shouldShowClinicalDetails(modification) && (
+                                <div className="mb-3">
+                                  <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
+                                  <div className="space-y-1">
+                                    {parseClinicalDetails(modification.outcome.details).map((point, idx) => (
+                                      <div key={idx} className="flex gap-2 items-start">
+                                        <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
+                                        <p className="text-sm text-gray-900 flex-1 leading-normal">{point}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {(() => {
+                                const reason = getDiscontinuationReason(modification);
+                                return reason ? (
+                                  <div>
+                                    <p className="text-xs text-gray-500 mb-1">Reason for discontinuation</p>
+                                    <p className="text-sm text-gray-900">{reason}</p>
+                                  </div>
+                                ) : null;
+                              })()}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Nested adjuvant therapies */}
+                      {hasAdjuvants && (
                       <div className="border-t-2 border-gray-200 pt-4 mt-4 space-y-3">
                         <div className="flex items-center gap-2 mb-3">
                           <div className="h-px flex-1 bg-gray-300"></div>
@@ -314,23 +767,27 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                               </div>
                             </div>
 
-                            <p className="text-sm text-gray-600 mb-3">
-                              {adjuvant.dates?.display_text || 'Date not available'}
-                            </p>
+                            {shouldShowDates(adjuvant) && (
+                              <p className="text-sm text-gray-600 mb-3">
+                                {formatDateDisplay(adjuvant)}
+                              </p>
+                            )}
 
-                            <div className="grid grid-cols-2 gap-4 mb-3">
-                              <div>
+                            <div className="flex justify-between items-start gap-4 mb-3">
+                              <div className="flex-1">
                                 <p className="text-xs text-gray-500 mb-1">Regimen</p>
                                 <p className="text-sm text-gray-900">
-                                  {adjuvant.regimen_details?.display_name || 'N/A'}
+                                  {adjuvant.systemic_regimen || adjuvant.regimen_details?.display_name || 'N/A'}
                                 </p>
                               </div>
-                              <div>
-                                <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
-                                <p className="text-sm text-gray-900">
-                                  {adjuvant.cycles_data?.display_text || 'N/A'}
-                                </p>
-                              </div>
+                              {shouldShowCycles(adjuvant) && (
+                                <div className="flex-shrink-0 ml-auto" style={{ minWidth: '200px' }}>
+                                  <p className="text-xs text-gray-500 mb-1">Cycles completed</p>
+                                  <p className="text-sm text-gray-900">
+                                    {adjuvant.cycles_data?.display_text}
+                                  </p>
+                                </div>
+                              )}
                             </div>
 
                             {adjuvant.toxicities && adjuvant.toxicities.length > 0 && (
@@ -349,10 +806,17 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                               </div>
                             )}
 
-                            {adjuvant.outcome?.details && (
+                            {shouldShowClinicalDetails(adjuvant) && (
                               <div className="mb-3">
-                                <p className="text-xs text-gray-500 mb-1">Response Details</p>
-                                <p className="text-sm text-gray-900">{adjuvant.outcome.details}</p>
+                                <p className="text-xs text-gray-500 mb-1">Clinical Details</p>
+                                <div className="space-y-1">
+                                  {parseClinicalDetails(adjuvant.outcome.details).map((point, idx) => (
+                                    <div key={idx} className="flex gap-2 items-start">
+                                      <span className="text-gray-400 flex-shrink-0 text-xs leading-none mt-[0.1rem]">•</span>
+                                      <p className="text-sm text-gray-900 flex-1 leading-normal">{point}</p>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             )}
 
@@ -370,8 +834,9 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
                       </div>
                     )}
                   </div>
-                );
-              })
+                  );
+                })}
+              </>
             )}
           </div>
         </div>
@@ -385,26 +850,54 @@ export function TreatmentTab({ patientData }: TreatmentTabProps) {
               No timeline events available
             </div>
           ) : (
-            timelineEvents.map((event, index) => (
-              <div key={index} className="flex items-start gap-4">
-                <div className="w-24 flex-shrink-0 text-xs text-gray-600">
-                  {event.date_display}
-                </div>
-                <div className="flex-1">
-                  <div className="bg-gray-50 border-l-2 border-gray-900 p-3 rounded-r-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="text-sm text-gray-900 font-medium">{event.title}</p>
-                      {event.event_type && (
-                        <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
-                          {event.event_type}
-                        </span>
+            timelineEvents.map((event, index) => {
+              // Use the backend's data structure:
+              // - systemic_regimen for drug treatments
+              // - local_therapy for radiation/surgery
+              // - details for description
+
+              // Determine fallback based on event type
+              const getFallbackTitle = (eventType?: string) => {
+                const type = eventType?.toLowerCase() || '';
+                if (type.includes('systemic')) return 'Systemic Therapy';
+                if (type.includes('radiation')) return 'Radiation Therapy';
+                if (type.includes('surgery')) return 'Surgical Procedure';
+                if (type.includes('imaging')) return 'Diagnostic Imaging';
+                return 'Clinical Event';
+              };
+
+              const eventTitle = event.systemic_regimen ||
+                                event.local_therapy ||
+                                event.title ||
+                                getFallbackTitle(event.event_type);
+              const eventDescription = event.details || event.subtitle || '';
+
+              return (
+                <div key={index} className="flex items-start gap-4">
+                  <div className="w-24 flex-shrink-0 text-xs text-gray-600">
+                    {event.date_display}
+                  </div>
+                  <div className="flex-1">
+                    <div className="bg-gray-50 border-l-2 border-gray-900 p-3 rounded-r-lg">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="text-sm text-gray-900 font-medium">
+                          {eventTitle}
+                        </p>
+                        {event.event_type && (
+                          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
+                            {event.event_type}
+                          </span>
+                        )}
+                      </div>
+
+                      {eventDescription && (
+                        <p className="text-xs text-gray-600">{eventDescription}</p>
                       )}
                     </div>
-                    <p className="text-xs text-gray-600">{event.subtitle}</p>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

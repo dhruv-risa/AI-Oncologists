@@ -29,6 +29,11 @@ from Backend.documents_reference import generate_bearer_token, get_patient_id_fr
 from Backend.Utils.Tabs.lab_postprocessor import process_lab_data_for_ui
 from Backend.Utils.logger_config import setup_logger
 from Backend.Utils.Tabs.lab_tab import extract_with_gemini
+from Backend.Utils.Tabs.fhir_lab_integration import (
+    fetch_fhir_observations,
+    convert_fhir_observations_to_lab_schema,
+    merge_lab_data_with_fhir
+)
 
 import requests
 import tempfile
@@ -49,7 +54,7 @@ extracted_instructions = (
     "Targets: "
     "- TUMOR MARKERS: CEA, NSE, proGRP, CYFRA 21-1. "
     "- CBC: WBC, Hemoglobin, Platelets, ANC (if missing, use 'Segs#' or 'Polys, Abs'). "
-    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin. "
+    "- METABOLIC: Creatinine, ALT, AST, Total Bilirubin (may also be labeled as 'Bilirubin' or 'Bili')."
 
     "CLINICAL INTERPRETATION: "
     "Summarize abnormalities: Anemia (Hgb <13.5 M / <12.0 F), Hepatic (ALT/AST >40), Neutropenia (ANC <1.5)."
@@ -675,6 +680,30 @@ def process_individual_lab_results_gemini(mrn: str, verbose: bool = False) -> Di
     # Debug: Show what we're passing to the consolidator
     logger.info(f"   Passing {len(all_parsed_data)} parsed data objects to consolidator")
 
+    # Step 4.5: Fetch and merge FHIR Observation API data
+    logger.info("\n" + "="*80)
+    logger.info("  FETCHING FHIR OBSERVATION API DATA")
+    logger.info("="*80)
+    try:
+        # Fetch FHIR Observations
+        fhir_entries = fetch_fhir_observations(patient_id, onco_emr_token)
+
+        if fhir_entries:
+            # Convert FHIR data to lab schema
+            fhir_lab_data = convert_fhir_observations_to_lab_schema(fhir_entries)
+
+            # Merge with LLM data (FHIR data added as additional "document")
+            all_parsed_data = merge_lab_data_with_fhir(all_parsed_data, fhir_lab_data)
+            logger.info("✅ FHIR Observation data merged successfully")
+        else:
+            logger.info("ℹ️  No FHIR Observations found, using LLM data only")
+
+    except Exception as e:
+        logger.error(f"⚠️  Failed to fetch/merge FHIR data: {e}")
+        logger.error("   Continuing with LLM data only...")
+
+    logger.info("="*80 + "\n")
+
     # Use the same postprocessor to consolidate
     combined_data = process_lab_data_for_ui(all_parsed_data) if all_parsed_data else None
 
@@ -709,7 +738,8 @@ def process_individual_lab_results_gemini(mrn: str, verbose: bool = False) -> Di
         "individual_results": individual_results,
         "combined_data": combined_data,
         "metadata": metadata,
-        "validation_summary": validation_summary
+        "validation_summary": validation_summary,
+        "lab_documents": lab_documents  # Return lab documents for URL extraction in main.py
     }
 
 

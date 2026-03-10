@@ -14,8 +14,8 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from Backend.Utils.Tabs.llmparser import llmresponsedetailed
-from Backend.Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
+from Utils.Tabs.llmparser import llmresponsedetailed
+from Utils.logger_config import setup_logger, log_extraction_start, log_extraction_complete, log_extraction_output
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -32,11 +32,14 @@ extracted_instructions = (
     "     * Subtext: Key actionable note (e.g., 'High-grade features noted' or 'Routine follow-up').\n\n"
     "2. DIAGNOSIS (The 'Truth'):\n"
     "   - Extract the FINAL DIAGNOSIS section. Do not include 'Clinical History' or 'Gross Description'.\n"
-    "   - formatting: Split the diagnosis into clean, distinct bullet points. Remove disclaimer footers.\n\n"
+    "   - CRITICAL: Use proper capitalization (not all caps). Ensure correct medical spelling (kappa not kapp).\n"
+    "   - LIMIT: Summarize into 5-7 KEY bullet points maximum. Group related findings together.\n"
+    "   - Focus on: Primary diagnosis, tumor characteristics, nodal status, key margins/invasion, and critical immunostains if mentioned.\n"
+    "   - Formatting: Return as a concise array of the most important findings only. Remove disclaimer footers.\n\n"
     "3. PROCEDURE & SITE:\n"
     "   - Procedure Type: Classify strictly as 'Surgical Resection' (lobectomy, wedge, mastectomy) OR 'Biopsy/FNA' (core needle, fluid cytology).\n"
     "   - Site: The specific anatomical origin (e.g., 'Upper Lobe, Right Lung').\n\n"
-    "4. DATES (Strict ISO 8601: YYYY-MM-DD):\n"
+    "4. DATES (Strict MM/DD/YYYY format):\n"
     "   - Biopsy_Date: Use 'Date of Collection' or 'Date of Procedure'. If missing, use 'Date Received'.\n"
     "   - Surgery_Date: Only populate if Procedure Type is 'Surgical Resection'. Otherwise, strictly return 'Not applicable'.\n\n"
     "5. PROGNOSTIC DETAILS:\n"
@@ -60,8 +63,8 @@ description = {
         },
         "details": {
             "biopsy_site": "String. Anatomical location only (e.g., 'Right Adrenal Gland')",
-            "biopsy_date": "String (YYYY-MM-DD). The collection date.",
-            "surgery_date": "String (YYYY-MM-DD) or 'Not applicable'.",
+            "biopsy_date": "String (MM/DD/YYYY). The collection date.",
+            "surgery_date": "String (MM/DD/YYYY) or 'Not applicable'.",
             "tumor_grade": "String. Histologic grade (e.g., 'Grade 2' or 'Poorly Differentiated').",
             "margin_status": "String. (e.g., 'Negative for malignancy', 'Focally involved')."
         }
@@ -229,7 +232,7 @@ Just the JSON object.
     logger.info("🤖 Requesting classification from Vertex AI Gemini...")
 
     # Initialize model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
@@ -374,8 +377,9 @@ DETAILED EXTRACTION RULES & EXAMPLES
 
 3. DIAGNOSIS EXTRACTION
    Rule: Extract ONLY the FINAL DIAGNOSIS section. Exclude clinical history, gross description, and disclaimers
+   CRITICAL: Limit to 5-7 KEY bullet points by summarizing and grouping related findings
 
-   Format: Clean, distinct bullet points
+   Format: Concise bullet points focusing on most clinically significant information
 
    Example Input:
    "FINAL DIAGNOSIS:
@@ -383,15 +387,29 @@ DETAILED EXTRACTION RULES & EXAMPLES
       - Invasive adenocarcinoma, moderately differentiated
       - Tumor size: 2.5 cm
       - Margins negative for tumor
-   B. Hilar lymph nodes (3): No evidence of malignancy"
+      - Lymphovascular invasion present
+      - Visceral pleura invasion present
+   B. Hilar lymph nodes (3): No evidence of malignancy
+   C. Peribronchial lymph nodes (2): No evidence of malignancy
+   D. Subcarinal lymph nodes (1): No evidence of malignancy
 
-   Example Output:
+   IMMUNOHISTOCHEMISTRY:
+   - TTF-1: Positive
+   - Napsin A: Positive
+   - CK7: Positive
+   - PD-L1 (22C3): TPS 70%"
+
+   Example Output (Condensed to 5-7 points):
    [
-     "Right upper lobe, lung, wedge resection: Invasive adenocarcinoma, moderately differentiated",
-     "Tumor size: 2.5 cm",
+     "Right upper lobe lung, wedge resection: Invasive adenocarcinoma, moderately differentiated, 2.5 cm",
      "Margins negative for tumor",
-     "Hilar lymph nodes (3): No evidence of malignancy"
+     "Lymphovascular and visceral pleura invasion present",
+     "Hilar, peribronchial, and subcarinal lymph nodes negative for malignancy (6 total nodes examined)",
+     "Immunostains: TTF-1 positive, Napsin A positive, CK7 positive",
+     "PD-L1 (22C3) TPS 70%"
    ]
+
+   Note: Group related findings (e.g., multiple lymph node stations, multiple IHC markers) into single bullet points
 
 4. PROCEDURE CLASSIFICATION
    Rule: Classify strictly into TWO categories based on the procedure type
@@ -415,8 +433,8 @@ DETAILED EXTRACTION RULES & EXAMPLES
    - "Left breast, upper outer quadrant" → "Left Breast, Upper Outer Quadrant"
    - "Right adrenal gland" → "Right Adrenal Gland"
 
-6. DATE EXTRACTION (CRITICAL - ISO 8601 FORMAT)
-   Rule: Use YYYY-MM-DD format strictly
+6. DATE EXTRACTION (CRITICAL - MM/DD/YYYY FORMAT)
+   Rule: Use MM/DD/YYYY format strictly
 
    Biopsy_Date:
    - Priority 1: "Date of Collection" or "Date of Procedure"
@@ -427,8 +445,8 @@ DETAILED EXTRACTION RULES & EXAMPLES
    - If procedure is Biopsy/FNA, use "Not applicable"
 
    Examples:
-   - "Date of Procedure: 01/15/2024" → "2024-01-15"
-   - "Received: January 15, 2024" → "2024-01-15"
+   - "Date of Procedure: 01/15/2024" → "01/15/2024"
+   - "Received: January 15, 2024" → "01/15/2024"
 
 7. TUMOR GRADE
    Rule: Look for grade or differentiation terms
@@ -453,7 +471,7 @@ QUALITY CHECKS BEFORE SUBMISSION
 ========================
 
 1. ✓ All required fields populated (use "Not applicable" for missing, not null)
-2. ✓ All dates in YYYY-MM-DD format
+2. ✓ All dates in MM/DD/YYYY format
 3. ✓ Diagnosis is a list of strings, not a single paragraph
 4. ✓ procedure_category is exactly "Surgical Resection" OR "Biopsy/FNA"
 5. ✓ Alert banner headline is 5 words or less
@@ -474,7 +492,7 @@ Just the pure JSON object following the schema above.
     logger.info("🤖 Requesting pathology summary extraction from Vertex AI Gemini...")
 
     # Initialize model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")
@@ -739,7 +757,7 @@ Just the pure JSON object following the schema above.
     logger.info("🤖 Requesting pathology markers extraction from Vertex AI Gemini...")
 
     # Initialize model
-    model = GenerativeModel("gemini-2.5-flash")
+    model = GenerativeModel("gemini-2.5-pro")
 
     # Wrap PDF bytes in Part object
     doc_part = Part.from_data(data=pdf_bytes, mime_type="application/pdf")

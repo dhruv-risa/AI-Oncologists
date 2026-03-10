@@ -59,7 +59,7 @@ def generate_bearer_token(
 ## The code for Astera = tPvNbDprUnrXIJlDXyxs
 def generate_onco_emr_token(
     bearer_token: str,
-    url: str = "https://apis.risalabs.ai/pa-order-creation/commons/emr/get-flatiron-token/3GKbZtgpPru1vJGCkxwR"
+    url: str = "https://apis.risalabs.ai/pa-order-creation/commons/emr/get-flatiron-token/tPvNbDprUnrXIJlDXyxs"
 ) -> str:
     """
     Generate OncoEMR token using bearer token.
@@ -161,9 +161,13 @@ def get_document_references(
     """
     params = {
         "patient": patient_id,
-        "type": loinc_type,
         "_summary": "true"
     }
+
+    # Only include type filter if a valid LOINC code is provided
+    if loinc_type and loinc_type != "UNK" and loinc_type.lower() != "none":
+        params["type"] = loinc_type
+
     headers = {
         "Authorization": f"Bearer {onco_emr_token}",
         "Accept": "application/fhir+json"

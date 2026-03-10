@@ -41,15 +41,37 @@ export function GenomicsTab() {
   // Get genomics data from patient context
   const genomicInfo: GenomicInfo = currentPatient?.genomic_info || {};
 
-  // Combine detected driver mutations and additional genomic alterations
-  const detectedDriverMutations = (genomicInfo?.detected_driver_mutations || []).map(mutation => ({
-    gene: mutation.gene,
-    mutation: mutation.details || 'Detected',
-    status: mutation.status,
-    actionable: mutation.is_target,
-    type: 'Driver Mutation'
-  }));
+  // Define standard driver genes panel
+  const standardDriverGenes = ['EGFR', 'ALK', 'ROS1', 'KRAS', 'BRAF', 'MET', 'RET', 'HER2', 'NTRK'];
 
+  // Create a map of detected driver mutations
+  const detectedDriverMutationsMap = new Map();
+  (genomicInfo?.detected_driver_mutations || []).forEach(mutation => {
+    detectedDriverMutationsMap.set(mutation.gene, {
+      gene: mutation.gene,
+      mutation: mutation.details || 'Detected',
+      status: mutation.status,
+      actionable: mutation.is_target,
+      type: 'Driver Mutation'
+    });
+  });
+
+  // Build comprehensive panel: all standard genes with their status
+  const driverGenesPanel = standardDriverGenes.map(gene => {
+    if (detectedDriverMutationsMap.has(gene)) {
+      return detectedDriverMutationsMap.get(gene);
+    } else {
+      return {
+        gene: gene,
+        mutation: 'Not detected',
+        status: 'Not detected',
+        actionable: false,
+        type: 'Driver Mutation'
+      };
+    }
+  });
+
+  // Additional alterations (always detected)
   const additionalAlterations = (genomicInfo?.additional_genomic_alterations || []).map(alteration => ({
     gene: alteration.gene,
     mutation: alteration.alteration,
@@ -59,37 +81,80 @@ export function GenomicsTab() {
     significance: alteration.significance
   }));
 
-  // Combine all detected mutations
-  const allDetectedMutations = [...detectedDriverMutations, ...additionalAlterations];
+  // Combine all: driver panel + additional alterations
+  const allGenomicAlterations = [...driverGenesPanel, ...additionalAlterations];
 
-  // Map biomarkers from backend data
+  // For actionable mutations summary, only include detected ones
+  const allDetectedMutations = allGenomicAlterations.filter(m => m.status !== 'Not detected');
+
+  // Map biomarkers from backend data - always show all three markers
   const biomarkers = [];
 
-  if (genomicInfo?.immunotherapy_markers?.pd_l1) {
+  // PD-L1 Expression
+  if (genomicInfo?.immunotherapy_markers?.pd_l1 &&
+      genomicInfo.immunotherapy_markers.pd_l1.value &&
+      genomicInfo.immunotherapy_markers.pd_l1.value !== 'null' &&
+      genomicInfo.immunotherapy_markers.pd_l1.metric &&
+      genomicInfo.immunotherapy_markers.pd_l1.metric !== 'null') {
     const pdl1 = genomicInfo.immunotherapy_markers.pd_l1;
     biomarkers.push({
       name: 'PD-L1 Expression',
       value: `${pdl1.value} (${pdl1.metric})`,
+      available: true,
+      highlight: true,
+      color: 'purple'
+    });
+  } else {
+    biomarkers.push({
+      name: 'PD-L1 Expression',
+      value: 'Not measured',
+      available: false,
       highlight: true,
       color: 'purple'
     });
   }
 
-  if (genomicInfo?.immunotherapy_markers?.tmb) {
+  // TMB
+  if (genomicInfo?.immunotherapy_markers?.tmb &&
+      genomicInfo.immunotherapy_markers.tmb.value &&
+      genomicInfo.immunotherapy_markers.tmb.value !== 'null') {
     const tmb = genomicInfo.immunotherapy_markers.tmb;
     biomarkers.push({
       name: 'TMB',
       value: tmb.value,
+      available: true,
+      highlight: false,
+      color: 'blue'
+    });
+  } else {
+    biomarkers.push({
+      name: 'TMB',
+      value: 'Not measured',
+      available: false,
       highlight: false,
       color: 'blue'
     });
   }
 
-  if (genomicInfo?.immunotherapy_markers?.msi_status) {
+  // MSI Status
+  if (genomicInfo?.immunotherapy_markers?.msi_status &&
+      genomicInfo.immunotherapy_markers.msi_status.status &&
+      genomicInfo.immunotherapy_markers.msi_status.status !== 'null' &&
+      genomicInfo.immunotherapy_markers.msi_status.interpretation &&
+      genomicInfo.immunotherapy_markers.msi_status.interpretation !== 'null') {
     const msi = genomicInfo.immunotherapy_markers.msi_status;
     biomarkers.push({
       name: 'MSI Status',
       value: `${msi.status} (${msi.interpretation})`,
+      available: true,
+      highlight: false,
+      color: 'gray'
+    });
+  } else {
+    biomarkers.push({
+      name: 'MSI Status',
+      value: 'Not measured',
+      available: false,
       highlight: false,
       color: 'gray'
     });
@@ -130,49 +195,67 @@ export function GenomicsTab() {
           <span className="text-xs text-gray-500">NGS Panel</span>
         </div>
 
-        {allDetectedMutations.length > 0 ? (
+        {allGenomicAlterations.length > 0 ? (
           <div className="grid grid-cols-3 gap-3">
-            {allDetectedMutations.map((item, idx) => (
-              <div
-                key={idx}
-                className={`p-4 rounded-lg border-2 transition-all ${
-                  item.actionable
-                    ? 'border-emerald-400 bg-gradient-to-br from-emerald-50 to-green-50 shadow-sm'
-                    : 'border-blue-300 bg-gradient-to-br from-blue-50 to-cyan-50'
-                }`}
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <p className={item.actionable ? 'text-emerald-950 font-semibold' : 'text-blue-950 font-semibold'}>{item.gene}</p>
-                    {item.type !== 'Driver Mutation' && (
-                      <span className="px-1.5 py-0.5 bg-gray-200 text-gray-700 rounded text-xs">
-                        {item.type}
+            {allGenomicAlterations.map((item, idx) => {
+              const isDetected = item.status !== 'Not detected';
+
+              return (
+                <div
+                  key={idx}
+                  className={`p-4 rounded-lg border-2 transition-all ${
+                    item.actionable
+                      ? 'border-emerald-400 bg-gradient-to-br from-emerald-50 to-green-50 shadow-sm'
+                      : isDetected
+                      ? 'border-blue-300 bg-gradient-to-br from-blue-50 to-cyan-50'
+                      : 'border-gray-200 bg-white'
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <p className={
+                        item.actionable
+                          ? 'text-emerald-950 font-semibold'
+                          : isDetected
+                          ? 'text-blue-950 font-semibold'
+                          : 'text-gray-900 font-semibold'
+                      }>
+                        {item.gene}
+                      </p>
+                      {item.type !== 'Driver Mutation' && (
+                        <span className="px-1.5 py-0.5 bg-gray-200 text-gray-700 rounded text-xs">
+                          {item.type}
+                        </span>
+                      )}
+                    </div>
+                    {item.actionable && (
+                      <span className="px-2 py-0.5 bg-emerald-600 text-white rounded text-xs flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" />
+                        Target
                       </span>
                     )}
                   </div>
-                  {item.actionable && (
-                    <span className="px-2 py-0.5 bg-emerald-600 text-white rounded text-xs flex items-center gap-1">
-                      <Sparkles className="w-3 h-3" />
-                      Target
-                    </span>
+                  <p className="text-xs text-gray-700 mb-2">{item.mutation}</p>
+                  {item.significance && (
+                    <p className="text-xs text-gray-600 mb-2 italic">{item.significance}</p>
                   )}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      isDetected ? 'bg-red-500' : 'bg-emerald-500'
+                    }`}></div>
+                    <p className={`text-xs font-medium ${
+                      isDetected ? 'text-red-700' : 'text-emerald-700'
+                    }`}>
+                      {item.status}
+                    </p>
+                  </div>
                 </div>
-                <p className="text-xs text-gray-700 mb-2">{item.mutation}</p>
-                {item.significance && (
-                  <p className="text-xs text-gray-600 mb-2 italic">{item.significance}</p>
-                )}
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                  <p className="text-xs text-emerald-700 font-medium">
-                    {item.status}
-                  </p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="text-center py-6 bg-gray-50 rounded-lg border border-gray-200">
-            <p className="text-gray-500">No genomic alterations detected</p>
+            <p className="text-gray-500">No genomic alterations data available</p>
           </div>
         )}
       </div>
@@ -185,20 +268,28 @@ export function GenomicsTab() {
               <div
                 key={idx}
                 className={`p-5 rounded-lg border-2 ${
-                  item.color === 'purple'
-                    ? 'border-purple-300 bg-gradient-to-br from-purple-50 to-indigo-50'
-                    : item.color === 'blue'
-                    ? 'border-blue-200 bg-gradient-to-br from-blue-50 to-cyan-50'
-                    : 'border-gray-200 bg-white'
+                  item.available
+                    ? item.color === 'purple'
+                      ? 'border-purple-300 bg-gradient-to-br from-purple-50 to-indigo-50'
+                      : item.color === 'blue'
+                      ? 'border-blue-200 bg-gradient-to-br from-blue-50 to-cyan-50'
+                      : 'border-gray-200 bg-white'
+                    : 'border-gray-200 bg-gray-50'
                 }`}
               >
                 <p className={`text-xs mb-2 ${
-                  item.color === 'purple' ? 'text-purple-700' :
-                  item.color === 'blue' ? 'text-blue-700' : 'text-gray-600'
+                  item.available
+                    ? item.color === 'purple' ? 'text-purple-700' :
+                      item.color === 'blue' ? 'text-blue-700' : 'text-gray-600'
+                    : 'text-gray-500'
                 }`}>
                   {item.name}
                 </p>
-                <p className={item.color === 'purple' ? 'text-purple-950' : 'text-gray-900'}>
+                <p className={`text-sm ${
+                  item.available
+                    ? item.color === 'purple' ? 'text-purple-950' : 'text-gray-900'
+                    : 'text-gray-500 italic'
+                }`}>
                   {item.value}
                 </p>
               </div>
@@ -231,9 +322,15 @@ export function GenomicsTab() {
                     </p>
                   </div>
                 ))}
-                {genomicInfo?.immunotherapy_markers?.pd_l1 && (
+                {genomicInfo?.immunotherapy_markers?.pd_l1 &&
+                 genomicInfo.immunotherapy_markers.pd_l1.value &&
+                 genomicInfo.immunotherapy_markers.pd_l1.value !== 'null' ? (
                   <p className="text-sm text-emerald-800 leading-relaxed mt-2">
                     PD-L1 expression ({genomicInfo.immunotherapy_markers.pd_l1.value}) supports potential for immunotherapy strategies.
+                  </p>
+                ) : (
+                  <p className="text-sm text-emerald-800 leading-relaxed mt-2">
+                    PD-L1 expression not measured. Consider immunotherapy evaluation based on clinical context.
                   </p>
                 )}
               </div>
@@ -252,7 +349,12 @@ export function GenomicsTab() {
               <h4 className="text-gray-950 mb-2">Genomic Profile Summary</h4>
               <p className="text-sm text-gray-700 leading-relaxed">
                 No actionable driver mutations detected in the standard panel. Consider additional genomic testing or enrollment in clinical trials based on clinical context.
-                {genomicInfo?.immunotherapy_markers?.pd_l1 && ` PD-L1 expression (${genomicInfo.immunotherapy_markers.pd_l1.value}) may support immunotherapy strategies.`}
+                {genomicInfo?.immunotherapy_markers?.pd_l1 &&
+                 genomicInfo.immunotherapy_markers.pd_l1.value &&
+                 genomicInfo.immunotherapy_markers.pd_l1.value !== 'null'
+                  ? ` PD-L1 expression (${genomicInfo.immunotherapy_markers.pd_l1.value}) may support immunotherapy strategies.`
+                  : ` PD-L1 expression not measured.`
+                }
               </p>
             </div>
           </div>

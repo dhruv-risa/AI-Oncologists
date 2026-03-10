@@ -52,15 +52,54 @@ export function ComorbiditiesTab({ patientData }: ComorbiditiesTabProps) {
     return 'mild';
   };
 
-  // Helper function to determine border color based on severity
-  const getBorderColor = (severity: 'mild' | 'moderate' | 'severe') => {
+  // Helper function to get card styling based on severity
+  const getCardStyle = (severity: 'mild' | 'moderate' | 'severe') => {
     if (severity === 'severe') {
-      return 'border-red-300 border-l-4';
+      return {
+        border: 'border-red-400 border-l-4',
+        background: 'bg-red-50'
+      };
     }
     if (severity === 'moderate') {
-      return 'border-yellow-300 border-l-4';
+      return {
+        border: 'border-orange-400 border-l-4',
+        background: 'bg-orange-50'
+      };
     }
-    return 'border-green-300 border-l-4';
+    return {
+      border: 'border-green-400 border-l-4',
+      background: 'bg-green-50'
+    };
+  };
+
+  // Helper function to check if severity should be displayed
+  const shouldDisplaySeverity = (item: any) => {
+    const severity = item.severity?.toLowerCase() || '';
+    const details = item.clinical_details?.toLowerCase() || '';
+
+    // Only show severity if explicitly mentioned in severity field or clinical details
+    return severity && (
+      severity.includes('severe') ||
+      severity.includes('moderate') ||
+      severity.includes('mild') ||
+      severity.includes('stage')
+    ) || (
+      details.includes('severe') ||
+      details.includes('moderate') ||
+      details.includes('mild') ||
+      details.includes('critical') ||
+      details.includes('advanced')
+    );
+  };
+
+  // Helper function to check if clinical details should be displayed
+  const shouldDisplayClinicalDetails = (details: string | undefined) => {
+    if (!details) return false;
+    const detailsLower = details.toLowerCase().trim();
+
+    // Filter out non-informative text
+    const nonInformativeTexts = ['na', 'n/a', 'treated', 'none', 'unknown', '-'];
+    return !nonInformativeTexts.includes(detailsLower);
   };
 
   // Helper function to check if medications exist and are valid
@@ -91,46 +130,47 @@ export function ComorbiditiesTab({ patientData }: ComorbiditiesTabProps) {
           {filteredComorbidities.map((item, idx) => {
             const severity = determineSeverity(item);
             const hasValidMedications = hasMedications(item);
+            const showSeverity = shouldDisplaySeverity(item);
+            const showClinicalDetails = shouldDisplayClinicalDetails(item.clinical_details);
+            const cardStyle = getCardStyle(severity);
 
             return (
-              <div key={idx} className={`flex items-start gap-4 p-4 bg-gray-50 border rounded-lg ${getBorderColor(severity)}`}>
+              <div key={idx} className={`flex items-start gap-4 p-4 border rounded-lg ${cardStyle.background} ${cardStyle.border}`}>
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
                     <h4 className="text-gray-900 font-medium">{item.condition_name}</h4>
-                    <span className={`px-2 py-1 rounded text-xs ${
-                      severity === 'mild'
-                        ? 'bg-green-100 text-green-800'
-                        : severity === 'moderate'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : 'bg-red-100 text-red-800'
-                    }`}>
-                      {severity}
-                    </span>
+                    {showSeverity && (
+                      <span className={`px-2 py-1 rounded text-xs ${
+                        severity === 'mild'
+                          ? 'bg-green-100 text-green-800'
+                          : severity === 'moderate'
+                          ? 'bg-orange-100 text-orange-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {severity}
+                      </span>
+                    )}
                   </div>
 
-                  {item.clinical_details && (
-                    <p className="text-sm text-gray-600 mb-3">{item.clinical_details}</p>
+                  {showClinicalDetails && (
+                    <p className="text-sm text-gray-600 mb-2">{item.clinical_details}</p>
                   )}
 
-                  <div className="mt-3 bg-white border border-gray-300 rounded-lg p-3">
-                    <p className="text-xs font-medium text-gray-500 mb-2">Current Medications</p>
-                    {hasValidMedications ? (
-                      <div className="flex flex-wrap gap-2">
+                  {hasValidMedications && (
+                    <div className="mt-2">
+                      <p className="text-xs font-medium text-gray-500 mb-1.5">Current Medications:</p>
+                      <div className="flex flex-wrap gap-1.5">
                         {item.associated_medications.map((med: string, medIdx: number) => (
                           <span
                             key={medIdx}
-                            className="px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded text-xs"
+                            className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs"
                           >
                             {med}
                           </span>
                         ))}
                       </div>
-                    ) : (
-                      <p className="text-xs text-gray-500 italic">
-                        No medication currently prescribed for this comorbidity
-                      </p>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -138,12 +178,15 @@ export function ComorbiditiesTab({ patientData }: ComorbiditiesTabProps) {
         </div>
       )}
 
-      {ecogStatus && (
+      {ecogStatus &&
+       ecogStatus.score !== 'NA' &&
+       ecogStatus.score !== 'N/A' &&
+       ecogStatus.score !== 'Not applicable' && (
         <div className="mt-6 pt-6 border-t border-gray-200">
           <h4 className="text-sm text-gray-700 mb-3">ECOG Performance Status</h4>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <p className="text-blue-900 mb-1">ECOG {ecogStatus.score}</p>
-            <p className="text-sm text-blue-800">
+          <div className="bg-gray-50 border border-gray-300 rounded-lg p-4">
+            <p className="text-gray-900 mb-1 font-medium">ECOG {ecogStatus.score}</p>
+            <p className="text-sm text-gray-600">
               {ecogStatus.description}
             </p>
           </div>

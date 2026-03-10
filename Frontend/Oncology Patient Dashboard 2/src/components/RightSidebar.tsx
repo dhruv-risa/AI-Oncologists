@@ -1,4 +1,4 @@
-import { CheckCircle, AlertTriangle, Activity, Calendar } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Activity } from 'lucide-react';
 import { PatientData } from '../services/api';
 
 interface RightSidebarProps {
@@ -12,13 +12,20 @@ export function RightSidebar({ patientData }: RightSidebarProps) {
 
     const treatmentHistory = patientData.treatment_tab_info_LOT.treatment_history;
 
-    // Strategy 1: Use diagnosis.line_of_therapy if available
+    // Strategy 1: Use diagnosis.line_of_therapy if available, but only if the treatment is actually current
     const currentLineOfTherapy = patientData?.diagnosis?.line_of_therapy;
     if (currentLineOfTherapy && currentLineOfTherapy !== 'NA' && currentLineOfTherapy !== null) {
       const treatmentByLine = treatmentHistory.find(
         (treatment) => String(treatment.header.line_number) === String(currentLineOfTherapy)
       );
-      if (treatmentByLine) return treatmentByLine;
+      // Only return this treatment if it's marked as Current or Ongoing
+      if (treatmentByLine) {
+        const status = treatmentByLine.header?.status_badge?.toLowerCase() || '';
+        if (status.includes('current') || status.includes('ongoing')) {
+          return treatmentByLine;
+        }
+        // If the treatment is not current, fall through to other strategies
+      }
     }
 
     // Strategy 2: Find treatment with status_badge === 'Current'
@@ -67,6 +74,7 @@ export function RightSidebar({ patientData }: RightSidebarProps) {
   // Extract clinical alerts from lab data and comorbidities
   const getClinicalAlerts = () => {
     const alerts: Array<{ severity: string; message: string }> = [];
+    const seenMessages = new Set<string>(); // Track unique alert messages
 
     // Check comorbidities for significant conditions
     if (patientData?.comorbidities?.comorbidities) {
@@ -74,27 +82,41 @@ export function RightSidebar({ patientData }: RightSidebarProps) {
         const conditionLower = comorbidity.condition_name?.toLowerCase() || '';
         const severityLower = comorbidity.severity?.toLowerCase() || '';
 
+        let alertMessage = '';
+        let severity = 'warning';
+
         // High-risk cardiac conditions
         if (conditionLower.includes('heart') || conditionLower.includes('cardiac') ||
             conditionLower.includes('myocardial') || conditionLower.includes('coronary')) {
-          alerts.push({ severity: 'danger', message: `Cardiac condition: ${comorbidity.condition_name}` });
+          alertMessage = `Cardiac condition: ${comorbidity.condition_name}`;
+          severity = 'danger';
         }
         // Renal conditions
         else if (conditionLower.includes('renal') || conditionLower.includes('kidney')) {
-          alerts.push({ severity: 'warning', message: `Renal condition: ${comorbidity.condition_name}` });
+          alertMessage = `Renal condition: ${comorbidity.condition_name}`;
+          severity = 'warning';
         }
         // Hepatic conditions
         else if (conditionLower.includes('hepatic') || conditionLower.includes('liver') ||
                  conditionLower.includes('cirrhosis')) {
-          alerts.push({ severity: 'warning', message: `Hepatic condition: ${comorbidity.condition_name}` });
+          alertMessage = `Hepatic condition: ${comorbidity.condition_name}`;
+          severity = 'warning';
         }
         // Diabetes
         else if (conditionLower.includes('diabetes')) {
-          alerts.push({ severity: 'warning', message: `Diabetes: ${comorbidity.condition_name}` });
+          alertMessage = `Diabetes: ${comorbidity.condition_name}`;
+          severity = 'warning';
         }
         // Severe conditions based on severity level
         else if (severityLower.includes('severe') || severityLower.includes('critical')) {
-          alerts.push({ severity: 'danger', message: `${comorbidity.condition_name} (${comorbidity.severity})` });
+          alertMessage = `${comorbidity.condition_name} (${comorbidity.severity})`;
+          severity = 'danger';
+        }
+
+        // Add alert only if we haven't seen this message before
+        if (alertMessage && !seenMessages.has(alertMessage.toLowerCase())) {
+          seenMessages.add(alertMessage.toLowerCase());
+          alerts.push({ severity, message: alertMessage });
         }
       });
     }
@@ -102,17 +124,27 @@ export function RightSidebar({ patientData }: RightSidebarProps) {
     // Check for clinical interpretations from labs
     if (patientData?.lab_info?.clinical_interpretation) {
       patientData.lab_info.clinical_interpretation.forEach((interpretation: string) => {
-        // Parse alerts from clinical interpretation
-        if (interpretation.toLowerCase().includes('anemia')) {
+        const interpretationLower = interpretation.toLowerCase();
+
+        // Parse alerts from clinical interpretation - only add once per type
+        if (interpretationLower.includes('anemia') && !seenMessages.has('anemia detected')) {
+          seenMessages.add('anemia detected');
           alerts.push({ severity: 'warning', message: 'Anemia detected' });
         }
-        if (interpretation.toLowerCase().includes('hepatic dysfunction') && !interpretation.includes('no hepatic dysfunction')) {
+        if (interpretationLower.includes('hepatic dysfunction') &&
+            !interpretationLower.includes('no hepatic dysfunction') &&
+            !seenMessages.has('liver dysfunction')) {
+          seenMessages.add('liver dysfunction');
           alerts.push({ severity: 'warning', message: 'Liver dysfunction' });
         }
-        if (interpretation.toLowerCase().includes('neutropenia') && !interpretation.includes('no neutropenia')) {
+        if (interpretationLower.includes('neutropenia') &&
+            !interpretationLower.includes('no neutropenia') &&
+            !seenMessages.has('neutropenia')) {
+          seenMessages.add('neutropenia');
           alerts.push({ severity: 'danger', message: 'Neutropenia' });
         }
-        if (interpretation.toLowerCase().includes('hyperglycemia')) {
+        if (interpretationLower.includes('hyperglycemia') && !seenMessages.has('elevated glucose')) {
+          seenMessages.add('elevated glucose');
           alerts.push({ severity: 'warning', message: 'Elevated glucose' });
         }
       });
@@ -144,16 +176,9 @@ export function RightSidebar({ patientData }: RightSidebarProps) {
           <div className="flex-1">
             {targetMutation ? (
               <>
-                <div className="flex items-center gap-2 mb-1">
-                  <p className="text-sm text-emerald-950 font-semibold">{targetMutation.gene}</p>
-                </div>
-                <p className="text-xs text-emerald-700 mb-2">{targetMutation.details || 'Actionable target identified'}</p>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-1.5 flex-1 bg-emerald-100 rounded-full overflow-hidden">
-                    <div className="h-full w-full bg-emerald-500 rounded-full"></div>
-                  </div>
-                  <span className="text-xs text-emerald-700">Target</span>
-                </div>
+                <p className="text-xs text-emerald-700 font-semibold uppercase tracking-wider mb-1">Target Mutation</p>
+                <p className="text-base text-emerald-950 font-bold mb-1">{targetMutation.gene}</p>
+                <p className="text-xs text-emerald-600">{targetMutation.details || 'Actionable target identified'}</p>
               </>
             ) : (
               <>
@@ -170,12 +195,19 @@ export function RightSidebar({ patientData }: RightSidebarProps) {
         <p className="text-xs text-blue-700 uppercase tracking-wider mb-2">Current Treatment</p>
         {currentTreatment ? (
           <>
-            <p className="text-blue-950 mb-1 font-medium">{currentTreatment.regimen_details.display_name}</p>
-            <div className="flex items-center gap-2 text-xs text-blue-600">
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-              <span>Active since {currentTreatment.dates.start_date}</span>
-            </div>
-            {currentTreatment.cycles_data && (
+            <p className="text-blue-950 mb-1 font-medium">
+              {(currentTreatment as any).systemic_regimen || currentTreatment.regimen_details?.display_name || 'N/A'}
+            </p>
+            {currentTreatment.dates?.start_date &&
+             currentTreatment.dates.start_date !== 'NA' &&
+             currentTreatment.dates.start_date !== 'N/A' &&
+             currentTreatment.dates.start_date !== 'Not applicable' && (
+              <div className="flex items-center gap-2 text-xs text-blue-600">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                <span>Active since {currentTreatment.dates.start_date}</span>
+              </div>
+            )}
+            {currentTreatment.cycles_data?.display_text && (
               <p className="text-xs text-blue-600 mt-2">{currentTreatment.cycles_data.display_text}</p>
             )}
           </>
@@ -214,24 +246,19 @@ export function RightSidebar({ patientData }: RightSidebarProps) {
           {recentActivity.length > 0 ? (
             recentActivity.map((event, index) => (
               <div key={index}>
-                <p className="text-sm text-slate-900 font-medium">{event.title}</p>
-                <p className="text-xs text-slate-600">{event.subtitle}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{event.date_display}</p>
+                <p className="text-sm text-slate-900 font-medium">
+                  {event.systemic_regimen || event.local_therapy || event.title || 'Treatment Update'}
+                </p>
+                <p className="text-xs text-slate-600">
+                  {event.details || event.subtitle || 'No details available'}
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">{event.date_display || 'Date not available'}</p>
               </div>
             ))
           ) : (
             <p className="text-gray-500 text-sm">No recent activity</p>
           )}
         </div>
-      </div>
-
-      {/* Next Appointment */}
-      <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-xl p-5 border border-indigo-200 shadow-sm">
-        <div className="flex items-center gap-2 mb-3">
-          <Calendar className="w-4 h-4 text-indigo-600" />
-          <p className="text-xs text-indigo-800 uppercase tracking-wider">Next Appointment</p>
-        </div>
-        <p className="text-gray-500 text-sm">No upcoming appointments scheduled</p>
       </div>
     </div>
   );

@@ -20,10 +20,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 # Cache for authenticated service instance to avoid repeated authentication
 _drive_service_cache = None
+
+
+def clear_drive_service_cache():
+    """
+    Clear the cached Google Drive service instance.
+    Useful when you need to force re-authentication with updated scopes.
+    """
+    global _drive_service_cache
+    _drive_service_cache = None
+    print("Cleared Google Drive service cache")
 
 
 def authenticate_drive(force_refresh=False):
@@ -407,6 +417,164 @@ def upload_and_share_pdf_bytes(pdf_bytes, file_name, folder_id=None):
         'file_id': file_id,
         'shareable_url': shareable_url
     }
+
+
+def extract_file_id_from_url(drive_url):
+    """
+    Extract file ID from Google Drive URL.
+
+    Args:
+        drive_url (str): Google Drive URL in various formats
+                        - https://drive.google.com/file/d/FILE_ID/view
+                        - https://drive.google.com/open?id=FILE_ID
+                        - https://drive.google.com/uc?id=FILE_ID
+
+    Returns:
+        str: File ID extracted from the URL
+
+    Raises:
+        ValueError: If file ID cannot be extracted from URL
+    """
+    import re
+
+    # Pattern 1: /file/d/FILE_ID/
+    match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', drive_url)
+    if match:
+        return match.group(1)
+
+    # Pattern 2: ?id=FILE_ID or &id=FILE_ID
+    match = re.search(r'[?&]id=([a-zA-Z0-9_-]+)', drive_url)
+    if match:
+        return match.group(1)
+
+    # Pattern 3: Direct file ID (if just the ID is passed)
+    if re.match(r'^[a-zA-Z0-9_-]+$', drive_url):
+        return drive_url
+
+    raise ValueError(f"Could not extract file ID from URL: {drive_url}")
+
+
+def get_file_metadata_from_drive(file_id):
+    """
+    Get file metadata from Google Drive using file ID.
+
+    Args:
+        file_id (str): Google Drive file ID
+
+    Returns:
+        dict: File metadata containing:
+            - name: File name
+            - date: Last modified date in ISO format
+            - drive_url: Shareable web view link
+            - mime_type: File MIME type
+            - size: File size in bytes (optional)
+
+    Raises:
+        Exception: If metadata retrieval fails
+    """
+    service = authenticate_drive()
+
+    try:
+        file_metadata = service.files().get(
+            fileId=file_id,
+            fields='name, modifiedTime, webViewLink, mimeType, size'
+        ).execute()
+
+        return {
+            'name': file_metadata.get('name', 'Unknown'),
+            'date': file_metadata.get('modifiedTime', ''),
+            'drive_url': file_metadata.get('webViewLink', ''),
+            'mime_type': file_metadata.get('mimeType', ''),
+            'size': file_metadata.get('size', 0)
+        }
+
+    except Exception as e:
+        raise Exception(f"Failed to get file metadata for ID {file_id}: {str(e)}")
+
+
+def get_file_metadata_from_url(drive_url):
+    """
+    Get file metadata from Google Drive URL.
+    Convenience function that combines extract_file_id_from_url and get_file_metadata_from_drive.
+
+    Args:
+        drive_url (str): Google Drive URL
+
+    Returns:
+        dict: File metadata (same as get_file_metadata_from_drive)
+
+    Raises:
+        Exception: If URL parsing or metadata retrieval fails
+    """
+    file_id = extract_file_id_from_url(drive_url)
+    metadata = get_file_metadata_from_drive(file_id)
+    # Ensure the drive_url in metadata is the one provided (in case it was just an ID)
+    metadata['drive_url'] = drive_url if drive_url.startswith('http') else metadata['drive_url']
+    return metadata
+
+
+def download_pdf_bytes_from_drive_url(drive_url, max_retries=3, initial_delay=1):
+    """
+    Download PDF bytes from Google Drive URL with retry logic.
+
+    Args:
+        drive_url (str): Google Drive URL in various formats
+                        - https://drive.google.com/file/d/FILE_ID/view
+                        - https://drive.google.com/open?id=FILE_ID
+                        - https://drive.google.com/uc?id=FILE_ID
+        max_retries (int): Maximum number of retry attempts (default: 3)
+        initial_delay (int): Initial delay in seconds before retry (default: 1)
+
+    Returns:
+        bytes: PDF content as bytes
+
+    Raises:
+        ValueError: If file ID cannot be extracted from URL
+        Exception: If download fails after all retries
+    """
+    import time
+    from googleapiclient.errors import HttpError
+
+    # Extract file ID from URL
+    file_id = extract_file_id_from_url(drive_url)
+
+    # Authenticate with Google Drive
+    service = authenticate_drive()
+
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            # Download the file content
+            request = service.files().get_media(fileId=file_id)
+
+            # Execute the download and get bytes
+            file_bytes = request.execute()
+
+            print(f"Successfully downloaded file from Google Drive (File ID: {file_id})")
+            return file_bytes
+
+        except (BrokenPipeError, ConnectionResetError, ConnectionError,
+                TimeoutError, OSError, IOError, HttpError) as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                # Calculate delay with exponential backoff
+                delay = initial_delay * (2 ** attempt)
+                print(f"Download failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                print(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+
+                # Re-authenticate in case the connection is stale
+                service = authenticate_drive(force_refresh=True)
+            else:
+                print(f"Download failed after {max_retries} attempts")
+
+        except Exception as e:
+            # For non-retryable errors, fail immediately
+            raise Exception(f"Failed to download file from Google Drive (File ID: {file_id}): {str(e)}")
+
+    # If we've exhausted all retries, raise the last exception
+    raise Exception(f"Failed to download file from Google Drive (File ID: {file_id}) after {max_retries} attempts: {str(last_exception)}")
 
 
 # def upload_and_share_pdf(file_path, folder_id=None):

@@ -11,11 +11,342 @@ NEW ARCHITECTURE (Post-Refactor):
 from typing import Dict, List, Any
 from datetime import datetime
 import json
+import time
+import random
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
 # Initialize Vertex AI
 vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+
+
+def exponential_retry(
+    func,
+    max_retries: int = 5,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0,
+    exponential_base: float = 2.0,
+    jitter: bool = True
+):
+    """
+    Execute a function with exponential backoff retry logic.
+
+    This is particularly useful for handling transient failures like rate limits (429),
+    network timeouts, or temporary service unavailability.
+
+    Args:
+        func: The function to execute (should be a callable with no arguments)
+        max_retries: Maximum number of retry attempts (default: 5)
+        base_delay: Initial delay in seconds before first retry (default: 1.0)
+        max_delay: Maximum delay in seconds between retries (default: 60.0)
+        exponential_base: Base for exponential calculation (default: 2.0)
+        jitter: Add random jitter to prevent thundering herd (default: True)
+
+    Returns:
+        The result of the function call if successful
+
+    Raises:
+        The last exception encountered if all retries are exhausted
+
+    Example:
+        wait_time = base_delay * (exponential_base ^ attempt) + random_jitter
+        - Attempt 1: 1s + jitter
+        - Attempt 2: 2s + jitter
+        - Attempt 3: 4s + jitter
+        - Attempt 4: 8s + jitter
+        - Attempt 5: 16s + jitter
+    """
+    last_exception = None
+
+    for attempt in range(max_retries + 1):  # +1 because first attempt is not a retry
+        try:
+            # Execute the function
+            if attempt == 0:
+                print(f"🔄 Initial attempt...")
+            else:
+                print(f"🔄 Retry attempt {attempt}/{max_retries}...")
+
+            return func()
+
+        except Exception as e:
+            last_exception = e
+            error_str = str(e)
+
+            # Check if this is a retryable error
+            is_rate_limit = "429" in error_str or "Resource exhausted" in error_str
+            is_timeout = "timeout" in error_str.lower()
+            is_connection_error = "connection" in error_str.lower()
+            is_value_error = isinstance(e, ValueError)  # Added to handle empty/invalid responses
+
+            # If not retryable or we've exhausted retries, raise immediately
+            if not (is_rate_limit or is_timeout or is_connection_error or is_value_error):
+                print(f"❌ Non-retryable error: {error_str}")
+                raise
+
+            if attempt >= max_retries:
+                print(f"❌ Max retries ({max_retries}) exhausted after {attempt + 1} total attempts")
+                raise
+
+            # Calculate delay with exponential backoff
+            delay = min(base_delay * (exponential_base ** attempt), max_delay)
+
+            # Add jitter (random value between 0 and 25% of delay)
+            if jitter:
+                jitter_amount = delay * 0.25 * random.random()
+                delay += jitter_amount
+
+            print(f"⚠️  Attempt {attempt + 1} failed: {error_str}")
+            print(f"⏳ Waiting {delay:.1f} seconds before retry... ({max_retries - attempt} retries remaining)")
+
+            time.sleep(delay)
+
+    # This should never be reached, but just in case
+    raise last_exception
+
+
+def normalize_date(date_str: str) -> str:
+    """
+    Normalize various date formats to YYYY-MM-DD format (for internal processing).
+
+    Args:
+        date_str: Date string in various formats
+
+    Returns:
+        Normalized date string in YYYY-MM-DD format, or original string if parsing fails
+    """
+    if not date_str or not isinstance(date_str, str):
+        return date_str
+
+    date_str = date_str.strip()
+
+    # Already in YYYY-MM-DD format
+    if len(date_str) == 10 and date_str[4] == '-' and date_str[7] == '-':
+        return date_str
+
+    # Try different date format patterns
+    date_formats = [
+        "%Y-%m-%dT%H:%M:%S.%f",  # ISO format with milliseconds
+        "%Y-%m-%dT%H:%M:%S",     # ISO format with time
+        "%B %d, %Y",             # December 25, 2025
+        "%b %d, %Y",             # Dec 25, 2025
+        "%m/%d/%Y",              # 12/25/2025
+        "%d/%m/%Y",              # 25/12/2025
+        "%Y/%m/%d",              # 2025/12/25
+        "%d-%b-%Y",              # 25-Dec-2025
+        "%Y-%m-%d",              # 2025-12-25 (explicit)
+    ]
+
+    for fmt in date_formats:
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, AttributeError):
+            continue
+
+    # If no format matches, return original
+    return date_str
+
+
+def format_date_for_display(date_str: str) -> str:
+    """
+    Convert date from YYYY-MM-DD format to MM/DD/YYYY format for display.
+
+    Args:
+        date_str: Date string in YYYY-MM-DD format
+
+    Returns:
+        Date string in MM/DD/YYYY format, or original string if parsing fails
+    """
+    if not date_str or not isinstance(date_str, str):
+        return date_str
+
+    date_str = date_str.strip()
+
+    # Try to parse YYYY-MM-DD format
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.strftime("%m/%d/%Y")
+    except (ValueError, AttributeError):
+        # If it fails, return original
+        return date_str
+
+
+def is_unit_in_thousands(unit_normalized: str) -> bool:
+    """
+    Detect if a unit is already in thousands format (10^3, K, etc.).
+
+    This handles various notations used in lab reports:
+    - 10^3, 10*3, 10**3 (exponential notations)
+    - 10³ (unicode superscript)
+    - 10e3 (scientific notation)
+    - K, k (kilo prefix)
+    - x10^3, x10*3 (multiplication prefix)
+    - Thousand (spelled out)
+
+    Args:
+        unit_normalized: Normalized unit string (lowercase, no spaces)
+
+    Returns:
+        True if unit is already in thousands format, False otherwise
+    """
+    # Check for all known "thousands" indicators
+    thousands_indicators = [
+        '10^3', '10*3', '10**3',        # Exponential: 10^3, 10*3, 10**3
+        '10³',                           # Unicode superscript
+        '10e3',                          # Scientific notation
+        'x10^3', 'x10*3', 'x10**3',     # With multiplication prefix
+        'x10³', 'x10e3',                # With multiplication prefix (other formats)
+        'k/', 'k/u', '/k',              # K notation (e.g., K/uL)
+        'thousand',                      # Spelled out
+        '×10^3', '×10*3', '×10**3',     # Multiplication symbol (×)
+        '*10^3', '*10*3', '*10**3',     # Asterisk multiplication
+    ]
+
+    return any(indicator in unit_normalized for indicator in thousands_indicators)
+
+
+def standardize_lab_unit(biomarker_name: str, value: Any, unit: str) -> tuple:
+    """
+    Standardize lab units to match the expected units in the frontend PREDEFINED_NORMAL_LIMITS.
+
+    ROBUST CONVERSION: Handles all common unit variations found in lab reports including:
+    - Multiple exponent notations (^, *, **, ³, e3)
+    - Various prefixes (K, k, x10, ×10, *10)
+    - Different spellings (Thousand, thousand)
+    - Regional variations (μL vs uL)
+
+    Args:
+        biomarker_name: Name of the biomarker (e.g., 'CEA', 'Hemoglobin')
+        value: The lab value to convert
+        unit: The current unit of the value
+
+    Returns:
+        Tuple of (converted_value, standardized_unit)
+    """
+    # Skip if value is None, NA, or non-numeric
+    if value is None or value in ['NA', 'N/A', '', 'Pending']:
+        return (value, unit)
+
+    try:
+        numeric_value = float(value)
+    except (ValueError, TypeError):
+        return (value, unit)
+
+    # Normalize unit string for comparison (lowercase, remove spaces)
+    unit_normalized = unit.lower().strip().replace(' ', '') if unit else ''
+
+    # Replace common unicode variations with standard ASCII
+    unit_normalized = unit_normalized.replace('μ', 'u')  # Micro symbol
+    unit_normalized = unit_normalized.replace('×', 'x')  # Multiplication symbol
+
+    # Standard units expected by the frontend (from labNormalRanges.ts)
+    STANDARD_UNITS = {
+        'CEA': 'ng/mL',
+        'NSE': 'ng/mL',
+        'proGRP': 'pg/mL',
+        'CYFRA_21_1': 'ng/mL',
+        'CYFRA 21-1': 'ng/mL',
+        'WBC': '10^3/μL',
+        'Hemoglobin': 'g/dL',
+        'Platelets': '10^3/μL',
+        'ANC': '10^3/μL',
+        'Creatinine': 'mg/dL',
+        'ALT': 'U/L',
+        'AST': 'U/L',
+        'Total Bilirubin': 'mg/dL',
+    }
+
+    standard_unit = STANDARD_UNITS.get(biomarker_name)
+    if not standard_unit:
+        # No standard unit defined, return as-is
+        return (value, unit)
+
+    # If already in standard unit, return as-is (with normalization for comparison)
+    standard_unit_normalized = standard_unit.lower().replace(' ', '').replace('μ', 'u').replace('×', 'x')
+
+    # For thousands-based units (10^3/μL), check if the unit represents thousands format
+    # even if notation differs (e.g., 10*3/uL vs 10^3/μL)
+    if standard_unit in ['10^3/μL'] and is_unit_in_thousands(unit_normalized):
+        # Unit is already in thousands format (just different notation), no conversion needed
+        return (value, standard_unit)
+
+    if unit_normalized == standard_unit_normalized:
+        return (value, standard_unit)
+
+    # CONVERSION RULES
+    converted_value = numeric_value
+    converted_unit = standard_unit
+
+    # Hemoglobin: g/L → g/dL (divide by 10)
+    if biomarker_name == 'Hemoglobin':
+        # Check if unit is g/L (grams per liter) - need to convert to g/dL
+        if 'g/l' in unit_normalized and 'mg' not in unit_normalized and 'd' not in unit_normalized:
+            # g/L → g/dL (divide by 10)
+            converted_value = numeric_value / 10.0
+        elif 'g/dl' in unit_normalized:
+            # Already in g/dL - no conversion needed
+            converted_value = numeric_value
+        elif 'mg/dl' in unit_normalized:
+            # mg/dL → g/dL (divide by 1000)
+            converted_value = numeric_value / 1000.0
+        else:
+            # Unknown format - keep as is and log warning
+            converted_value = numeric_value
+            if unit_normalized:  # Only warn if unit is not empty
+                print(f"⚠️  Unknown unit format for {biomarker_name}: '{unit}' - keeping value as-is")
+
+    # WBC, Platelets, ANC: Various formats → 10^3/μL
+    elif biomarker_name in ['WBC', 'Platelets', 'ANC']:
+        # Use robust detection to check if unit is already in thousands format
+        if is_unit_in_thousands(unit_normalized):
+            # Already in thousands format (10^3, 10*3, K, etc.) - no conversion needed
+            converted_value = numeric_value
+        # If unit is in per microliter format (/μL or /uL), need to convert
+        elif '/ul' in unit_normalized or '/μl' in unit_normalized:
+            # Convert from cells/μL to 10^3/μL (divide by 1000)
+            converted_value = numeric_value / 1000.0
+        else:
+            # Unknown format - keep as is and log warning
+            converted_value = numeric_value
+            print(f"⚠️  Unknown unit format for {biomarker_name}: '{unit}' - keeping value as-is")
+
+    # Creatinine: μmol/L → mg/dL (divide by 88.4)
+    elif biomarker_name == 'Creatinine':
+        if 'μmol/l' in unit_normalized or 'umol/l' in unit_normalized:
+            converted_value = numeric_value / 88.4
+        elif 'mg/dl' in unit_normalized:
+            converted_value = numeric_value
+
+    # Total Bilirubin: μmol/L → mg/dL (divide by 17.1)
+    elif biomarker_name == 'Total Bilirubin':
+        if 'μmol/l' in unit_normalized or 'umol/l' in unit_normalized:
+            converted_value = numeric_value / 17.1
+        elif 'mg/dl' in unit_normalized:
+            converted_value = numeric_value
+
+    # Tumor markers (CEA, NSE, CYFRA 21-1): Usually already in ng/mL or pg/mL
+    # No common conversions needed, but handle edge cases
+    elif biomarker_name in ['CEA', 'NSE', 'CYFRA_21_1', 'CYFRA 21-1']:
+        if biomarker_name == 'proGRP':
+            # proGRP should be in pg/mL
+            if 'ng/ml' in unit_normalized:
+                converted_value = numeric_value * 1000.0  # ng/mL → pg/mL
+        else:
+            # CEA, NSE, CYFRA should be in ng/mL
+            if 'pg/ml' in unit_normalized:
+                converted_value = numeric_value / 1000.0  # pg/mL → ng/mL
+            elif 'μg/ml' in unit_normalized or 'ug/ml' in unit_normalized:
+                converted_value = numeric_value * 1000.0  # μg/mL → ng/mL
+
+    # ALT, AST: Should be in U/L (usually already correct)
+    elif biomarker_name in ['ALT', 'AST']:
+        if 'u/l' in unit_normalized or 'iu/l' in unit_normalized:
+            converted_value = numeric_value
+
+    # Round to 2 decimal places for display
+    converted_value = round(converted_value, 2)
+
+    return (converted_value, converted_unit)
 
 
 def is_empty_biomarker(biomarker_data: Dict) -> bool:
@@ -35,22 +366,65 @@ def is_empty_biomarker(biomarker_data: Dict) -> bool:
     return is_value_empty
 
 
+def get_source_priority(source_context: str) -> int:
+    """
+    Determine priority of a data source. Lower number = higher priority.
+
+    Args:
+        source_context: Source context string from extraction
+
+    Returns:
+        Priority score (0-3, where 0 is highest priority)
+    """
+    if not source_context:
+        return 99  # Unknown source - lowest priority
+
+    source_upper = str(source_context).upper()
+
+    # Check for FHIR API data (highest priority - direct from lab system)
+    if 'FHIR_API' in source_upper or 'FHIR API' in source_upper:
+        return 0  # Highest priority - direct from FHIR Observation API
+
+    # Check for document type markers
+    if 'LAB_REPORT' in source_upper:
+        return 0  # Highest priority - official lab reports
+    elif 'LAB_PANEL' in source_upper:
+        return 1  # High priority - lab panel summaries
+    elif 'LAB_SUMMARY' in source_upper:
+        return 2  # Medium priority - lab summaries
+    elif 'MD_NOTE' in source_upper:
+        return 3  # Low priority - mentioned in notes
+    else:
+        # Fallback: try to infer from content
+        if 'LAB' in source_upper and ('REPORT' in source_upper or 'RESULT' in source_upper):
+            return 0
+        elif 'PANEL' in source_upper:
+            return 1
+        elif 'NOTE' in source_upper or 'PROGRESS' in source_upper:
+            return 3
+        else:
+            return 2  # Default to medium priority
+
+
 def build_trend_from_values(biomarker_entries: List[Dict]) -> List[Dict]:
     """
     Build trend array from multiple single-document extractions.
 
-    NEW APPROACH: Each entry represents one document's extraction.
-    We aggregate them into a chronological trend.
+    When multiple measurements exist for the same date, prioritize by source quality:
+    1. LAB_REPORT (official lab reports) - highest priority
+    2. LAB_PANEL (lab panel summaries)
+    3. LAB_SUMMARY (lab summaries)
+    4. MD_NOTE (physician notes) - lowest priority
 
     Args:
         biomarker_entries: List of biomarker dictionaries from different documents
                           Each is a flat dict: {value, unit, date, status, reference_range, source_context}
 
     Returns:
-        Sorted trend array with deduplicated entries
+        Sorted trend array with deduplicated entries (one entry per date, prioritized by source)
     """
     trend = []
-    seen = {}  # Track (date, value) combinations to avoid duplicates
+    seen_by_date = {}  # Track by normalized date to ensure one measurement per date
 
     for entry in biomarker_entries:
         # Handle both old nested format and new flat format
@@ -63,30 +437,66 @@ def build_trend_from_values(biomarker_entries: List[Dict]) -> List[Dict]:
 
         date = data.get("date")
         value = data.get("value")
+        source_context = data.get("source_context", "")
 
         # Skip entries with NA or missing date/value
         if date == "NA" or value == "NA" or date is None or value is None or value == "":
             continue
 
-        key = (date, value)
+        # Normalize date to YYYY-MM-DD format for proper deduplication
+        normalized_date = normalize_date(date)
 
-        # If we haven't seen this combination, or this entry has more info, keep it
-        if key not in seen or len(str(data.get("source_context", ""))) > len(str(seen[key].get("source_context", ""))):
-            seen[key] = {
-                "date": date,
-                "value": value,
+        # Convert value to float for comparison
+        try:
+            numeric_value = float(value)
+        except (ValueError, TypeError):
+            continue
+
+        # If we already have a measurement for this normalized date, keep the higher priority source
+        if normalized_date in seen_by_date:
+            existing = seen_by_date[normalized_date]
+            existing_priority = get_source_priority(existing.get("source_context", ""))
+            new_priority = get_source_priority(source_context)
+
+            # Keep the entry from the higher priority source (lower number = higher priority)
+            if new_priority < existing_priority:
+                # New source is higher priority - replace existing
+                seen_by_date[normalized_date] = {
+                    "date": normalized_date,
+                    "value": numeric_value,
+                    "status": data.get("status"),
+                    "source_context": source_context
+                }
+            elif new_priority == existing_priority:
+                # Same priority - if values are very close, keep the one with more complete data
+                existing_value = float(existing["value"])
+                if abs(numeric_value - existing_value) / max(existing_value, numeric_value) < 0.01:
+                    # Values are essentially the same - keep the one with more complete status/reference info
+                    if data.get("status") and not existing.get("status"):
+                        seen_by_date[normalized_date] = {
+                            "date": normalized_date,
+                            "value": numeric_value,
+                            "status": data.get("status"),
+                            "source_context": source_context
+                        }
+            # Otherwise keep existing (it's higher priority or has same priority with different value)
+        else:
+            # First time seeing this normalized date - add it
+            seen_by_date[normalized_date] = {
+                "date": normalized_date,
+                "value": numeric_value,
                 "status": data.get("status"),
-                "source_context": data.get("source_context", "")
+                "source_context": source_context
             }
 
     # Convert to list and sort by date (oldest to newest)
-    trend = list(seen.values())
+    trend = list(seen_by_date.values())
     trend.sort(key=lambda x: x.get("date", ""))
 
     return trend
 
 
-def merge_biomarker_data(biomarker_list: List[Dict]) -> Dict:
+def merge_biomarker_data(biomarker_list: List[Dict], biomarker_name: str = None) -> Dict:
     """
     Aggregate biomarker entries from multiple documents into current + trend structure.
 
@@ -98,6 +508,7 @@ def merge_biomarker_data(biomarker_list: List[Dict]) -> Dict:
                        Each is either:
                        - New format: {value, unit, date, status, reference_range, source_context}
                        - Old format: {"current": {...}, "trend": [...]}
+        biomarker_name: Name of the biomarker (for unit conversion)
 
     Returns:
         Consolidated biomarker with structure:
@@ -142,16 +553,44 @@ def merge_biomarker_data(biomarker_list: List[Dict]) -> Dict:
     sorted_entries.sort(key=lambda x: x[0], reverse=True)
     most_recent_data = sorted_entries[0][1] if sorted_entries else {}
 
-    # Return unified structure
+    # Apply unit standardization to current value
+    current_value = most_recent_data.get("value")
+    current_unit = most_recent_data.get("unit")
+    if biomarker_name and current_value is not None:
+        standardized_value, standardized_unit = standardize_lab_unit(
+            biomarker_name, current_value, current_unit or ''
+        )
+    else:
+        standardized_value = current_value
+        standardized_unit = current_unit
+
+    # Apply unit standardization to trend values
+    standardized_trend = []
+    for trend_point in trend:
+        trend_value = trend_point.get("value")
+        if biomarker_name and trend_value is not None:
+            std_trend_value, _ = standardize_lab_unit(
+                biomarker_name, trend_value, current_unit or ''
+            )
+            standardized_trend.append({
+                "date": trend_point.get("date"),
+                "value": std_trend_value,
+                "status": trend_point.get("status"),
+                "source_context": trend_point.get("source_context")
+            })
+        else:
+            standardized_trend.append(trend_point)
+
+    # Return unified structure with standardized units
     return {
         "current": {
-            "value": most_recent_data.get("value"),
-            "unit": most_recent_data.get("unit"),
+            "value": standardized_value,
+            "unit": standardized_unit,
             "date": most_recent_data.get("date"),
             "status": most_recent_data.get("status"),
             "reference_range": most_recent_data.get("reference_range")
         },
-        "trend": trend
+        "trend": standardized_trend
     }
 
 
@@ -176,20 +615,20 @@ def consolidate_panel(panel_list: List[Dict], biomarker_names: List[str]) -> Dic
                 biomarker_entries.append(panel[biomarker_name])
 
         if biomarker_entries:
-            consolidated[biomarker_name] = merge_biomarker_data(biomarker_entries)
+            consolidated[biomarker_name] = merge_biomarker_data(biomarker_entries, biomarker_name)
 
     return consolidated
 
 
 def consolidate_clinical_interpretations(interpretations_list: List[List[str]]) -> List[str]:
     """
-    Consolidate clinical interpretations, removing duplicates.
+    Consolidate clinical interpretations, removing duplicates and similar variations.
 
     Args:
         interpretations_list: List of interpretation arrays from different batches
 
     Returns:
-        Unique interpretations list
+        Unique interpretations list with duplicates and near-duplicates removed
     """
     all_interpretations = []
     for interps in interpretations_list:
@@ -197,7 +636,9 @@ def consolidate_clinical_interpretations(interpretations_list: List[List[str]]) 
 
     # Remove duplicates while preserving order
     seen = set()
+    seen_normalized = set()  # Track normalized versions to catch variations
     unique_interpretations = []
+
     for interp in all_interpretations:
         # Clean up the interpretation text
         clean_interp = interp.strip()
@@ -206,9 +647,16 @@ def consolidate_clinical_interpretations(interpretations_list: List[List[str]]) 
         if not clean_interp:
             continue
 
-        # Skip if we've seen this before (case-insensitive)
-        if clean_interp.lower() not in seen:
+        # Normalize text to catch similar variations
+        # Remove extra whitespace, punctuation variations, and normalize case
+        import re
+        normalized = re.sub(r'[^\w\s]', '', clean_interp.lower())
+        normalized = ' '.join(normalized.split())  # Normalize whitespace
+
+        # Skip if we've seen this exact interpretation or a very similar version
+        if clean_interp.lower() not in seen and normalized not in seen_normalized:
             seen.add(clean_interp.lower())
+            seen_normalized.add(normalized)
             unique_interpretations.append(clean_interp)
 
     return unique_interpretations
@@ -234,7 +682,12 @@ def refine_clinical_interpretations_with_ai(
     # Extract current lab values for context
     lab_summary = {}
 
-    for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]:
+    ALL_PANEL_NAMES = [
+        "tumor_markers", "complete_blood_count", "metabolic_panel",
+        "liver_function", "coagulation", "thyroid", "diabetes", "iron_studies"
+    ]
+
+    for panel_name in ALL_PANEL_NAMES:
         panel_data = consolidated_data.get(panel_name, {})
         lab_summary[panel_name] = {}
 
@@ -271,7 +724,7 @@ INSTRUCTIONS:
 5. Focus on actionable findings relevant to cancer treatment
 6. Include trend information where relevant
 7. Keep each point concise (1-2 sentences maximum)
-8. Return EXACTLY 4-6 most important clinical points (prioritize critical findings)
+8. Return MAXIMUM 5 most important clinical points (prioritize critical findings)
 
 PRIORITIZATION RULES:
 - Critical abnormalities (e.g., severe anemia, neutropenia requiring intervention) = Highest priority
@@ -280,50 +733,153 @@ PRIORITIZATION RULES:
 - Stable or normal findings with clinical context = Include only if space permits
 
 OUTPUT FORMAT:
-Return a JSON array of exactly 4-6 strings, each string being one refined clinical interpretation.
+Return a JSON array of maximum 5 strings, each string being one refined clinical interpretation.
 Example:
 ["Mild anemia (Hgb 10.2 g/dL) with stable trend over 3 measurements, consider transfusion if symptomatic", "Hepatic transaminases mildly elevated (ALT 58 U/L, AST 52 U/L) consistent with drug-induced liver injury, recommend monitoring", "Preserved bone marrow function (WBC 6.8 K/uL, ANC 3.8 K/uL, Platelets 185 K/uL) - safe to continue chemotherapy", "Renal function normal (Creatinine 0.9 mg/dL) - no dose adjustments required"]
 
 Return ONLY the JSON array, no other text."""
 
     try:
-        model = GenerativeModel("gemini-2.0-flash-exp")
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.3,
-                "top_p": 0.95,
-                "max_output_tokens": 1024
-            }
+        # Add initial delay to avoid rate limit issues when called after other Gemini API calls
+        print("⏳ Waiting 4 seconds before AI refinement to avoid rate limits...")
+        time.sleep(4)
+
+        model = GenerativeModel("gemini-2.5-pro")
+
+        # Define the API call as a lambda function for exponential retry
+        # This now includes response validation and JSON parsing to enable retries on invalid responses
+        def make_api_call():
+            # VERBOSE DEBUG: Print prompt info
+            print(f"🔍 DEBUG: Sending prompt ({len(prompt)} chars, {len(raw_interpretations)} interpretations)")
+
+            response = model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.3,
+                    "top_p": 0.95,
+                    "max_output_tokens": 4096,  # Increased to handle more comprehensive responses
+                    "response_mime_type": "application/json"  # Force JSON output
+                }
+            )
+
+            # VERBOSE DEBUG: Check response object
+            print(f"🔍 DEBUG: Got response object type: {type(response)}")
+            print(f"🔍 DEBUG: Has 'text' attr: {hasattr(response, 'text')}")
+
+            # Check if response was blocked by safety filters
+            if hasattr(response, 'prompt_feedback'):
+                feedback = response.prompt_feedback
+                print(f"🔍 DEBUG: Has prompt_feedback: {feedback}")
+                if hasattr(feedback, 'block_reason') and feedback.block_reason:
+                    raise ValueError(f"Response blocked by safety filters: {feedback.block_reason}")
+
+            # Check candidates for finish_reason
+            if hasattr(response, 'candidates') and response.candidates:
+                print(f"🔍 DEBUG: Candidates count: {len(response.candidates)}")
+                for i, candidate in enumerate(response.candidates):
+                    if hasattr(candidate, 'finish_reason'):
+                        print(f"🔍 DEBUG: Candidate {i} finish_reason: {candidate.finish_reason}")
+
+            # Validate response has text content
+            if not hasattr(response, 'text'):
+                raise ValueError(f"Response object has no 'text' attribute")
+
+            # VERBOSE DEBUG: Check response.text before any processing
+            print(f"🔍 DEBUG: response.text type: {type(response.text)}")
+            print(f"🔍 DEBUG: response.text length: {len(response.text) if response.text else 0}")
+            print(f"🔍 DEBUG: response.text repr (first 200 chars): {repr(response.text[:200]) if response.text else 'None'}")
+
+            if not response.text:
+                raise ValueError(f"Gemini response.text is empty or None")
+
+            response_text = response.text.strip()
+            print(f"🔍 DEBUG: After strip() length: {len(response_text)}")
+
+            # Debug logging for empty responses
+            if not response_text:
+                print(f"⚠️  DEBUG: response.text exists but is empty after strip()")
+                raise ValueError("Gemini response is empty after strip()")
+
+            # Extract JSON from potential markdown code blocks
+            import re
+            json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+            match = re.search(json_pattern, response_text)
+
+            if match:
+                print(f"🔍 DEBUG: Found markdown code block, extracting...")
+                extracted = match.group(1).strip()
+                print(f"🔍 DEBUG: Extracted length: {len(extracted)}")
+                response_text = extracted
+
+            # Check again after extracting from code block
+            if not response_text:
+                raise ValueError("Gemini response is empty after markdown extraction")
+
+            print(f"🔍 DEBUG: Final response_text length before JSON parse: {len(response_text)}")
+            print(f"🔍 DEBUG: Final response_text (first 300 chars): {response_text[:300]}")
+
+            # Parse and validate JSON response
+            try:
+                refined_interpretations = json.loads(response_text)
+                if not isinstance(refined_interpretations, list):
+                    raise ValueError(f"Expected list, got {type(refined_interpretations).__name__}")
+                print(f"✅ DEBUG: Successfully parsed JSON with {len(refined_interpretations)} items")
+                return refined_interpretations
+            except json.JSONDecodeError as e:
+                # Enhanced error message with actual content for debugging
+                print(f"❌ DEBUG: JSON parsing failed: {e}")
+                print(f"❌ DEBUG: Response text length: {len(response_text)}")
+                print(f"❌ DEBUG: Response text (full): {response_text}")
+                raise ValueError(f"Invalid JSON response: {str(e)}")
+
+        # Execute with exponential retry (handles 429 rate limits and invalid responses)
+        # Changed max_retries to 6 to ensure we reach the 60-second maximum delay
+        # Delay progression: 2s, 4s, 8s, 16s, 32s, 60s (capped)
+        print("🔄 Calling Gemini API with exponential retry protection (up to 6 retries)...")
+        refined_interpretations = exponential_retry(
+            func=make_api_call,
+            max_retries=6,
+            base_delay=2.0,
+            max_delay=60.0,
+            exponential_base=2.0,
+            jitter=True
         )
 
-        response_text = response.text.strip()
-
-        # Extract JSON from potential markdown code blocks
-        import re
-        json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
-        match = re.search(json_pattern, response_text)
-
-        if match:
-            response_text = match.group(1).strip()
-
-        # Parse the JSON response
-        refined_interpretations = json.loads(response_text)
-
-        if isinstance(refined_interpretations, list) and all(isinstance(item, str) for item in refined_interpretations):
-            # Validate count (should be 4-6 points)
-            count = len(refined_interpretations)
-            if count < 4 or count > 6:
-                print(f"⚠️ AI returned {count} points (expected 4-6), trimming/keeping as is")
-                if count > 6:
-                    refined_interpretations = refined_interpretations[:6]  # Keep top 6
-                # If less than 4, keep what we have
-
-            print(f"✅ AI refinement successful: {len(refined_interpretations)} interpretations")
-            return refined_interpretations
-        else:
-            print(f"⚠️ AI refinement returned invalid format, using raw interpretations")
+        # Validate that all items in the list are strings
+        if not all(isinstance(item, str) for item in refined_interpretations):
+            print(f"⚠️ AI refinement returned non-string items, using raw interpretations")
             return raw_interpretations
+
+        # Remove any duplicates or near-duplicates from AI output
+        import re
+        seen = set()
+        seen_normalized = set()
+        deduplicated = []
+
+        for interp in refined_interpretations:
+            clean_interp = interp.strip()
+            if not clean_interp:
+                continue
+
+            # Normalize to catch variations
+            normalized = re.sub(r'[^\w\s]', '', clean_interp.lower())
+            normalized = ' '.join(normalized.split())
+
+            if clean_interp.lower() not in seen and normalized not in seen_normalized:
+                seen.add(clean_interp.lower())
+                seen_normalized.add(normalized)
+                deduplicated.append(clean_interp)
+
+        refined_interpretations = deduplicated
+
+        # Validate count (should be maximum 5 points)
+        count = len(refined_interpretations)
+        if count > 5:
+            print(f"⚠️ AI returned {count} unique points (expected maximum 5), trimming to 5")
+            refined_interpretations = refined_interpretations[:5]  # Keep top 5
+
+        print(f"✅ AI refinement successful: {len(refined_interpretations)} unique interpretations")
+        return refined_interpretations
 
     except Exception as e:
         print(f"❌ AI refinement failed: {str(e)}, using raw interpretations")
@@ -334,9 +890,17 @@ def postprocess_lab_data(raw_lab_data: List[Dict], use_ai_refinement: bool = Tru
     """
     Main postprocessing function to consolidate and clean lab data.
 
+    IMPORTANT: AI refinement should ONLY be used at the consolidated level (after all reports
+    are processed), NOT at the individual report level. This ensures:
+    - One AI call instead of N calls (faster, cheaper)
+    - AI sees all lab data across all reports for better synthesis
+    - Clinical interpretations synthesize trends across entire patient timeline
+
     Args:
         raw_lab_data: Raw output from llmresponsedetailed (list of batch results)
-        use_ai_refinement: Whether to use AI to refine clinical interpretations (default: True)
+        use_ai_refinement: Whether to use AI to refine clinical interpretations
+                          - Set to False for individual report processing
+                          - Set to True ONLY for final consolidated processing (default: True)
 
     Returns:
         Clean, consolidated lab data ready for UI
@@ -354,75 +918,65 @@ def postprocess_lab_data(raw_lab_data: List[Dict], use_ai_refinement: bool = Tru
     metabolic_list = []
     clinical_interp_list = []
 
+    # Define all known panel categories and their expected biomarker names
+    PANEL_DEFINITIONS = {
+        "tumor_markers": ["CEA", "NSE", "proGRP", "CYFRA_21_1"],
+        "complete_blood_count": ["WBC", "Hemoglobin", "Platelets", "ANC", "MCV", "RDW", "Lymphocytes", "Monocytes"],
+        "metabolic_panel": ["Sodium", "Potassium", "Chloride", "CO2", "Calcium", "Phosphorus", "Magnesium",
+                           "Glucose", "BUN", "Creatinine", "eGFR", "Total_Protein", "Albumin", "Uric_Acid",
+                           "ALT", "AST", "Total Bilirubin", "Total_Bilirubin"],  # Include both space and underscore versions
+        "liver_function": ["ALT", "AST", "Total_Bilirubin", "Alkaline_Phosphatase", "LDH"],
+        "coagulation": ["INR", "PT", "aPTT"],
+        "thyroid": ["TSH", "Free_T4"],
+        "diabetes": ["HbA1c"],
+        "iron_studies": ["Iron", "Ferritin", "TIBC"],
+    }
+
+    # Dynamically collect panels from all batches
+    panel_data = {panel_name: [] for panel_name in PANEL_DEFINITIONS}
+
     for batch in raw_lab_data:
-        # Check if tumor_markers is a list (new API structure)
-        if isinstance(batch.get("tumor_markers"), list):
-            tumor_markers_list.extend(batch["tumor_markers"])
-        elif isinstance(batch.get("tumor_markers"), dict):
-            tumor_markers_list.append(batch["tumor_markers"])
-
-        # Check if complete_blood_count is a list (new API structure)
-        if isinstance(batch.get("complete_blood_count"), list):
-            cbc_list.extend(batch["complete_blood_count"])
-        elif isinstance(batch.get("complete_blood_count"), dict):
-            cbc_list.append(batch["complete_blood_count"])
-
-        # Check if metabolic_panel is a list (new API structure)
-        if isinstance(batch.get("metabolic_panel"), list):
-            metabolic_list.extend(batch["metabolic_panel"])
-        elif isinstance(batch.get("metabolic_panel"), dict):
-            metabolic_list.append(batch["metabolic_panel"])
+        for panel_name in PANEL_DEFINITIONS:
+            panel_value = batch.get(panel_name)
+            if isinstance(panel_value, list):
+                panel_data[panel_name].extend(panel_value)
+            elif isinstance(panel_value, dict):
+                panel_data[panel_name].append(panel_value)
 
         # Handle clinical_interpretation
         if isinstance(batch.get("clinical_interpretation"), list):
             clinical_interp_list.append(batch["clinical_interpretation"])
 
-    # Consolidate each panel
-    consolidated_tumor_markers = consolidate_panel(
-        tumor_markers_list,
-        ["CEA", "NSE", "proGRP", "CYFRA_21_1"]
-    )
-
-    consolidated_cbc = consolidate_panel(
-        cbc_list,
-        ["WBC", "Hemoglobin", "Platelets", "ANC"]
-    )
-
-    consolidated_metabolic = consolidate_panel(
-        metabolic_list,
-        ["Creatinine", "ALT", "AST", "Total Bilirubin"]
-    )
+    # Consolidate each panel dynamically
+    consolidated_panels = {}
+    for panel_name, biomarker_names in PANEL_DEFINITIONS.items():
+        consolidated_panels[panel_name] = consolidate_panel(
+            panel_data[panel_name],
+            biomarker_names
+        )
 
     # Consolidate clinical interpretations
     consolidated_interpretations = consolidate_clinical_interpretations(clinical_interp_list)
 
     # Optionally refine clinical interpretations with AI
     if use_ai_refinement and consolidated_interpretations:
-        # Prepare consolidated data structure for AI refinement
-        consolidated_data_for_ai = {
-            "tumor_markers": consolidated_tumor_markers,
-            "complete_blood_count": consolidated_cbc,
-            "metabolic_panel": consolidated_metabolic
-        }
-
         # Refine clinical interpretations with AI
         print(f"🤖 Refining {len(consolidated_interpretations)} clinical interpretations with AI...")
         refined_interpretations = refine_clinical_interpretations_with_ai(
             raw_interpretations=consolidated_interpretations,
-            consolidated_data=consolidated_data_for_ai
+            consolidated_data=consolidated_panels
         )
     else:
         refined_interpretations = consolidated_interpretations
         if not use_ai_refinement:
             print("ℹ️  AI refinement disabled, using raw interpretations")
 
-    # Return clean structure
-    return {
-        "tumor_markers": consolidated_tumor_markers,
-        "complete_blood_count": consolidated_cbc,
-        "metabolic_panel": consolidated_metabolic,
-        "clinical_interpretation": refined_interpretations
-    }
+    # Return clean structure with all panels
+    result = {}
+    for panel_name in PANEL_DEFINITIONS:
+        result[panel_name] = consolidated_panels[panel_name]
+    result["clinical_interpretation"] = refined_interpretations
+    return result
 
 
 def format_for_ui(consolidated_data: Dict) -> Dict:
@@ -444,18 +998,30 @@ def format_for_ui(consolidated_data: Dict) -> Dict:
         # Determine if data is available
         has_data = current.get("value") not in [None, "NA", ""]
 
+        # Format dates for display (MM/DD/YYYY)
+        current_date = current.get("date")
+        formatted_current_date = format_date_for_display(current_date) if current_date else None
+
+        # Format trend dates
+        formatted_trend = []
+        for trend_entry in trend:
+            formatted_entry = trend_entry.copy()
+            if "date" in formatted_entry:
+                formatted_entry["date"] = format_date_for_display(formatted_entry["date"])
+            formatted_trend.append(formatted_entry)
+
         return {
             "name": name,
             "has_data": has_data,
             "current": {
                 "value": current.get("value"),
                 "unit": current.get("unit"),
-                "date": current.get("date"),
+                "date": formatted_current_date,
                 "status": current.get("status"),
                 "reference_range": current.get("reference_range"),
                 "is_abnormal": current.get("status") in ["High", "Low", "Critical"]
             },
-            "trend": trend,
+            "trend": formatted_trend,
             "trend_direction": calculate_trend_direction(trend) if len(trend) >= 2 else None
         }
 
@@ -490,41 +1056,45 @@ def format_for_ui(consolidated_data: Dict) -> Dict:
         panel = consolidated_data.get(panel_name, {})
         return panel if isinstance(panel, dict) else {}
 
-    formatted = {
-        "tumor_markers": {
-            name: format_biomarker(data, name)
-            for name, data in safe_get_panel("tumor_markers").items()
-            if isinstance(data, dict)
-        },
-        "complete_blood_count": {
-            name: format_biomarker(data, name)
-            for name, data in safe_get_panel("complete_blood_count").items()
-            if isinstance(data, dict)
-        },
-        "metabolic_panel": {
-            name: format_biomarker(data, name)
-            for name, data in safe_get_panel("metabolic_panel").items()
-            if isinstance(data, dict)
-        },
-        "clinical_interpretation": consolidated_data.get("clinical_interpretation", []),
-        "summary": {
-            "total_abnormal": sum(
-                1 for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]
-                for biomarker in safe_get_panel(panel_name).values()
-                if isinstance(biomarker, dict) and biomarker.get("current", {}).get("status") in ["High", "Low", "Critical"]
-            ),
-            "last_updated": get_most_recent_date(consolidated_data)
-        }
+    # All known panel names (dynamically handle any panels present)
+    ALL_PANEL_NAMES = [
+        "tumor_markers", "complete_blood_count", "metabolic_panel",
+        "liver_function", "coagulation", "thyroid", "diabetes", "iron_studies"
+    ]
+
+    formatted = {}
+    for panel_name in ALL_PANEL_NAMES:
+        panel_data = safe_get_panel(panel_name)
+        if panel_data:
+            formatted[panel_name] = {
+                name: format_biomarker(data, name)
+                for name, data in panel_data.items()
+                if isinstance(data, dict)
+            }
+
+    formatted["clinical_interpretation"] = consolidated_data.get("clinical_interpretation", [])
+    formatted["summary"] = {
+        "total_abnormal": sum(
+            1 for panel_name in ALL_PANEL_NAMES
+            for biomarker in safe_get_panel(panel_name).values()
+            if isinstance(biomarker, dict) and biomarker.get("current", {}).get("status") in ["High", "Low", "Critical"]
+        ),
+        "last_updated": get_most_recent_date(consolidated_data)
     }
 
     return formatted
 
 
 def get_most_recent_date(data: Dict) -> str:
-    """Get the most recent date across all biomarkers."""
+    """Get the most recent date across all biomarkers (in MM/DD/YYYY format)."""
     all_dates = []
 
-    for panel_name in ["tumor_markers", "complete_blood_count", "metabolic_panel"]:
+    ALL_PANEL_NAMES = [
+        "tumor_markers", "complete_blood_count", "metabolic_panel",
+        "liver_function", "coagulation", "thyroid", "diabetes", "iron_studies"
+    ]
+
+    for panel_name in ALL_PANEL_NAMES:
         panel = data.get(panel_name, {})
 
         # Ensure panel is a dict
@@ -541,8 +1111,10 @@ def get_most_recent_date(data: Dict) -> str:
                 all_dates.append(date)
 
     if all_dates:
+        # Sort in YYYY-MM-DD format (for proper chronological ordering)
         all_dates.sort(reverse=True)
-        return all_dates[0]
+        # Return most recent date formatted as MM/DD/YYYY
+        return format_date_for_display(all_dates[0])
 
     return None
 
@@ -552,9 +1124,15 @@ def process_lab_data_for_ui(raw_lab_data: List[Dict], use_ai_refinement: bool = 
     """
     Complete pipeline: consolidate raw data and format for UI.
 
+    USAGE PATTERN:
+    - Individual report processing: use_ai_refinement=False (skip AI refinement per report)
+    - Consolidated processing: use_ai_refinement=True (refine interpretations across all reports)
+
     Args:
         raw_lab_data: Raw output from llmresponsedetailed
-        use_ai_refinement: Whether to use AI to refine clinical interpretations (default: True)
+        use_ai_refinement: Whether to use AI to refine clinical interpretations
+                          - False: Individual report processing (avoid redundant AI calls)
+                          - True: Consolidated processing (AI synthesizes across all reports)
 
     Returns:
         Clean, formatted data ready for UI rendering
