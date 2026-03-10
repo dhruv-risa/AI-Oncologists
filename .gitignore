@@ -58,6 +58,12 @@ lab_downloads/
 *.db-wal
 *.db-shm
 
+# Node
+node_modules/
+
+# Firebase
+.firebase/
+
 # OS
 .DS_Store
 Thumbs.db
