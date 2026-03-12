@@ -27,19 +27,20 @@ class DataPool:
         Args:
             db_path: Path to SQLite database file. If None, uses default location.
         """
-        self._gcs_path = None  # Track GCS source for sync-back
+        self._gcs_bucket = None  # GCS bucket URI for sync-back via gsutil
 
         if db_path is None:
             gcs_mount = os.environ.get("DB_MOUNT_PATH", "")
             if gcs_mount and os.path.isdir(gcs_mount):
                 gcs_db = Path(gcs_mount) / "data_pool.db"
                 # SQLite doesn't work reliably on GCS FUSE (random I/O + journaling).
-                # Copy to a local path and sync back after writes.
+                # Copy to a local path and sync back via gsutil after writes.
                 local_db = Path("/tmp") / "data_pool.db"
                 if gcs_db.exists() and not local_db.exists():
                     shutil.copy2(str(gcs_db), str(local_db))
                     print(f"[DataPool] Copied GCS DB to local: {local_db} ({local_db.stat().st_size} bytes)")
-                self._gcs_path = str(gcs_db)
+                # Store bucket name for Python GCS client sync-back
+                self._gcs_bucket = os.environ.get("GCS_BUCKET_NAME", "ai-oncologist-data")
                 db_path = local_db
             else:
                 # Default to Backend directory
@@ -198,15 +199,21 @@ class DataPool:
         conn.close()
 
     def _sync_to_gcs(self):
-        """Copy the local DB back to GCS mount if running in Cloud Run."""
-        if not self._gcs_path:
+        """Upload the local DB to GCS via the Python storage client (bypasses FUSE)."""
+        if not self._gcs_bucket:
             return
         def _do_sync():
             try:
                 with self._sync_lock:
-                    shutil.copy2(self.db_path, self._gcs_path)
+                    from google.cloud import storage
+                    client = storage.Client()
+                    bucket = client.bucket(self._gcs_bucket)
+                    blob = bucket.blob("data_pool.db")
+                    blob.upload_from_filename(self.db_path)
+                    size = Path(self.db_path).stat().st_size
+                    print(f"[DataPool] Synced to GCS ({size} bytes)")
             except Exception as e:
-                print(f"[DataPool] GCS sync failed: {e}")
+                print(f"[DataPool] GCS sync error: {e}")
         threading.Thread(target=_do_sync, daemon=True).start()
 
     def _ensure_table_exists(self, conn):
