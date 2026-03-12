@@ -8,6 +8,8 @@ This FastAPI application provides REST API endpoints for:
 """
 import sys
 import os
+import json
+from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -155,6 +157,59 @@ async def lifespan(app):
             logger.info(f"Trials cache has {trials_count} trials - skipping initial sync")
     except Exception as e:
         logger.error(f"Error checking trials cache on startup: {e}")
+
+    # Auto-seed demo patients if pool is empty
+    try:
+        patient_count = len(data_pool.list_all_patients())
+        if patient_count == 0:
+            logger.info("No patients in pool - triggering demo data seed in background")
+
+            def seed_demo_patients():
+                import time
+                import requests as req
+
+                demo_data_path = Path(__file__).parent / "demo_data.json"
+                if not demo_data_path.exists():
+                    logger.warning("demo_data.json not found, skipping seed")
+                    return
+
+                with open(demo_data_path) as f:
+                    demo_mrns = list(json.load(f).keys())
+
+                logger.info(f"Seeding {len(demo_mrns)} demo patients...")
+
+                # Wait for server to be ready
+                port = os.environ.get("PORT", "8000")
+                base = f"http://localhost:{port}"
+                for _ in range(30):
+                    try:
+                        req.get(f"{base}/docs", timeout=2)
+                        break
+                    except Exception:
+                        time.sleep(2)
+
+                for mrn in demo_mrns:
+                    try:
+                        if not data_pool.patient_exists(mrn):
+                            resp = req.post(
+                                f"{base}/api/patient/all",
+                                json={"mrn": mrn},
+                                timeout=300,
+                            )
+                            logger.info(f"Seeded patient {mrn}: {resp.status_code}")
+                        else:
+                            logger.info(f"Patient {mrn} already exists, skipping")
+                    except Exception as e:
+                        logger.error(f"Failed to seed patient {mrn}: {e}")
+
+                logger.info("Demo patient seeding complete")
+
+            thread = threading.Thread(target=seed_demo_patients, daemon=True)
+            thread.start()
+        else:
+            logger.info(f"Pool has {patient_count} patients - skipping seed")
+    except Exception as e:
+        logger.error(f"Error checking patient pool on startup: {e}")
 
     yield
 
