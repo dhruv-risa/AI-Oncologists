@@ -682,7 +682,9 @@ async def get_patient_data(request: MRNRequest):
         logger.info(f"📊 Radiology Reports: {len(result['radiology_reports'])} reports")
 
         # Auto-store in data pool
-        data_pool.store_patient_data(mrn=request.mrn, data=result)
+        logger.info(f"Storing patient {request.mrn} in data pool (db_path={data_pool.db_path}, result_keys={list(result.keys()) if result else 'None'})")
+        store_ok = data_pool.store_patient_data(mrn=request.mrn, data=result)
+        logger.info(f"Store result for {request.mrn}: {store_ok}")
 
         # Auto-compute eligibility for this patient against all cached trials (background)
         try:

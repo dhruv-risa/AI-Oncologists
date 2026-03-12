@@ -253,11 +253,11 @@ class DataPool:
         try:
             # Validate inputs
             if not mrn or not isinstance(mrn, str) or mrn.strip() == "":
-                print(f"Error storing patient data: Invalid MRN '{mrn}'")
+                logger.error(f"Error storing patient data: Invalid MRN '{mrn}'")
                 return False
 
             if not data or not isinstance(data, dict):
-                print(f"Error storing patient data: Invalid data for MRN '{mrn}'")
+                logger.error(f"Error storing patient data: Invalid data for MRN '{mrn}' (type={type(data)}, bool={bool(data)})")
                 return False
 
             conn = sqlite3.connect(self.db_path)
