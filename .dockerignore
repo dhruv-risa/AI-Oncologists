@@ -1,0 +1,19 @@
+.git
+.github
+.firebase
+.claude
+Frontend/Oncology Patient Dashboard 2/node_modules
+Frontend/Oncology Patient Dashboard 2/build
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+__pycache__
+*.pyc
+.env
+.env.local
+credentials.json
+token.pickle
+*.log
+.DS_Store
+*.md

@@ -4,7 +4,8 @@
 // fileContent: """
 // API Service Layer for Backend Integration
 // Base URL for the backend API
-const API_BASE_URL = 'http://localhost:8000';
+// In production, VITE_API_BASE_URL is set during the CI/CD build step
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 // Type definitions based on backend response structures
 export interface PatientDemographics {
