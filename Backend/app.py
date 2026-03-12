@@ -385,8 +385,9 @@ async def get_patient_data(request: MRNRequest):
     try:
         # Check if patient data already exists in pool
         cached_data = data_pool.get_patient_data(request.mrn)
+        logger.info(f"Cache check for MRN {request.mrn}: {'HIT' if cached_data is not None else 'MISS'} (db_path={data_pool.db_path})")
         if cached_data is not None:
-            print(f"Returning cached data for MRN: {request.mrn}")
+            logger.info(f"Returning cached data for MRN: {request.mrn}")
             return cached_data
 
         # If not in cache, fetch fresh data with TWO SEQUENTIAL PIPELINES
