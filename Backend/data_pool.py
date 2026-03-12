@@ -26,9 +26,13 @@ class DataPool:
             db_path: Path to SQLite database file. If None, uses default location.
         """
         if db_path is None:
-            # Default to Backend directory
-            backend_dir = Path(__file__).parent
-            db_path = backend_dir / "data_pool.db"
+            gcs_mount = os.environ.get("DB_MOUNT_PATH", "")
+            if gcs_mount and os.path.isdir(gcs_mount):
+                db_path = Path(gcs_mount) / "data_pool.db"
+            else:
+                # Default to Backend directory
+                backend_dir = Path(__file__).parent
+                db_path = backend_dir / "data_pool.db"
 
         self.db_path = str(db_path)
         self.init_database()

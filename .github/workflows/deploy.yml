@@ -68,8 +68,11 @@ jobs:
             --cpu=1 \
             --timeout=300 \
             --min-instances=0 \
-            --max-instances=3 \
-            --set-env-vars="GOOGLE_CREDENTIALS_BASE64=${{ secrets.GOOGLE_CREDENTIALS_BASE64 }},GOOGLE_TOKEN_BASE64=${{ secrets.GOOGLE_TOKEN_BASE64 }}"
+            --max-instances=1 \
+            --execution-environment=gen2 \
+            --add-volume=name=gcs-data,type=cloud-storage,bucket=ai-oncologist-data \
+            --add-volume-mount=volume=gcs-data,mount-path=/mnt/gcs-data \
+            --set-env-vars="DB_MOUNT_PATH=/mnt/gcs-data,GOOGLE_CREDENTIALS_BASE64=${{ secrets.GOOGLE_CREDENTIALS_BASE64 }},GOOGLE_TOKEN_BASE64=${{ secrets.GOOGLE_TOKEN_BASE64 }}"
 
       - name: Get Cloud Run URL
         id: cloud-run-url
