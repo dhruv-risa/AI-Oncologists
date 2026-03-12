@@ -120,3 +120,4 @@ jobs:
           firebaseServiceAccount: ${{ secrets.GCP_SA_KEY }}
           channelId: live
           projectId: rapids-platform
+          target: ai-oncologist-copilot

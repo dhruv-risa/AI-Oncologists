@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "ai-oncologist-copilot",
     "public": "Frontend/Oncology Patient Dashboard 2/build",
     "ignore": [
       "firebase.json",
