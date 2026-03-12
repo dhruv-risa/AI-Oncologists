@@ -27,7 +27,7 @@ from Utils.logger_config import setup_logger, log_extraction_start, log_extracti
 logger = setup_logger(__name__)
 
 # Initialize Vertex AI
-vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+vertexai.init(project=os.environ.get("VERTEX_PROJECT", "rapids-platform"), location="us-central1")
 
 extracted_instructions = (
     "Extract structured lab result data for a 'Patient Labs Dashboard' from the provided lab report. "

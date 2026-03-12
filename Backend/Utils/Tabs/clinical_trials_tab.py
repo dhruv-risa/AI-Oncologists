@@ -17,7 +17,7 @@ from vertexai.generative_models import GenerativeModel, Part
 
 # Initialize Vertex AI
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+vertexai.init(project=os.environ.get("VERTEX_PROJECT", "rapids-platform"), location="us-central1")
 
 # ClinicalTrials.gov API v2 base URL
 CLINICALTRIALS_API_BASE = "https://clinicaltrials.gov/api/v2"

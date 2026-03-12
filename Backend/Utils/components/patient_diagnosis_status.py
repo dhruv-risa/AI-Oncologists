@@ -15,6 +15,7 @@ Extracts clinical disease information from patient medical documents:
 
 Source: Most recent MD Notes
 """
+import os
 import requests
 import json
 import re
@@ -22,7 +23,7 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 
 # Initialize Vertex AI
-vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+vertexai.init(project=os.environ.get("VERTEX_PROJECT", "rapids-platform"), location="us-central1")
 
 
 def extract_diagnosis_status_with_gemini(pdf_input):

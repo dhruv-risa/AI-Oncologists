@@ -12,12 +12,13 @@ from typing import Dict, List, Any
 from datetime import datetime
 import json
 import time
+import os
 import random
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
 # Initialize Vertex AI
-vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+vertexai.init(project=os.environ.get("VERTEX_PROJECT", "rapids-platform"), location="us-central1")
 
 
 def exponential_retry(

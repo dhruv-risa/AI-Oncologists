@@ -19,7 +19,7 @@ from Backend.Utils.logger_config import setup_logger, log_extraction_start, log_
 logger = setup_logger(__name__)
 
 # Initialize Vertex AI
-vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+vertexai.init(project=os.environ.get("VERTEX_PROJECT", "rapids-platform"), location="us-central1")
 
 extracted_instructions_lot = (
     "Extract structured treatment data for a 'Lines of Therapy' timeline UI from the provided clinical notes. "

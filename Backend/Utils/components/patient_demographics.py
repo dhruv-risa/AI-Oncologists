@@ -29,7 +29,7 @@ sys.path.append(PROJECT_ROOT)
 from Utils.components import parser
 
 # Initialize Vertex AI
-vertexai.init(project="prior-auth-portal-dev", location="us-central1")
+vertexai.init(project=os.environ.get("VERTEX_PROJECT", "rapids-platform"), location="us-central1")
 
 
 def normalize_patient_name(name):
