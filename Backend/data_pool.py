@@ -1,14 +1,15 @@
 
 
 """
-This module provides a database-backed data pool for storing patient data.
-The data pool allows multiple patients' data to be stored and retrieved efficiently.
+This module provides a data pool for storing patient data and trials cache.
+
+Patient data is stored in Firestore for permanent, reliable persistence.
+Trials cache, eligibility matrix, and other operational data use SQLite.
 """
 import json
 import logging
 import sqlite3
 import shutil
-import threading
 from datetime import datetime
 from typing import Optional, List, Dict
 from pathlib import Path
@@ -17,42 +18,110 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def _get_firestore_client():
+    """Get a Firestore client, or None if unavailable."""
+    try:
+        from google.cloud import firestore
+        return firestore.Client()
+    except Exception as e:
+        logger.warning(f"[DataPool] Firestore unavailable, falling back to SQLite for patients: {e}")
+        return None
+
+
 class DataPool:
     """
-    Database-backed data pool for storing patient data.
-    Uses SQLite for storage with easy migration path to PostgreSQL.
+    Data pool for storing patient data and trials cache.
+
+    Patient data → Firestore (permanent, survives deploys)
+    Trials/eligibility → SQLite (ephemeral, re-syncs nightly)
     """
+
+    FIRESTORE_COLLECTION = "patients"
 
     def __init__(self, db_path: str = None):
         """
-        Initialize the data pool with a database connection.
+        Initialize the data pool.
 
         Args:
             db_path: Path to SQLite database file. If None, uses default location.
         """
-        self._gcs_bucket = None  # GCS bucket URI for sync-back via gsutil
+        # Initialize Firestore for patient data
+        self._firestore = _get_firestore_client()
+        if self._firestore:
+            logger.info("[DataPool] Using Firestore for patient data storage")
+        else:
+            logger.warning("[DataPool] Firestore not available — using SQLite for all data")
 
+        # Initialize SQLite for trials cache / eligibility
         if db_path is None:
             gcs_mount = os.environ.get("DB_MOUNT_PATH", "")
             if gcs_mount and os.path.isdir(gcs_mount):
                 gcs_db = Path(gcs_mount) / "data_pool.db"
-                # SQLite doesn't work reliably on GCS FUSE (random I/O + journaling).
-                # Copy to a local path and sync back via gsutil after writes.
                 local_db = Path("/tmp") / "data_pool.db"
                 if gcs_db.exists() and not local_db.exists():
                     shutil.copy2(str(gcs_db), str(local_db))
                     logger.info(f"[DataPool] Copied GCS DB to local: {local_db} ({local_db.stat().st_size} bytes)")
-                # Store bucket name for Python GCS client sync-back
-                self._gcs_bucket = os.environ.get("GCS_BUCKET_NAME", "ai-oncologist-data")
                 db_path = local_db
             else:
-                # Default to Backend directory
                 backend_dir = Path(__file__).parent
                 db_path = backend_dir / "data_pool.db"
 
         self.db_path = str(db_path)
-        self._sync_lock = threading.Lock()
         self.init_database()
+
+        # One-time migration: copy patients from SQLite → Firestore
+        if self._firestore:
+            self._migrate_sqlite_to_firestore()
+
+    def _migrate_sqlite_to_firestore(self):
+        """One-time migration: if Firestore has 0 patients but SQLite has data, copy over."""
+        try:
+            # Check if Firestore already has patients
+            docs = list(self._firestore.collection(self.FIRESTORE_COLLECTION).limit(1).stream())
+            if docs:
+                logger.info("[DataPool] Firestore already has patients, skipping migration")
+                return
+
+            # Check SQLite for existing patients
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT mrn, data, created_at, updated_at FROM patient_data_pool WHERE mrn IS NOT NULL AND data IS NOT NULL")
+            rows = cursor.fetchall()
+            conn.close()
+
+            if not rows:
+                logger.info("[DataPool] No patients in SQLite to migrate")
+                return
+
+            logger.info(f"[DataPool] Migrating {len(rows)} patients from SQLite to Firestore...")
+            batch = self._firestore.batch()
+            count = 0
+            for mrn, data_str, created_at, updated_at in rows:
+                try:
+                    # Validate the JSON is parseable
+                    json.loads(data_str)
+                    doc_ref = self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn)
+                    batch.set(doc_ref, {
+                        "mrn": mrn,
+                        "data": data_str,
+                        "created_at": created_at or updated_at,
+                        "updated_at": updated_at,
+                    })
+                    count += 1
+                    # Firestore batches limited to 500 writes
+                    if count % 400 == 0:
+                        batch.commit()
+                        batch = self._firestore.batch()
+                        logger.info(f"[DataPool] Migrated {count}/{len(rows)} patients...")
+                except Exception as e:
+                    logger.error(f"[DataPool] Failed to migrate patient {mrn}: {e}")
+                    continue
+
+            if count % 400 != 0:
+                batch.commit()
+            logger.info(f"[DataPool] Migration complete: {count} patients copied to Firestore")
+        except Exception as e:
+            logger.error(f"[DataPool] SQLite→Firestore migration failed: {e}", exc_info=True)
 
     def init_database(self):
         """Initialize database schema if it doesn't exist."""
@@ -201,24 +270,6 @@ class DataPool:
         conn.commit()
         conn.close()
 
-    def _sync_to_gcs(self):
-        """Upload the local DB to GCS via the Python storage client (bypasses FUSE)."""
-        if not self._gcs_bucket:
-            return
-        def _do_sync():
-            try:
-                with self._sync_lock:
-                    from google.cloud import storage
-                    client = storage.Client()
-                    bucket = client.bucket(self._gcs_bucket)
-                    blob = bucket.blob("data_pool.db")
-                    blob.upload_from_filename(self.db_path)
-                    size = Path(self.db_path).stat().st_size
-                    logger.info(f"[DataPool] Synced to GCS ({size} bytes)")
-            except Exception as e:
-                logger.error(f"[DataPool] GCS sync error: {e}", exc_info=True)
-        threading.Thread(target=_do_sync, daemon=True).start()
-
     def _ensure_table_exists(self, conn):
         """
         Ensure the table exists for the current connection.
@@ -240,46 +291,38 @@ class DataPool:
 
     def store_patient_data(self, mrn: str, data: dict) -> bool:
         """
-        Store patient data in the pool.
-        If patient already exists, updates the existing record.
-
-        Args:
-            mrn: Patient's Medical Record Number
-            data: Patient data dictionary to store
-
-        Returns:
-            True if successful, False otherwise
+        Store patient data. Uses Firestore if available, SQLite as fallback.
         """
         try:
-            # Validate inputs
             if not mrn or not isinstance(mrn, str) or mrn.strip() == "":
                 logger.error(f"Error storing patient data: Invalid MRN '{mrn}'")
                 return False
-
             if not data or not isinstance(data, dict):
-                logger.error(f"Error storing patient data: Invalid data for MRN '{mrn}' (type={type(data)}, bool={bool(data)})")
+                logger.error(f"Error storing patient data: Invalid data for MRN '{mrn}'")
                 return False
 
-            conn = sqlite3.connect(self.db_path)
-
-            # Ensure table exists before operation
-            self._ensure_table_exists(conn)
-
-            cursor = conn.cursor()
-
-            # Convert data to JSON string
-            data_json = json.dumps(data)
             current_time = datetime.now().isoformat()
 
-            # Insert or replace (upsert)
-            cursor.execute("""
-                INSERT OR REPLACE INTO patient_data_pool (mrn, data, updated_at)
-                VALUES (?, ?, ?)
-            """, (mrn, data_json, current_time))
+            if self._firestore:
+                doc_ref = self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn)
+                doc_ref.set({
+                    "mrn": mrn,
+                    "data": json.dumps(data),
+                    "updated_at": current_time,
+                })
+                logger.info(f"[DataPool] Stored patient {mrn} in Firestore")
+                return True
 
+            # SQLite fallback
+            conn = sqlite3.connect(self.db_path)
+            self._ensure_table_exists(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO patient_data_pool (mrn, data, updated_at) VALUES (?, ?, ?)",
+                (mrn, json.dumps(data), current_time),
+            )
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             logger.error(f"Error storing patient data: {e}", exc_info=True)
@@ -355,236 +398,191 @@ class DataPool:
         return data
 
     def get_patient_data(self, mrn: str) -> Optional[Dict]:
-        """
-        Retrieve patient data from the pool.
-
-        Args:
-            mrn: Patient's Medical Record Number
-
-        Returns:
-            Patient data dictionary if found, None otherwise
-        """
+        """Retrieve patient data. Uses Firestore if available, SQLite as fallback."""
         try:
+            if self._firestore:
+                doc = self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn).get()
+                if doc.exists:
+                    doc_data = doc.to_dict()
+                    data = json.loads(doc_data["data"])
+                    data['pool_updated_at'] = doc_data.get("updated_at")
+                    data = self._normalize_timeline_dates(data)
+                    return data
+                return None
+
+            # SQLite fallback
             conn = sqlite3.connect(self.db_path)
-
-            # Ensure table exists before operation
             self._ensure_table_exists(conn)
-
             cursor = conn.cursor()
-
-            cursor.execute("""
-                SELECT data, updated_at FROM patient_data_pool
-                WHERE mrn = ?
-            """, (mrn,))
-
+            cursor.execute("SELECT data, updated_at FROM patient_data_pool WHERE mrn = ?", (mrn,))
             result = cursor.fetchone()
             conn.close()
-
             if result:
                 data = json.loads(result[0])
-                data['pool_updated_at'] = result[1]  # Add metadata about when it was stored
-
-                # Normalize timeline dates in cached data (migration for old data with vague dates)
+                data['pool_updated_at'] = result[1]
                 data = self._normalize_timeline_dates(data)
-
                 return data
             return None
         except Exception as e:
-            print(f"Error retrieving patient data: {e}")
+            logger.error(f"Error retrieving patient data: {e}")
             return None
 
-    def list_all_patients(self) -> List[Dict]:
-        """
-        List all patients in the data pool with summary details.
-        Extracts key fields from the JSON blob for the list view.
-        Includes trial match counts from eligibility matrix.
+    def _build_patient_summary(self, mrn, data, created_at, updated_at, eligibility_counts):
+        """Build a patient summary dict from raw data."""
+        demographics = data.get("demographics") or {}
+        diagnosis = data.get("diagnosis") or {}
+        trial_counts = eligibility_counts.get(mrn, {
+            "total_trials_analyzed": 0, "likely_eligible": 0,
+            "potentially_eligible": 0, "not_eligible": 0
+        })
+        stage = "N/A"
+        current_staging = diagnosis.get("current_staging", {})
+        initial_staging = diagnosis.get("initial_staging", {})
+        if current_staging and current_staging.get("ajcc_stage"):
+            stage = current_staging.get("ajcc_stage")
+        elif initial_staging and initial_staging.get("ajcc_stage"):
+            stage = initial_staging.get("ajcc_stage")
+        elif diagnosis.get("ajcc_stage"):
+            stage = diagnosis.get("ajcc_stage")
+        return {
+            "mrn": mrn,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "name": demographics.get("Patient Name", "Unknown"),
+            "age": demographics.get("Age", "N/A"),
+            "gender": demographics.get("Gender", "N/A"),
+            "cancerType": diagnosis.get("cancer_type", "N/A"),
+            "stage": stage,
+            "status": diagnosis.get("disease_status", "N/A"),
+            "lastVisit": demographics.get("Last Visit", "N/A"),
+            "trialsAnalyzed": trial_counts["total_trials_analyzed"],
+            "likelyEligible": trial_counts["likely_eligible"],
+            "potentiallyEligible": trial_counts["potentially_eligible"],
+            "matchedTrials": trial_counts["likely_eligible"] + trial_counts["potentially_eligible"],
+        }
 
-        Returns:
-            List of dictionaries containing MRN, summary metadata, and trial counts
-        """
+    def _get_eligibility_counts(self):
+        """Get eligibility counts from SQLite (always local)."""
+        eligibility_counts = {}
         try:
             conn = sqlite3.connect(self.db_path)
-
-            # Ensure table exists before operation
-            self._ensure_table_exists(conn)
-
             cursor = conn.cursor()
-
-            # Fetch basic info and parse JSON in Python for better error handling
             cursor.execute("""
-                SELECT mrn, data, created_at, updated_at
-                FROM patient_data_pool
+                SELECT patient_mrn, COUNT(*) as total,
+                    SUM(CASE WHEN eligibility_status = 'LIKELY_ELIGIBLE' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN eligibility_status = 'POTENTIALLY_ELIGIBLE' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN eligibility_status = 'NOT_ELIGIBLE' THEN 1 ELSE 0 END)
+                FROM eligibility_matrix GROUP BY patient_mrn
+            """)
+            for row in cursor.fetchall():
+                eligibility_counts[row[0]] = {
+                    "total_trials_analyzed": row[1], "likely_eligible": row[2],
+                    "potentially_eligible": row[3], "not_eligible": row[4]
+                }
+            conn.close()
+        except Exception:
+            pass
+        return eligibility_counts
+
+    def list_all_patients(self) -> List[Dict]:
+        """List all patients with summary details. Uses Firestore if available."""
+        try:
+            eligibility_counts = self._get_eligibility_counts()
+
+            if self._firestore:
+                patients = []
+                docs = self._firestore.collection(self.FIRESTORE_COLLECTION).stream()
+                for doc in docs:
+                    try:
+                        doc_data = doc.to_dict()
+                        mrn = doc_data.get("mrn", doc.id)
+                        data = json.loads(doc_data["data"])
+                        updated_at = doc_data.get("updated_at")
+                        created_at = doc_data.get("created_at", updated_at)
+                        patients.append(self._build_patient_summary(
+                            mrn, data, created_at, updated_at, eligibility_counts
+                        ))
+                    except Exception as e:
+                        logger.error(f"Error processing Firestore patient {doc.id}: {e}")
+                        continue
+                patients.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
+                return patients
+
+            # SQLite fallback
+            conn = sqlite3.connect(self.db_path)
+            self._ensure_table_exists(conn)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT mrn, data, created_at, updated_at FROM patient_data_pool
                 WHERE mrn IS NOT NULL AND mrn != '' AND data IS NOT NULL AND data != ''
                 ORDER BY updated_at DESC
             """)
-
             results = cursor.fetchall()
-
-            # Get trial match counts for all patients
-            cursor.execute("""
-                SELECT
-                    patient_mrn,
-                    COUNT(*) as total_trials,
-                    SUM(CASE WHEN eligibility_status = 'LIKELY_ELIGIBLE' THEN 1 ELSE 0 END) as likely_eligible,
-                    SUM(CASE WHEN eligibility_status = 'POTENTIALLY_ELIGIBLE' THEN 1 ELSE 0 END) as potentially_eligible,
-                    SUM(CASE WHEN eligibility_status = 'NOT_ELIGIBLE' THEN 1 ELSE 0 END) as not_eligible
-                FROM eligibility_matrix
-                GROUP BY patient_mrn
-            """)
-            eligibility_rows = cursor.fetchall()
             conn.close()
-
-            # Build eligibility lookup
-            eligibility_counts = {}
-            for row in eligibility_rows:
-                eligibility_counts[row[0]] = {
-                    "total_trials_analyzed": row[1],
-                    "likely_eligible": row[2],
-                    "potentially_eligible": row[3],
-                    "not_eligible": row[4]
-                }
 
             patients = []
             for row in results:
                 try:
-                    mrn = row[0]
                     data = json.loads(row[1])
-                    created_at = row[2]
-                    updated_at = row[3]
-
-                    # Safely extract nested fields (handle None values)
-                    demographics = data.get("demographics") or {}
-                    diagnosis = data.get("diagnosis") or {}
-
-                    # Get trial counts for this patient
-                    trial_counts = eligibility_counts.get(mrn, {
-                        "total_trials_analyzed": 0,
-                        "likely_eligible": 0,
-                        "potentially_eligible": 0,
-                        "not_eligible": 0
-                    })
-
-                    # Extract stage from nested diagnosis structure
-                    # Priority: current_staging > initial_staging > flat ajcc_stage
-                    stage = "N/A"
-                    current_staging = diagnosis.get("current_staging", {})
-                    initial_staging = diagnosis.get("initial_staging", {})
-
-                    if current_staging and current_staging.get("ajcc_stage"):
-                        stage = current_staging.get("ajcc_stage")
-                    elif initial_staging and initial_staging.get("ajcc_stage"):
-                        stage = initial_staging.get("ajcc_stage")
-                    elif diagnosis.get("ajcc_stage"):
-                        # Backwards compatibility for flat structure
-                        stage = diagnosis.get("ajcc_stage")
-
-                    patients.append({
-                        "mrn": mrn,
-                        "created_at": created_at,
-                        "updated_at": updated_at,
-                        "name": demographics.get("Patient Name", "Unknown"),
-                        "age": demographics.get("Age", "N/A"),
-                        "gender": demographics.get("Gender", "N/A"),
-                        "cancerType": diagnosis.get("cancer_type", "N/A"),
-                        "stage": stage,
-                        "status": diagnosis.get("disease_status", "N/A"),
-                        "lastVisit": demographics.get("Last Visit", "N/A"),
-                        # Trial match counts
-                        "trialsAnalyzed": trial_counts["total_trials_analyzed"],
-                        "likelyEligible": trial_counts["likely_eligible"],
-                        "potentiallyEligible": trial_counts["potentially_eligible"],
-                        "matchedTrials": trial_counts["likely_eligible"] + trial_counts["potentially_eligible"]
-                    })
-                except json.JSONDecodeError as je:
-                    print(f"Error parsing JSON for patient {row[0]}: {je}")
-                    continue
+                    patients.append(self._build_patient_summary(
+                        row[0], data, row[2], row[3], eligibility_counts
+                    ))
                 except Exception as e:
-                    print(f"Error processing patient {row[0]}: {e}")
+                    logger.error(f"Error processing patient {row[0]}: {e}")
                     continue
-
             return patients
         except Exception as e:
-            print(f"Error listing patients: {e}")
+            logger.error(f"Error listing patients: {e}")
             return []
 
     def delete_patient_data(self, mrn: str) -> bool:
-        """
-        Delete patient data from the pool.
-
-        Args:
-            mrn: Patient's Medical Record Number
-
-        Returns:
-            True if successful, False otherwise
-        """
+        """Delete patient data."""
         try:
+            if self._firestore:
+                self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn).delete()
+                return True
             conn = sqlite3.connect(self.db_path)
-
-            # Ensure table exists before operation
             self._ensure_table_exists(conn)
-
-            cursor = conn.cursor()
-
-            cursor.execute("DELETE FROM patient_data_pool WHERE mrn = ?", (mrn,))
-
+            conn.cursor().execute("DELETE FROM patient_data_pool WHERE mrn = ?", (mrn,))
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
-            print(f"Error deleting patient data: {e}")
+            logger.error(f"Error deleting patient data: {e}")
             return False
 
     def clear_pool(self) -> bool:
-        """
-        Clear all patient data from the pool.
-
-        Returns:
-            True if successful, False otherwise
-        """
+        """Clear all patient data."""
         try:
+            if self._firestore:
+                docs = self._firestore.collection(self.FIRESTORE_COLLECTION).stream()
+                for doc in docs:
+                    doc.reference.delete()
+                return True
             conn = sqlite3.connect(self.db_path)
-
-            # Ensure table exists before operation
             self._ensure_table_exists(conn)
-
-            cursor = conn.cursor()
-
-            cursor.execute("DELETE FROM patient_data_pool")
-
+            conn.cursor().execute("DELETE FROM patient_data_pool")
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
-            print(f"Error clearing pool: {e}")
+            logger.error(f"Error clearing pool: {e}")
             return False
 
     def patient_exists(self, mrn: str) -> bool:
-        """
-        Check if patient data exists in the pool.
-
-        Args:
-            mrn: Patient's Medical Record Number
-
-        Returns:
-            True if patient exists, False otherwise
-        """
+        """Check if patient data exists."""
         try:
+            if self._firestore:
+                return self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn).get().exists
             conn = sqlite3.connect(self.db_path)
-
-            # Ensure table exists before operation
             self._ensure_table_exists(conn)
-
             cursor = conn.cursor()
-
             cursor.execute("SELECT 1 FROM patient_data_pool WHERE mrn = ?", (mrn,))
             result = cursor.fetchone()
-
             conn.close()
             return result is not None
         except Exception as e:
-            print(f"Error checking patient existence: {e}")
+            logger.error(f"Error checking patient existence: {e}")
             return False
 
     # ==================== TRIALS CACHE METHODS ====================
@@ -645,7 +643,6 @@ class DataPool:
 
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error storing trial: {e}")
@@ -727,7 +724,6 @@ class DataPool:
 
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
         except Exception as e:
             print(f"Error in bulk store trials: {e}")
 
@@ -891,7 +887,6 @@ class DataPool:
 
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error storing eligibility: {e}")
@@ -936,7 +931,6 @@ class DataPool:
 
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
         except Exception as e:
             print(f"Error in bulk store eligibility: {e}")
 
@@ -958,7 +952,6 @@ class DataPool:
                   datetime.now().isoformat(), datetime.now().isoformat()))
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error starting computation progress: {e}")
@@ -983,7 +976,6 @@ class DataPool:
             """, (eligible_inc, error_inc, datetime.now().isoformat(), patient_mrn))
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error incrementing computation progress: {e}")
@@ -1007,7 +999,6 @@ class DataPool:
                   datetime.now().isoformat(), error_message, patient_mrn))
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error completing computation progress: {e}")
@@ -1060,7 +1051,6 @@ class DataPool:
             """, (token, patient_mrn, trial_nct_id, criteria_snapshot))
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error creating review token: {e}")
@@ -1109,7 +1099,6 @@ class DataPool:
             """, (responses, datetime.now().isoformat(), token))
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error completing review token: {e}")
@@ -1314,7 +1303,6 @@ class DataPool:
 
             conn.commit()
             conn.close()
-            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error logging sync: {e}")

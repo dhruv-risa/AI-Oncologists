@@ -1443,19 +1443,25 @@ async def debug_data_pool():
     """Debug endpoint to diagnose data pool state."""
     import sqlite3 as _sql
     db_path = data_pool.db_path
-    info = {"db_path": db_path, "gcs_bucket": data_pool._gcs_bucket}
+    info = {
+        "db_path": db_path,
+        "storage": "firestore" if data_pool._firestore else "sqlite",
+    }
+    try:
+        # Patient count from whichever backend is active
+        patients = data_pool.list_all_patients()
+        info["patient_count"] = len(patients)
+        info["mrns"] = [p["mrn"] for p in patients]
+    except Exception as e:
+        info["patient_error"] = str(e)
     try:
         conn = _sql.connect(db_path)
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM patient_data_pool")
-        info["patient_count"] = cur.fetchone()[0]
-        cur.execute("SELECT mrn FROM patient_data_pool")
-        info["mrns"] = [r[0] for r in cur.fetchall()]
         cur.execute("SELECT COUNT(*) FROM trials_cache")
         info["trials_count"] = cur.fetchone()[0]
         conn.close()
     except Exception as e:
-        info["error"] = str(e)
+        info["trials_error"] = str(e)
     return info
 
 
