@@ -1435,6 +1435,27 @@ async def list_patients_in_pool():
     }
 
 
+@app.get("/api/pool/debug", tags=["Data Pool"])
+async def debug_data_pool():
+    """Debug endpoint to diagnose data pool state."""
+    import sqlite3 as _sql
+    db_path = data_pool.db_path
+    info = {"db_path": db_path, "gcs_bucket": data_pool._gcs_bucket}
+    try:
+        conn = _sql.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM patient_data_pool")
+        info["patient_count"] = cur.fetchone()[0]
+        cur.execute("SELECT mrn FROM patient_data_pool")
+        info["mrns"] = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT COUNT(*) FROM trials_cache")
+        info["trials_count"] = cur.fetchone()[0]
+        conn.close()
+    except Exception as e:
+        info["error"] = str(e)
+    return info
+
+
 @app.get("/api/pool/patient/{mrn}/exists", tags=["Data Pool"])
 async def check_patient_in_pool(mrn: str):
     """

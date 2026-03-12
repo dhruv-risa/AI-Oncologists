@@ -5,6 +5,7 @@ This module provides a database-backed data pool for storing patient data.
 The data pool allows multiple patients' data to be stored and retrieved efficiently.
 """
 import json
+import logging
 import sqlite3
 import shutil
 import threading
@@ -12,6 +13,8 @@ from datetime import datetime
 from typing import Optional, List, Dict
 from pathlib import Path
 import os
+
+logger = logging.getLogger(__name__)
 
 
 class DataPool:
@@ -38,7 +41,7 @@ class DataPool:
                 local_db = Path("/tmp") / "data_pool.db"
                 if gcs_db.exists() and not local_db.exists():
                     shutil.copy2(str(gcs_db), str(local_db))
-                    print(f"[DataPool] Copied GCS DB to local: {local_db} ({local_db.stat().st_size} bytes)")
+                    logger.info(f"[DataPool] Copied GCS DB to local: {local_db} ({local_db.stat().st_size} bytes)")
                 # Store bucket name for Python GCS client sync-back
                 self._gcs_bucket = os.environ.get("GCS_BUCKET_NAME", "ai-oncologist-data")
                 db_path = local_db
@@ -211,9 +214,9 @@ class DataPool:
                     blob = bucket.blob("data_pool.db")
                     blob.upload_from_filename(self.db_path)
                     size = Path(self.db_path).stat().st_size
-                    print(f"[DataPool] Synced to GCS ({size} bytes)")
+                    logger.info(f"[DataPool] Synced to GCS ({size} bytes)")
             except Exception as e:
-                print(f"[DataPool] GCS sync error: {e}")
+                logger.error(f"[DataPool] GCS sync error: {e}", exc_info=True)
         threading.Thread(target=_do_sync, daemon=True).start()
 
     def _ensure_table_exists(self, conn):
@@ -279,7 +282,7 @@ class DataPool:
             self._sync_to_gcs()
             return True
         except Exception as e:
-            print(f"Error storing patient data: {e}")
+            logger.error(f"Error storing patient data: {e}", exc_info=True)
             return False
 
     def _normalize_timeline_dates(self, data: Dict) -> Dict:
