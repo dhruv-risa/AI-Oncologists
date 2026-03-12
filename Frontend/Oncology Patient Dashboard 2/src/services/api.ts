@@ -827,10 +827,11 @@ class ApiService {
   }
 
   // Admin: Compute eligibility matrix
-  async computeEligibility(options?: { limitTrials?: number; patientMrn?: string; background?: boolean }): Promise<AdminResponse> {
+  async computeEligibility(options?: { limitTrials?: number; patientMrn?: string; trialNctId?: string; background?: boolean }): Promise<AdminResponse> {
     const params = new URLSearchParams();
     if (options?.limitTrials) params.append('limit_trials', options.limitTrials.toString());
     if (options?.patientMrn) params.append('patient_mrn', options.patientMrn);
+    if (options?.trialNctId) params.append('trial_nct_id', options.trialNctId);
     if (options?.background !== undefined) params.append('background', options.background.toString());
 
     const queryString = params.toString();

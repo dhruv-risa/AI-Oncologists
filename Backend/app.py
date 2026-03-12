@@ -2516,17 +2516,19 @@ async def sync_trials_batch(
 async def compute_eligibility_batch(
     limit_trials: int = 100,
     patient_mrn: str = None,
+    trial_nct_id: str = None,
     background: bool = False
 ):
     """
-    Compute eligibility matrix for all patient×trial combinations.
+    Compute eligibility matrix for patient×trial combinations.
 
-    This pre-computes eligibility for all patients against all cached trials.
+    This pre-computes eligibility for patients against cached trials.
     Results are stored in the eligibility_matrix table for instant queries.
 
     Query parameters:
     - limit_trials: Maximum number of trials to process (default: 100)
     - patient_mrn: Compute only for specific patient (optional)
+    - trial_nct_id: Compute only for specific trial (optional)
     - background: Run in background (default: False)
     """
     try:
@@ -2535,52 +2537,54 @@ async def compute_eligibility_batch(
         engine = get_batch_engine()
 
         patient_mrns = [patient_mrn] if patient_mrn else None
+        trial_nct_ids = [trial_nct_id] if trial_nct_id else None
 
         if background:
             # Prevent duplicate computations for the same patient
-            if patient_mrn:
-                with _computation_lock:
-                    existing = _active_computations.get(patient_mrn)
-                    if existing and existing.is_alive():
-                        return {
-                            "success": True,
-                            "message": "Eligibility computation already in progress",
-                            "already_running": True,
-                            "limit_trials": limit_trials,
-                            "patient_mrn": patient_mrn
-                        }
+            computation_key = patient_mrn or trial_nct_id or "all"
+            with _computation_lock:
+                existing = _active_computations.get(computation_key)
+                if existing and existing.is_alive():
+                    return {
+                        "success": True,
+                        "message": "Eligibility computation already in progress",
+                        "already_running": True,
+                        "limit_trials": limit_trials,
+                        "patient_mrn": patient_mrn,
+                        "trial_nct_id": trial_nct_id
+                    }
 
             import threading
             def _run_eligibility():
                 try:
                     engine.compute_eligibility_matrix(
                         patient_mrns=patient_mrns,
+                        trial_nct_ids=trial_nct_ids,
                         limit_trials=limit_trials
                     )
                 except Exception as e:
                     print(f"Background eligibility computation failed: {e}")
                 finally:
-                    if patient_mrn:
-                        with _computation_lock:
-                            _active_computations.pop(patient_mrn, None)
+                    with _computation_lock:
+                        _active_computations.pop(computation_key, None)
 
             thread = threading.Thread(target=_run_eligibility, daemon=True)
             thread.start()
 
-            # Register so we can detect duplicates
-            if patient_mrn:
-                with _computation_lock:
-                    _active_computations[patient_mrn] = thread
+            with _computation_lock:
+                _active_computations[computation_key] = thread
 
             return {
                 "success": True,
                 "message": "Eligibility computation started in background",
                 "limit_trials": limit_trials,
-                "patient_mrn": patient_mrn
+                "patient_mrn": patient_mrn,
+                "trial_nct_id": trial_nct_id
             }
         else:
             result = engine.compute_eligibility_matrix(
                 patient_mrns=patient_mrns,
+                trial_nct_ids=trial_nct_ids,
                 limit_trials=limit_trials
             )
             return {

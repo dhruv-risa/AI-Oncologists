@@ -99,8 +99,9 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
 
   const handleComputeEligibility = async () => {
     setComputing(true);
+    setError(null);
     try {
-      await apiService.computeEligibility({ background: false, limitTrials: 1 });
+      await apiService.computeEligibility({ background: false, trialNctId: nctId });
       await fetchPatients();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to compute eligibility');
