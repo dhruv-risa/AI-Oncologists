@@ -1465,6 +1465,23 @@ async def debug_data_pool():
     return info
 
 
+@app.get("/api/documents/{blob_path:path}", tags=["Documents"])
+async def serve_document(blob_path: str):
+    """Serve a document PDF from Firebase Storage."""
+    from fastapi.responses import Response
+    from Backend.storage_uploader import download_pdf_bytes
+    try:
+        pdf_bytes = download_pdf_bytes(blob_path)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename={blob_path.split('/')[-1]}"},
+        )
+    except Exception as e:
+        logger.error(f"Failed to serve document {blob_path}: {e}")
+        raise HTTPException(status_code=404, detail="Document not found")
+
+
 @app.post("/api/admin/migrate-documents-to-firebase", tags=["Admin"])
 async def migrate_documents_to_firebase():
     """

@@ -2,10 +2,11 @@
 Firebase Storage (Google Cloud Storage) Document Uploader Module
 
 Replaces Google Drive for document storage. Uploads PDFs to a GCS bucket
-and returns publicly accessible URLs.
+and serves them via a backend proxy endpoint.
 """
 import os
 import logging
+import urllib.parse
 from io import BytesIO
 from typing import Optional, Dict, Any
 
@@ -28,6 +29,13 @@ def _get_bucket():
     return _bucket_cache
 
 
+def _get_base_url() -> str:
+    """Get the base URL for document serving (our own API)."""
+    # On Cloud Run, use the service URL; locally, use localhost
+    port = os.environ.get("PORT", "8000")
+    return os.environ.get("SERVICE_URL", f"http://localhost:{port}")
+
+
 def upload_pdf_bytes_to_storage(pdf_bytes: bytes, blob_path: str) -> str:
     """
     Upload PDF bytes to Firebase Storage.
@@ -37,13 +45,14 @@ def upload_pdf_bytes_to_storage(pdf_bytes: bytes, blob_path: str) -> str:
         blob_path: Full path in bucket (e.g., "documents/pathology/file.pdf")
 
     Returns:
-        Public URL string
+        URL string pointing to our document serving endpoint
     """
     bucket = _get_bucket()
     blob = bucket.blob(blob_path)
     blob.upload_from_file(BytesIO(pdf_bytes), content_type="application/pdf")
-    blob.make_public()
-    return blob.public_url
+    # Return a URL via our own serving endpoint (avoids GCS public access issues)
+    encoded_path = urllib.parse.quote(blob_path, safe="")
+    return f"/api/documents/{encoded_path}"
 
 
 def upload_and_share_pdf_bytes(
@@ -55,16 +64,16 @@ def upload_and_share_pdf_bytes(
     Upload PDF bytes and return shareable URL.
 
     Drop-in replacement for drive_uploader.upload_and_share_pdf_bytes().
-    Returns same dict shape: {'file_id': blob_path, 'shareable_url': public_url}
+    Returns same dict shape: {'file_id': blob_path, 'shareable_url': url}
     """
     if folder_id:
         blob_path = f"{folder_id}/{file_name}"
     else:
         blob_path = f"documents/{file_name}"
 
-    public_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
+    url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
     logger.info(f"Uploaded {file_name} to Firebase Storage: {blob_path}")
-    return {"file_id": blob_path, "shareable_url": public_url}
+    return {"file_id": blob_path, "shareable_url": url}
 
 
 def create_or_get_folder(folder_name: str, parent_folder_id: Optional[str] = None) -> str:
@@ -79,30 +88,34 @@ def create_or_get_folder(folder_name: str, parent_folder_id: Optional[str] = Non
     return f"documents/{folder_name}"
 
 
+def download_pdf_bytes(blob_path: str) -> bytes:
+    """Download PDF bytes from Firebase Storage by blob path."""
+    bucket = _get_bucket()
+    blob = bucket.blob(blob_path)
+    return blob.download_as_bytes()
+
+
 def download_pdf_bytes_from_url(url: str) -> bytes:
     """
     Download PDF bytes from a Firebase Storage URL or Google Drive URL.
 
-    Handles both Firebase Storage URLs and legacy Google Drive URLs
-    for backward compatibility during migration.
+    Handles Firebase Storage paths, URLs, and legacy Google Drive URLs.
     """
+    # Our own document endpoint path
+    if url.startswith("/api/documents/"):
+        blob_path = urllib.parse.unquote(url.replace("/api/documents/", "", 1))
+        return download_pdf_bytes(blob_path)
+
     # Firebase Storage URL
     if "storage.googleapis.com" in url or "firebasestorage.googleapis.com" in url:
-        return _download_from_gcs(url)
+        blob_path = _extract_blob_path_from_url(url)
+        return download_pdf_bytes(blob_path)
 
     # Legacy Google Drive URL
     if "drive.google.com" in url:
         return _download_from_drive(url)
 
     # Direct URL
-    import requests
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
-    return resp.content
-
-
-def _download_from_gcs(url: str) -> bytes:
-    """Download from a GCS public URL."""
     import requests
     resp = requests.get(url, timeout=60)
     resp.raise_for_status()
@@ -124,8 +137,13 @@ def get_file_metadata_from_url(url: str) -> Dict[str, Any]:
 
     Returns dict with: name, date, drive_url (kept for compat), mime_type, size
     """
-    if "storage.googleapis.com" in url or "firebasestorage.googleapis.com" in url:
+    blob_path = None
+    if url.startswith("/api/documents/"):
+        blob_path = urllib.parse.unquote(url.replace("/api/documents/", "", 1))
+    elif "storage.googleapis.com" in url or "firebasestorage.googleapis.com" in url:
         blob_path = _extract_blob_path_from_url(url)
+
+    if blob_path:
         try:
             bucket = _get_bucket()
             blob = bucket.blob(blob_path)
@@ -133,7 +151,7 @@ def get_file_metadata_from_url(url: str) -> Dict[str, Any]:
             return {
                 "name": blob.name.split("/")[-1],
                 "date": blob.updated.isoformat() if blob.updated else "",
-                "drive_url": blob.public_url,
+                "drive_url": f"/api/documents/{urllib.parse.quote(blob_path, safe='')}",
                 "mime_type": blob.content_type or "application/pdf",
                 "size": blob.size or 0,
             }
@@ -157,7 +175,6 @@ def get_file_metadata_from_url(url: str) -> Dict[str, Any]:
 
 def _extract_blob_path_from_url(url: str) -> str:
     """Extract the blob path from a GCS public URL."""
-    import urllib.parse
     # Format: https://storage.googleapis.com/BUCKET/path/to/file.pdf
     if "storage.googleapis.com" in url:
         parts = url.split(f"storage.googleapis.com/{BUCKET_NAME}/", 1)
@@ -177,6 +194,9 @@ def extract_file_id_from_url(url: str) -> str:
     Extract identifier from URL. For GCS URLs returns blob path.
     For Drive URLs returns file ID. Kept for backward compatibility.
     """
+    if url.startswith("/api/documents/"):
+        return urllib.parse.unquote(url.replace("/api/documents/", "", 1))
+
     if "storage.googleapis.com" in url or "firebasestorage.googleapis.com" in url:
         return _extract_blob_path_from_url(url)
 

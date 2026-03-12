@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { FileText, ExternalLink, Eye, Download, Plus, X, Microscope, Loader2 } from 'lucide-react';
 import { DataField } from '../DataField';
-import { PatientData, PathologyReportDetail } from '../../services/api';
+import { PatientData, PathologyReportDetail, resolveDocumentUrl } from '../../services/api';
 
 interface PathologyTabProps {
   patientData: PatientData | null;
@@ -142,7 +142,7 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
                     title="View document"
                     onClick={(e) => {
                       e.stopPropagation();
-                      window.open(report.drive_url, '_blank');
+                      window.open(resolveDocumentUrl(report.drive_url), '_blank');
                     }}
                   >
                     <Eye className="w-3 h-3" />
@@ -152,7 +152,7 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
                     title="Download document"
                     onClick={(e) => {
                       e.stopPropagation();
-                      window.open(report.drive_url, '_blank');
+                      window.open(resolveDocumentUrl(report.drive_url), '_blank');
                     }}
                   >
                     <Download className="w-3 h-3" />
@@ -162,7 +162,7 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
                     title="Open in new tab"
                     onClick={(e) => {
                       e.stopPropagation();
-                      window.open(report.drive_url, '_blank');
+                      window.open(resolveDocumentUrl(report.drive_url), '_blank');
                     }}
                   >
                     <ExternalLink className="w-3 h-3" />
@@ -299,7 +299,7 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
               </div>
               <button
                 className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-lg text-sm transition-colors"
-                onClick={() => window.open(currentReport.drive_url, '_blank')}
+                onClick={() => window.open(resolveDocumentUrl(currentReport.drive_url), '_blank')}
               >
                 <ExternalLink className="w-4 h-4" />
                 View Source

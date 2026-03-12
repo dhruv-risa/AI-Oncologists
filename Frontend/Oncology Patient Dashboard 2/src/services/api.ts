@@ -7,6 +7,21 @@
 // In production, VITE_API_BASE_URL is set during the CI/CD build step
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
+/**
+ * Resolve a document URL. Handles:
+ * - Relative paths from Firebase Storage (/api/documents/...)
+ * - Absolute URLs (Google Drive, etc.) - returned as-is
+ */
+export function resolveDocumentUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  // Relative path from our backend - prepend API base URL
+  if (url.startsWith('/api/')) {
+    return `${API_BASE_URL}${url}`;
+  }
+  // Already absolute
+  return url;
+}
+
 // Type definitions based on backend response structures
 export interface PatientDemographics {
   "Patient Name": string | null;

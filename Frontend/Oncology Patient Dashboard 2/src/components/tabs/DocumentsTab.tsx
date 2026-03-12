@@ -1,5 +1,5 @@
 import { FileText, ExternalLink } from 'lucide-react';
-import { PatientData } from '../../services/api';
+import { PatientData, resolveDocumentUrl } from '../../services/api';
 import { formatDate } from '../../utils/dateFormatter';
 
 interface DocumentsTabProps {
@@ -89,7 +89,7 @@ export function DocumentsTab({ patientData }: DocumentsTabProps) {
               {category.items.map((doc, docIdx) => (
                 <button
                   key={docIdx}
-                  onClick={() => doc.url && window.open(doc.url, '_blank')}
+                  onClick={() => doc.url && window.open(resolveDocumentUrl(doc.url), '_blank')}
                   disabled={!doc.url}
                   className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors text-left group disabled:opacity-50 disabled:cursor-not-allowed"
                   title={doc.url ? "Click to open document" : "URL not available"}

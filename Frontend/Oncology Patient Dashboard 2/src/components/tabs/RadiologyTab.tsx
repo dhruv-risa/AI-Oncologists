@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Scan, FileText, ExternalLink, Eye, Download, Plus, X } from 'lucide-react';
 import { DataField } from '../DataField';
 import { usePatient } from '../../contexts/PatientContext';
-import { RadiologyReportDetail } from '../../services/api';
+import { RadiologyReportDetail, resolveDocumentUrl } from '../../services/api';
 
 export function RadiologyTab() {
   const { currentPatient } = usePatient();
@@ -220,12 +220,11 @@ export function RadiologyTab() {
   };
 
   const handleViewDocument = (url: string) => {
-    window.open(url, '_blank');
+    window.open(resolveDocumentUrl(url), '_blank');
   };
 
   const handleDownloadDocument = (url: string, fileName: string) => {
-    // Direct download - works for both Firebase Storage and legacy Google Drive URLs
-    window.open(url, '_blank');
+    window.open(resolveDocumentUrl(url), '_blank');
   };
 
   // Get treatment regimen name at the time of the radiology report
