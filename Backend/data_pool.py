@@ -22,7 +22,8 @@ def _get_firestore_client():
     """Get a Firestore client, or None if unavailable."""
     try:
         from google.cloud import firestore
-        return firestore.Client()
+        project = os.environ.get("GCP_PROJECT_ID", "rapids-platform")
+        return firestore.Client(project=project)
     except Exception as e:
         logger.warning(f"[DataPool] Firestore unavailable, falling back to SQLite for patients: {e}")
         return None
