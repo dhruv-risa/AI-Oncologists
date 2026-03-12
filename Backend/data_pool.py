@@ -6,6 +6,8 @@ The data pool allows multiple patients' data to be stored and retrieved efficien
 """
 import json
 import sqlite3
+import shutil
+import threading
 from datetime import datetime
 from typing import Optional, List, Dict
 from pathlib import Path
@@ -25,16 +27,27 @@ class DataPool:
         Args:
             db_path: Path to SQLite database file. If None, uses default location.
         """
+        self._gcs_path = None  # Track GCS source for sync-back
+
         if db_path is None:
             gcs_mount = os.environ.get("DB_MOUNT_PATH", "")
             if gcs_mount and os.path.isdir(gcs_mount):
-                db_path = Path(gcs_mount) / "data_pool.db"
+                gcs_db = Path(gcs_mount) / "data_pool.db"
+                # SQLite doesn't work reliably on GCS FUSE (random I/O + journaling).
+                # Copy to a local path and sync back after writes.
+                local_db = Path("/tmp") / "data_pool.db"
+                if gcs_db.exists() and not local_db.exists():
+                    shutil.copy2(str(gcs_db), str(local_db))
+                    print(f"[DataPool] Copied GCS DB to local: {local_db} ({local_db.stat().st_size} bytes)")
+                self._gcs_path = str(gcs_db)
+                db_path = local_db
             else:
                 # Default to Backend directory
                 backend_dir = Path(__file__).parent
                 db_path = backend_dir / "data_pool.db"
 
         self.db_path = str(db_path)
+        self._sync_lock = threading.Lock()
         self.init_database()
 
     def init_database(self):
@@ -184,6 +197,18 @@ class DataPool:
         conn.commit()
         conn.close()
 
+    def _sync_to_gcs(self):
+        """Copy the local DB back to GCS mount if running in Cloud Run."""
+        if not self._gcs_path:
+            return
+        def _do_sync():
+            try:
+                with self._sync_lock:
+                    shutil.copy2(self.db_path, self._gcs_path)
+            except Exception as e:
+                print(f"[DataPool] GCS sync failed: {e}")
+        threading.Thread(target=_do_sync, daemon=True).start()
+
     def _ensure_table_exists(self, conn):
         """
         Ensure the table exists for the current connection.
@@ -244,6 +269,7 @@ class DataPool:
 
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error storing patient data: {e}")
@@ -493,6 +519,7 @@ class DataPool:
 
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error deleting patient data: {e}")
@@ -517,6 +544,7 @@ class DataPool:
 
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error clearing pool: {e}")
@@ -607,6 +635,7 @@ class DataPool:
 
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error storing trial: {e}")
@@ -688,6 +717,7 @@ class DataPool:
 
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
         except Exception as e:
             print(f"Error in bulk store trials: {e}")
 
@@ -851,6 +881,7 @@ class DataPool:
 
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error storing eligibility: {e}")
@@ -895,6 +926,7 @@ class DataPool:
 
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
         except Exception as e:
             print(f"Error in bulk store eligibility: {e}")
 
@@ -916,6 +948,7 @@ class DataPool:
                   datetime.now().isoformat(), datetime.now().isoformat()))
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error starting computation progress: {e}")
@@ -940,6 +973,7 @@ class DataPool:
             """, (eligible_inc, error_inc, datetime.now().isoformat(), patient_mrn))
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error incrementing computation progress: {e}")
@@ -963,6 +997,7 @@ class DataPool:
                   datetime.now().isoformat(), error_message, patient_mrn))
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error completing computation progress: {e}")
@@ -1015,6 +1050,7 @@ class DataPool:
             """, (token, patient_mrn, trial_nct_id, criteria_snapshot))
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error creating review token: {e}")
@@ -1063,6 +1099,7 @@ class DataPool:
             """, (responses, datetime.now().isoformat(), token))
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error completing review token: {e}")
@@ -1267,6 +1304,7 @@ class DataPool:
 
             conn.commit()
             conn.close()
+            self._sync_to_gcs()
             return True
         except Exception as e:
             print(f"Error logging sync: {e}")
