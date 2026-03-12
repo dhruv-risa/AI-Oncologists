@@ -24,7 +24,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from Backend.bytes_extractor import extract_lab_results_data_md_notes_combined
-from Backend.drive_uploader import upload_and_share_pdf_bytes
+from Backend.storage_uploader import upload_and_share_pdf_bytes
 from Backend.documents_reference import generate_bearer_token, get_patient_id_from_mrn, generate_onco_emr_token
 from Backend.Utils.Tabs.lab_postprocessor import process_lab_data_for_ui
 from Backend.Utils.logger_config import setup_logger

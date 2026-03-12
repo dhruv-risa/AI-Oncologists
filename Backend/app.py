@@ -37,7 +37,7 @@ from Backend.bytes_extractor import (
     upload_individual_radiology_reports_with_MD_notes_to_drive,
     get_document_bytes
 )
-from Backend.drive_uploader import upload_and_share_pdf_bytes
+from Backend.storage_uploader import upload_and_share_pdf_bytes
 from Backend.data_pool import get_data_pool
 from Backend.Utils.Tabs.pathology_tab import pathology_info
 from Backend.Utils.Tabs.radiology_tab import extract_radiology_details_from_report
@@ -1463,6 +1463,146 @@ async def debug_data_pool():
     except Exception as e:
         info["trials_error"] = str(e)
     return info
+
+
+@app.post("/api/admin/migrate-documents-to-firebase", tags=["Admin"])
+async def migrate_documents_to_firebase():
+    """
+    One-time migration: download all document PDFs from Google Drive,
+    upload to Firebase Storage, and update Firestore patient records.
+    """
+    from Backend.storage_uploader import upload_pdf_bytes_to_storage
+    from Backend.drive_uploader import download_pdf_bytes_from_drive_url
+
+    if not data_pool._firestore:
+        raise HTTPException(status_code=500, detail="Firestore not available")
+
+    results = {"migrated": 0, "failed": 0, "skipped": 0, "errors": []}
+    docs = data_pool._firestore.collection(data_pool.FIRESTORE_COLLECTION).stream()
+
+    for doc in docs:
+        try:
+            doc_data = doc.to_dict()
+            mrn = doc_data.get("mrn", doc.id)
+            patient_data = json.loads(doc_data["data"])
+            updated = False
+
+            # Migrate pathology_reports
+            for report in patient_data.get("pathology_reports", []):
+                url = report.get("drive_url", "")
+                if "drive.google.com" in url:
+                    try:
+                        pdf_bytes = download_pdf_bytes_from_drive_url(url)
+                        fname = f"{mrn}_pathology_{report.get('document_id', 'unknown')}.pdf"
+                        blob_path = f"documents/pathology/{fname}"
+                        new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
+                        report["drive_url"] = new_url
+                        report["drive_file_id"] = blob_path
+                        results["migrated"] += 1
+                        updated = True
+                        logger.info(f"Migrated pathology doc for {mrn}: {fname}")
+                    except Exception as e:
+                        results["failed"] += 1
+                        results["errors"].append(f"{mrn}/pathology: {str(e)[:100]}")
+                else:
+                    results["skipped"] += 1
+
+            # Migrate radiology_reports
+            for report in patient_data.get("radiology_reports", []):
+                for url_field, id_field, suffix in [
+                    ("drive_url", "drive_file_id", ""),
+                    ("drive_url_with_MD", "drive_file_id_with_MD", "_with_MD"),
+                ]:
+                    url = report.get(url_field, "")
+                    if "drive.google.com" in url:
+                        try:
+                            pdf_bytes = download_pdf_bytes_from_drive_url(url)
+                            fname = f"{mrn}_radiology{suffix}_{report.get('document_id', 'unknown')}.pdf"
+                            blob_path = f"documents/radiology/{fname}"
+                            new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
+                            report[url_field] = new_url
+                            report[id_field] = blob_path
+                            results["migrated"] += 1
+                            updated = True
+                            logger.info(f"Migrated radiology{suffix} doc for {mrn}: {fname}")
+                        except Exception as e:
+                            results["failed"] += 1
+                            results["errors"].append(f"{mrn}/radiology{suffix}: {str(e)[:100]}")
+                    else:
+                        results["skipped"] += 1
+
+            # Migrate genomics_reports
+            for report in patient_data.get("genomics_reports", []):
+                url = report.get("url", report.get("drive_url", ""))
+                if "drive.google.com" in url:
+                    try:
+                        pdf_bytes = download_pdf_bytes_from_drive_url(url)
+                        fname = f"{mrn}_genomics_{report.get('document_id', 'unknown')}.pdf"
+                        blob_path = f"documents/genomics/{fname}"
+                        new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
+                        if "url" in report:
+                            report["url"] = new_url
+                        if "drive_url" in report:
+                            report["drive_url"] = new_url
+                        if "file_id" in report:
+                            report["file_id"] = blob_path
+                        results["migrated"] += 1
+                        updated = True
+                        logger.info(f"Migrated genomics doc for {mrn}: {fname}")
+                    except Exception as e:
+                        results["failed"] += 1
+                        results["errors"].append(f"{mrn}/genomics: {str(e)[:100]}")
+                else:
+                    results["skipped"] += 1
+
+            # Migrate lab_results
+            for report in patient_data.get("lab_results", []):
+                url = report.get("url", report.get("drive_url", ""))
+                if "drive.google.com" in url:
+                    try:
+                        pdf_bytes = download_pdf_bytes_from_drive_url(url)
+                        fname = f"{mrn}_lab_{report.get('document_id', 'unknown')}.pdf"
+                        blob_path = f"documents/lab/{fname}"
+                        new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
+                        if "url" in report:
+                            report["url"] = new_url
+                        if "drive_url" in report:
+                            report["drive_url"] = new_url
+                        if "file_id" in report:
+                            report["file_id"] = blob_path
+                        results["migrated"] += 1
+                        updated = True
+                        logger.info(f"Migrated lab doc for {mrn}: {fname}")
+                    except Exception as e:
+                        results["failed"] += 1
+                        results["errors"].append(f"{mrn}/lab: {str(e)[:100]}")
+                else:
+                    results["skipped"] += 1
+
+            # Migrate top-level pdf_url
+            pdf_url = patient_data.get("pdf_url", "")
+            if pdf_url and "drive.google.com" in pdf_url:
+                try:
+                    pdf_bytes = download_pdf_bytes_from_drive_url(pdf_url)
+                    blob_path = f"documents/combined/{mrn}_combined.pdf"
+                    new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
+                    patient_data["pdf_url"] = new_url
+                    results["migrated"] += 1
+                    updated = True
+                except Exception as e:
+                    results["failed"] += 1
+                    results["errors"].append(f"{mrn}/combined: {str(e)[:100]}")
+
+            # Save updated patient data back to Firestore
+            if updated:
+                data_pool.store_patient_data(mrn, patient_data)
+                logger.info(f"Updated Firestore record for {mrn}")
+
+        except Exception as e:
+            results["errors"].append(f"{doc.id}: {str(e)[:100]}")
+            results["failed"] += 1
+
+    return results
 
 
 @app.get("/api/pool/patient/{mrn}/exists", tags=["Data Pool"])

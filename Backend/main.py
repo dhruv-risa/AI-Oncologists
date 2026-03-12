@@ -35,7 +35,7 @@ from Backend.bytes_extractor import (
     combine_pdf_bytes_and_upload
 )
 from Backend.documents_reference import generate_bearer_token, generate_onco_emr_token
-from Backend.drive_uploader import upload_and_share_pdf_bytes
+from Backend.storage_uploader import upload_and_share_pdf_bytes
 from Backend.Utils.components.patient_demographics import extract_patient_demographics
 from Backend.Utils.components.patient_diagnosis_status import extract_diagnosis_status
 from Backend.Utils.Tabs.comorbidities import extract_comorbidities_status

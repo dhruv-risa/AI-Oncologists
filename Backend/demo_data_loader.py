@@ -7,7 +7,10 @@ from Google Drive URLs for demo purposes.
 import json
 import os
 from typing import Dict, List, Any
-from drive_uploader import get_file_metadata_from_url
+try:
+    from Backend.storage_uploader import get_file_metadata_from_url
+except ModuleNotFoundError:
+    from storage_uploader import get_file_metadata_from_url
 
 
 def load_demo_data_json():

@@ -224,13 +224,8 @@ export function RadiologyTab() {
   };
 
   const handleDownloadDocument = (url: string, fileName: string) => {
-    // Extract file ID from Google Drive URL
-    const fileIdMatch = url.match(/\/d\/([^/]+)/);
-    if (fileIdMatch) {
-      const fileId = fileIdMatch[1];
-      const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-      window.open(downloadUrl, '_blank');
-    }
+    // Direct download - works for both Firebase Storage and legacy Google Drive URLs
+    window.open(url, '_blank');
   };
 
   // Get treatment regimen name at the time of the radiology report

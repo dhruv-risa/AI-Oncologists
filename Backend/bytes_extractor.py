@@ -32,9 +32,9 @@ import base64
 from PyPDF2 import PdfMerger
 from io import BytesIO
 try:
-    from Backend.drive_uploader import upload_and_share_pdf_bytes, create_or_get_folder
+    from Backend.storage_uploader import upload_and_share_pdf_bytes, create_or_get_folder
 except ModuleNotFoundError:
-    from drive_uploader import upload_and_share_pdf_bytes, create_or_get_folder
+    from storage_uploader import upload_and_share_pdf_bytes, create_or_get_folder
 
 
 # Common LOINC codes for medical documents

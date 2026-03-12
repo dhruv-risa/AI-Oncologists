@@ -12,9 +12,9 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")
 sys.path.append(PROJECT_ROOT)
 
 try:
-    from Backend.drive_uploader import download_pdf_bytes_from_drive_url
+    from Backend.storage_uploader import download_pdf_bytes_from_url as download_pdf_bytes_from_drive_url
 except ModuleNotFoundError:
-    from drive_uploader import download_pdf_bytes_from_drive_url
+    from storage_uploader import download_pdf_bytes_from_url as download_pdf_bytes_from_drive_url
 
 
 def is_google_drive_url(url):
