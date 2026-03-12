@@ -1471,8 +1471,30 @@ async def migrate_documents_to_firebase():
     One-time migration: download all document PDFs from Google Drive,
     upload to Firebase Storage, and update Firestore patient records.
     """
+    import re as _re
+    import requests as _req
     from Backend.storage_uploader import upload_pdf_bytes_to_storage
-    from Backend.drive_uploader import download_pdf_bytes_from_drive_url
+
+    def _download_public_drive_file(url: str) -> bytes:
+        """Download a public Google Drive file via direct export URL."""
+        # Extract file ID from various Drive URL formats
+        match = _re.search(r'/d/([a-zA-Z0-9_-]+)', url)
+        if not match:
+            match = _re.search(r'[?&]id=([a-zA-Z0-9_-]+)', url)
+        if not match:
+            raise ValueError(f"Cannot extract file ID from: {url}")
+        file_id = match.group(1)
+        download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        resp = _req.get(download_url, timeout=60, allow_redirects=True)
+        resp.raise_for_status()
+        if len(resp.content) < 1000 and b"confirm=" in resp.content:
+            # Handle virus scan warning for large files
+            confirm_match = _re.search(rb'confirm=([a-zA-Z0-9_-]+)', resp.content)
+            if confirm_match:
+                confirm = confirm_match.group(1).decode()
+                resp = _req.get(f"{download_url}&confirm={confirm}", timeout=60)
+                resp.raise_for_status()
+        return resp.content
 
     if not data_pool._firestore:
         raise HTTPException(status_code=500, detail="Firestore not available")
@@ -1492,7 +1514,7 @@ async def migrate_documents_to_firebase():
                 url = report.get("drive_url", "")
                 if "drive.google.com" in url:
                     try:
-                        pdf_bytes = download_pdf_bytes_from_drive_url(url)
+                        pdf_bytes = _download_public_drive_file(url)
                         fname = f"{mrn}_pathology_{report.get('document_id', 'unknown')}.pdf"
                         blob_path = f"documents/pathology/{fname}"
                         new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
@@ -1516,7 +1538,7 @@ async def migrate_documents_to_firebase():
                     url = report.get(url_field, "")
                     if "drive.google.com" in url:
                         try:
-                            pdf_bytes = download_pdf_bytes_from_drive_url(url)
+                            pdf_bytes = _download_public_drive_file(url)
                             fname = f"{mrn}_radiology{suffix}_{report.get('document_id', 'unknown')}.pdf"
                             blob_path = f"documents/radiology/{fname}"
                             new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
@@ -1536,7 +1558,7 @@ async def migrate_documents_to_firebase():
                 url = report.get("url", report.get("drive_url", ""))
                 if "drive.google.com" in url:
                     try:
-                        pdf_bytes = download_pdf_bytes_from_drive_url(url)
+                        pdf_bytes = _download_public_drive_file(url)
                         fname = f"{mrn}_genomics_{report.get('document_id', 'unknown')}.pdf"
                         blob_path = f"documents/genomics/{fname}"
                         new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
@@ -1560,7 +1582,7 @@ async def migrate_documents_to_firebase():
                 url = report.get("url", report.get("drive_url", ""))
                 if "drive.google.com" in url:
                     try:
-                        pdf_bytes = download_pdf_bytes_from_drive_url(url)
+                        pdf_bytes = _download_public_drive_file(url)
                         fname = f"{mrn}_lab_{report.get('document_id', 'unknown')}.pdf"
                         blob_path = f"documents/lab/{fname}"
                         new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
@@ -1583,7 +1605,7 @@ async def migrate_documents_to_firebase():
             pdf_url = patient_data.get("pdf_url", "")
             if pdf_url and "drive.google.com" in pdf_url:
                 try:
-                    pdf_bytes = download_pdf_bytes_from_drive_url(pdf_url)
+                    pdf_bytes = _download_public_drive_file(pdf_url)
                     blob_path = f"documents/combined/{mrn}_combined.pdf"
                     new_url = upload_pdf_bytes_to_storage(pdf_bytes, blob_path)
                     patient_data["pdf_url"] = new_url
