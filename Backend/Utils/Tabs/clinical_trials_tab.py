@@ -99,14 +99,14 @@ def fetch_trials_from_api(
                 break
 
             for study in studies:
-                protocol = study.get("protocolSection", {})
-                identification = protocol.get("identificationModule", {})
-                status_module = protocol.get("statusModule", {})
-                design = protocol.get("designModule", {})
-                eligibility = protocol.get("eligibilityModule", {})
-                conditions_module = protocol.get("conditionsModule", {})
-                contacts = protocol.get("contactsLocationsModule", {})
-                description = protocol.get("descriptionModule", {})
+                protocol = study.get("protocolSection", {}) or {}
+                identification = protocol.get("identificationModule", {}) or {}
+                status_module = protocol.get("statusModule", {}) or {}
+                design = protocol.get("designModule", {}) or {}
+                eligibility = protocol.get("eligibilityModule", {}) or {}
+                conditions_module = protocol.get("conditionsModule", {}) or {}
+                contacts = protocol.get("contactsLocationsModule", {}) or {}
+                description = protocol.get("descriptionModule", {}) or {}
 
                 # Extract locations
                 locations = []
@@ -634,9 +634,9 @@ the patient does NOT have that symptom/condition.
     # =========================================================================
     pathology_markers = patient_data.get("pathology_markers", {})
     if pathology_markers:
-        combined = pathology_markers.get("pathology_combined", {})
-        ihc = combined.get("ihc_column", {})
-        markers = ihc.get("markers", [])
+        combined = pathology_markers.get("pathology_combined", {}) or {}
+        ihc = combined.get("ihc_column", {}) or {}
+        markers = ihc.get("markers", []) or []
         if markers:
             marker_lines = []
             for m in markers:
@@ -679,11 +679,11 @@ the patient does NOT have that symptom/condition.
 """)
         
         # Immunotherapy markers
-        immuno = genomic_info.get("immunotherapy_markers", {})
+        immuno = genomic_info.get("immunotherapy_markers", {}) or {}
         if immuno:
-            pd_l1 = immuno.get('pd_l1', {})
-            tmb = immuno.get('tmb', {})
-            msi = immuno.get('msi_status', {})
+            pd_l1 = immuno.get('pd_l1', {}) or {}
+            tmb = immuno.get('tmb', {}) or {}
+            msi = immuno.get('msi_status', {}) or {}
             context_parts.append(f"""
 === IMMUNOTHERAPY MARKERS ===
 - PD-L1 Expression: {pd_l1.get('value', 'Unknown')} {pd_l1.get('interpretation', '')}
@@ -700,10 +700,10 @@ the patient does NOT have that symptom/condition.
     if treatment_history:
         treatment_lines = []
         for t in treatment_history:
-            header = t.get("header", {})
-            regimen = t.get("regimen_details", {})
-            dates = t.get("dates", {})
-            cycles = t.get("cycles_data", {})
+            header = t.get("header", {}) or {}
+            regimen = t.get("regimen_details", {}) or {}
+            dates = t.get("dates", {}) or {}
+            cycles = t.get("cycles_data", {}) or {}
             line_num = header.get("line_number", "?")
             drug_name = regimen.get("display_name", "Unknown")
             status = header.get("status_badge", "")
@@ -749,7 +749,7 @@ No prior systemic therapy documented.
             for lab_name, lab_data in category_data.items():
                 if not isinstance(lab_data, dict) or not lab_data.get("has_data"):
                     continue
-                current = lab_data.get("current", {})
+                current = lab_data.get("current", {}) or {}
                 value = current.get("value")
                 if value is None:
                     continue
@@ -886,7 +886,7 @@ No prior systemic therapy documented.
         for p in pathology_reports[:5]:  # Limit to 5
             if isinstance(p, dict):
                 date = p.get("date", "Unknown")
-                summary = p.get("pathology_summary", {})
+                summary = p.get("pathology_summary", {}) or {}
                 if isinstance(summary, dict):
                     diagnosis = summary.get("diagnosis", summary.get("findings", ""))
                     path_lines.append(f"- {date}: {diagnosis[:150] if diagnosis else 'Report available'}")

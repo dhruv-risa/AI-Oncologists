@@ -319,8 +319,8 @@ class BatchEligibilityEngine:
                     result = future.result()
                     if result:
                         # process_single_trial returns: {eligibility: {status, percentage, ...}, criteria_results: {...}}
-                        eligibility_info = result.get("eligibility", {})
-                        criteria_results = result.get("criteria_results", {})
+                        eligibility_info = result.get("eligibility", {}) or {}
+                        criteria_results = result.get("criteria_results", {}) or {}
 
                         # Extract key criteria for quick reference
                         inclusion_results = criteria_results.get("inclusion", [])
