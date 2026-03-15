@@ -538,5 +538,125 @@
     },
     "cached_at": "2026-03-10T16:35:53.245555",
     "expires_at": "2026-04-09T16:35:53.245564"
+  },
+  "b678c3d2947ff37f6d2791a75dcd4db4759c712215d9b03fb174efc76486ecc3": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report provides a histopathological diagnosis of lung adenocarcinoma from biopsy specimens, including gross and microscopic descriptions. Although it contains biomarker results (EGFR, ALK, PD-L1), these were determined by Immunohistochemistry (IHC), which is a standard pathology technique, not a comprehensive genomic sequencing panel.",
+      "key_indicators": [
+        "Surgical Biopsy Report",
+        "Final Diagnosis: Lung adenocarcinoma",
+        "Gross Description",
+        "EGFR L858R by Immunohistochemistry"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--066TK8Q4K2Q6Z91V4523.DH--HL711120536182002--50",
+      "date": "2024-02-14T17:00:41.353+00:00",
+      "description": "Lung/Lymph Node (TB24-05731)"
+    },
+    "cached_at": "2026-03-12T18:11:29.239135",
+    "expires_at": "2026-04-11T18:11:29.239146"
+  },
+  "3f70e19636f7bb7e5447e48bb9fe947d94b8ddcfe6acb5fa194cb3261a0a0bc3": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "This is a Non-gynecologic Cytology Report that provides a diagnosis based on the morphological examination of cells from a bronchoalveolar lavage (BAL) specimen. The report includes a diagnosis of 'Negative for malignancy' and findings like 'Benign bronchial cells', which are characteristic of a standard cytology evaluation.",
+      "key_indicators": [
+        "Non-gynecologic Cytology Report",
+        "Diagnosis: Negative for malignancy",
+        "Specimen A: Right upper lobe, lung, bronchoalveolar lavage (BAL)",
+        "Gross Description"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--066SV2TJ91JYZPXAME9P.DH--HL711120536182002--50",
+      "date": "2024-02-12T08:39:29.987+00:00",
+      "description": "Right upper lobe, lung, bronchoalveolar lavage (TC24-00929)"
+    },
+    "cached_at": "2026-03-12T18:11:45.106067",
+    "expires_at": "2026-04-11T18:11:45.106077"
+  },
+  "7ffbf9ae1380abdc8578af83f0f83212420dd2bf24e3341498d448ba274f27ec": {
+    "classification": {
+      "category": "GENOMIC_ALTERATIONS",
+      "confidence": "high",
+      "reasoning": "The report is explicitly titled 'SOLID TUMOR NGS PANEL (50 GENES)' and details the results of Next-Generation Sequencing (NGS), identifying a specific 'TP53 N239D Mutation' and listing the status of a large panel of other genes.",
+      "key_indicators": [
+        "SOLID TUMOR NGS PANEL (50 GENES)",
+        "Molecular Studies Next Gene Sequencing (NGS)",
+        "TP53 N239D Mutation",
+        "DNA VARIANTS DETECTED"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06BCYN6SCCYNTND1JSKF.PD--06BAR9AHG10BZW9G8JX1",
+      "date": "2025-05-14T09:53:33+00:00",
+      "description": "Solid Tumor NGS Panel"
+    },
+    "cached_at": "2026-03-15T10:22:11.503957",
+    "expires_at": "2026-04-14T10:22:11.503968"
+  },
+  "5ed9dc002abe1aece668bb0ba547623d083a592f3085372f667b97943d038ff8": {
+    "classification": {
+      "category": "GENOMIC_ALTERATIONS",
+      "confidence": "high",
+      "reasoning": "The report contains a dedicated section for a \"SOLID TUMOR NGS PANEL (50 GENES)\" and reports a specific gene mutation, \"TP53 N239D Mutation\". It also includes a molecular oncopathology report for ALK and ROS1 FISH. The amendments were explicitly made to add these molecular results, indicating they are a primary component of the report.",
+      "key_indicators": [
+        "SOLID TUMOR NGS PANEL (50 GENES)",
+        "TP53 N239D Mutation",
+        "Reason for Amendment #2: To Add Molecular Results",
+        "Molecular Oncopathology Report"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06BCXP7TQ314V0YAZKCZ.PD--06BAR9AHG10BZW9G8JX1",
+      "date": "2025-05-14T08:50:48.623+00:00",
+      "description": "Right Lung Tissue Solid Tumor NGS Panel (MSP-25-009884)"
+    },
+    "cached_at": "2026-03-15T10:22:30.651957",
+    "expires_at": "2026-04-14T10:22:30.651968"
+  },
+  "02a11c09d94b46244bbf1d441ffb27dc69eaaa952325587e9ea904d8e9650490": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a medical cytology analysis of multiple specimens, including fine needle aspirations and bronchial washings. The diagnoses are based on cellular morphology, such as 'Positive for malignant cells' and 'Atypical cell present', which are hallmarks of a standard pathology report.",
+      "key_indicators": [
+        "Medical cytology",
+        "fine needle aspiration cytology",
+        "Positive for malignant cells",
+        "Atypical cell present"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06BCXNT4WHZ2CB7R2BFE.PD--06BAR9AHG10BZW9G8JX1",
+      "date": "2025-05-14T08:48:56.543+00:00",
+      "description": "Lung, Rt. Lower Lobe FNA Cytology (MMC-25-001564)"
+    },
+    "cached_at": "2026-03-15T10:22:48.508431",
+    "expires_at": "2026-04-14T10:22:48.508440"
+  },
+  "05b04e4fddc150da62f904a9463e7b444be9f96f9db728538b3c4fcb61c41694": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a standard surgical pathology report that provides a detailed histopathological diagnosis based on the examination of resected lung tissue and lymph nodes. It includes sections for gross description, microscopic findings, a final diagnosis of invasive squamous cell carcinoma, pathological staging (pTNM), and results from diagnostic immunohistochemistry (IHC) stains.",
+      "key_indicators": [
+        "SURGICAL PATHOLOGY REPORT",
+        "DIAGNOSIS: ... Invasive squamous cell carcinoma",
+        "GROSS DESCRIPTION",
+        "Pathologic Stage: pT2bN0"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--06BB3649QBD8WNQR2F72.PD--06BAR9AHG10BZW9G8JX1",
+      "date": "2025-05-08T15:25:42+00:00",
+      "description": "Specimens: A. Lobectomy; Accession (# MSP-25-011563)"
+    },
+    "cached_at": "2026-03-15T10:23:07.007310",
+    "expires_at": "2026-04-14T10:23:07.007323"
   }
 }

@@ -40,14 +40,15 @@ def is_google_drive_url(url):
 
 def get_pdf_bytes_from_url(pdf_url):
     """
-    Get PDF bytes from any URL (Google Drive or direct URL).
+    Get PDF bytes from any URL (Google Drive, Firebase Storage, or direct URL).
 
     This function automatically detects the URL type and handles it appropriately:
+    - Firebase Storage paths (/api/documents/...): Downloads from Firebase Storage
     - Google Drive URLs: Downloads using Google Drive API
     - Other URLs: Downloads directly via HTTP request
 
     Args:
-        pdf_url (str): PDF URL (Google Drive or direct URL)
+        pdf_url (str): PDF URL (Google Drive, Firebase Storage path, or direct URL)
 
     Returns:
         bytes: PDF content as bytes
@@ -56,13 +57,24 @@ def get_pdf_bytes_from_url(pdf_url):
         Exception: If download fails
 
     Example:
+        >>> # Works with Firebase Storage paths
+        >>> bytes1 = get_pdf_bytes_from_url("/api/documents/documents%2FMD_note_123.pdf")
+        >>>
         >>> # Works with Google Drive URLs
-        >>> bytes1 = get_pdf_bytes_from_url("https://drive.google.com/file/d/FILE_ID/view")
+        >>> bytes2 = get_pdf_bytes_from_url("https://drive.google.com/file/d/FILE_ID/view")
         >>>
         >>> # Works with direct URLs
-        >>> bytes2 = get_pdf_bytes_from_url("https://example.com/document.pdf")
+        >>> bytes3 = get_pdf_bytes_from_url("https://example.com/document.pdf")
     """
-    if is_google_drive_url(pdf_url):
+    # Check for Firebase Storage paths first
+    if isinstance(pdf_url, str) and pdf_url.startswith("/api/documents/"):
+        print(f"Detected Firebase Storage path, downloading from storage...")
+        try:
+            from Backend.storage_uploader import download_pdf_bytes_from_url as download_from_storage
+        except ModuleNotFoundError:
+            from storage_uploader import download_pdf_bytes_from_url as download_from_storage
+        return download_from_storage(pdf_url)
+    elif is_google_drive_url(pdf_url):
         print(f"Detected Google Drive URL, downloading via Drive API...")
         return download_pdf_bytes_from_drive_url(pdf_url)
     else:
