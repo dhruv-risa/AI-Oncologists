@@ -84,6 +84,13 @@ def extract_demographics_with_gemini(pdf_input):
     # Handle both bytes and file path/URL inputs
     if isinstance(pdf_input, bytes):
         pdf_bytes = pdf_input
+    elif pdf_input.startswith("/api/documents/"):
+        # Handle Firebase Storage paths
+        try:
+            from Backend.storage_uploader import download_pdf_bytes_from_url
+        except ModuleNotFoundError:
+            from storage_uploader import download_pdf_bytes_from_url
+        pdf_bytes = download_pdf_bytes_from_url(pdf_input)
     elif pdf_input.startswith("http"):
         # Handle Google Drive URLs
         if "drive.google.com" in pdf_input:

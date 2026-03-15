@@ -6,7 +6,9 @@
       "Bash(ls:*)",
       "Bash(curl:*)",
       "Bash(pkill:*)",
-      "Bash(lsof:*)"
+      "Bash(lsof:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)"
     ]
   }
 }

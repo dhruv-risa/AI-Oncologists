@@ -412,21 +412,35 @@ def extract_lab_info(pdf_url=None, pdf_bytes=None, return_raw=False, use_gemini=
         else:
             logger.info(f"📥 Downloading PDF from URL: {pdf_url}")
 
+            # Handle Firebase Storage paths
+            if pdf_url.startswith("/api/documents/"):
+                logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_url}")
+                try:
+                    from Backend.storage_uploader import download_pdf_bytes_from_url
+                except ModuleNotFoundError:
+                    from storage_uploader import download_pdf_bytes_from_url
+                pdf_bytes = download_pdf_bytes_from_url(pdf_url)
+                logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
             # Handle Google Drive URLs
-            if "drive.google.com" in pdf_url:
+            elif "drive.google.com" in pdf_url:
                 match = re.search(r'/file/d/([^/]+)', pdf_url)
                 if match:
                     file_id = match.group(1)
                     download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
                 else:
                     raise ValueError("Could not extract file ID from Google Drive URL")
+
+                response = requests.get(download_url, allow_redirects=True)
+                response.raise_for_status()
+                pdf_bytes = response.content
+                logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
             else:
                 download_url = pdf_url
+                response = requests.get(download_url, allow_redirects=True)
+                response.raise_for_status()
+                pdf_bytes = response.content
+                logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
 
-            response = requests.get(download_url, allow_redirects=True)
-            response.raise_for_status()
-            pdf_bytes = response.content
-            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
             raw_data = extract_with_gemini(pdf_bytes)
     else:
         # Legacy pipeline using llmresponsedetailed (requires URL)

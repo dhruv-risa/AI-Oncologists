@@ -134,7 +134,16 @@ def classify_pathology_report_with_gemini(pdf_input):
         logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
         pdf_bytes = pdf_input
     elif isinstance(pdf_input, str):
-        if "drive.google.com" in pdf_input:
+        if pdf_input.startswith("/api/documents/"):
+            # Handle Firebase Storage paths
+            logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
+            try:
+                from Backend.storage_uploader import download_pdf_bytes_from_url
+            except ModuleNotFoundError:
+                from storage_uploader import download_pdf_bytes_from_url
+            pdf_bytes = download_pdf_bytes_from_url(pdf_input)
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        elif "drive.google.com" in pdf_input:
             # Handle Google Drive URLs
             logger.info(f"📥 Downloading PDF from Google Drive: {pdf_input}")
             match = re.search(r'/file/d/([^/]+)', pdf_input)
@@ -154,7 +163,7 @@ def classify_pathology_report_with_gemini(pdf_input):
             with open(pdf_input, "rb") as f:
                 pdf_bytes = f.read()
     else:
-        raise ValueError("pdf_input must be bytes, a local file path, or a Google Drive URL")
+        raise ValueError("pdf_input must be bytes, a local file path, Firebase Storage path, or a Google Drive URL")
 
     logger.info(f"✅ PDF ready for processing ({len(pdf_bytes)} bytes)")
 
@@ -306,7 +315,16 @@ def extract_pathology_summary_with_gemini_api(pdf_input):
         logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
         pdf_bytes = pdf_input
     elif isinstance(pdf_input, str):
-        if "drive.google.com" in pdf_input:
+        if pdf_input.startswith("/api/documents/"):
+            # Handle Firebase Storage paths
+            logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
+            try:
+                from Backend.storage_uploader import download_pdf_bytes_from_url
+            except ModuleNotFoundError:
+                from storage_uploader import download_pdf_bytes_from_url
+            pdf_bytes = download_pdf_bytes_from_url(pdf_input)
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        elif "drive.google.com" in pdf_input:
             # Handle Google Drive URLs
             logger.info(f"📥 Downloading PDF from Google Drive: {pdf_input}")
             match = re.search(r'/file/d/([^/]+)', pdf_input)
@@ -326,7 +344,7 @@ def extract_pathology_summary_with_gemini_api(pdf_input):
             with open(pdf_input, "rb") as f:
                 pdf_bytes = f.read()
     else:
-        raise ValueError("pdf_input must be bytes, a local file path, or a Google Drive URL")
+        raise ValueError("pdf_input must be bytes, a local file path, Firebase Storage path, or a Google Drive URL")
 
     logger.info(f"✅ PDF ready for processing ({len(pdf_bytes)} bytes)")
 
@@ -557,7 +575,16 @@ def extract_pathology_markers_with_gemini_api(pdf_input):
         logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
         pdf_bytes = pdf_input
     elif isinstance(pdf_input, str):
-        if "drive.google.com" in pdf_input:
+        if pdf_input.startswith("/api/documents/"):
+            # Handle Firebase Storage paths
+            logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
+            try:
+                from Backend.storage_uploader import download_pdf_bytes_from_url
+            except ModuleNotFoundError:
+                from storage_uploader import download_pdf_bytes_from_url
+            pdf_bytes = download_pdf_bytes_from_url(pdf_input)
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        elif "drive.google.com" in pdf_input:
             # Handle Google Drive URLs
             logger.info(f"📥 Downloading PDF from Google Drive: {pdf_input}")
             match = re.search(r'/file/d/([^/]+)', pdf_input)
@@ -577,7 +604,7 @@ def extract_pathology_markers_with_gemini_api(pdf_input):
             with open(pdf_input, "rb") as f:
                 pdf_bytes = f.read()
     else:
-        raise ValueError("pdf_input must be bytes, a local file path, or a Google Drive URL")
+        raise ValueError("pdf_input must be bytes, a local file path, Firebase Storage path, or a Google Drive URL")
 
     logger.info(f"✅ PDF ready for processing ({len(pdf_bytes)} bytes)")
 

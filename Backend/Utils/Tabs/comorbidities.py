@@ -51,7 +51,16 @@ def extract_comorbidities_with_gemini(pdf_input):
         logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
         pdf_bytes = pdf_input
     elif isinstance(pdf_input, str):
-        if "drive.google.com" in pdf_input:
+        if pdf_input.startswith("/api/documents/"):
+            # Handle Firebase Storage paths
+            logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
+            try:
+                from Backend.storage_uploader import download_pdf_bytes_from_url
+            except ModuleNotFoundError:
+                from storage_uploader import download_pdf_bytes_from_url
+            pdf_bytes = download_pdf_bytes_from_url(pdf_input)
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        elif "drive.google.com" in pdf_input:
             # Handle Google Drive URLs
             logger.info(f"📥 Downloading PDF from Google Drive: {pdf_input}")
             match = re.search(r'/file/d/([^/]+)', pdf_input)
