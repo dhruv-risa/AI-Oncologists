@@ -62,37 +62,40 @@ def extract_diagnosis_header_with_gemini(pdf_input):
     if isinstance(pdf_input, bytes):
         logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
         pdf_bytes = pdf_input
-    elif pdf_input.startswith("/api/documents/"):
-        # Handle Firebase Storage paths
-        logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
-        try:
-            from Backend.storage_uploader import download_pdf_bytes_from_url
-        except ModuleNotFoundError:
-            from storage_uploader import download_pdf_bytes_from_url
-        pdf_bytes = download_pdf_bytes_from_url(pdf_input)
-        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
-    elif pdf_input.startswith("http"):
-        # Handle Google Drive URLs
-        logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
-        if "drive.google.com" in pdf_input:
-            match = re.search(r'/file/d/([^/]+)', pdf_input)
-            if match:
-                file_id = match.group(1)
-                download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    elif isinstance(pdf_input, str):
+        if pdf_input.startswith("/api/documents/"):
+            # Handle Firebase Storage paths
+            logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
+            try:
+                from Backend.storage_uploader import download_pdf_bytes_from_url
+            except ModuleNotFoundError:
+                from storage_uploader import download_pdf_bytes_from_url
+            pdf_bytes = download_pdf_bytes_from_url(pdf_input)
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        elif pdf_input.startswith("http"):
+            # Handle Google Drive URLs
+            logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
+            if "drive.google.com" in pdf_input:
+                match = re.search(r'/file/d/([^/]+)', pdf_input)
+                if match:
+                    file_id = match.group(1)
+                    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                else:
+                    raise ValueError("Could not extract file ID from Google Drive URL")
             else:
-                raise ValueError("Could not extract file ID from Google Drive URL")
-        else:
-            download_url = pdf_input
+                download_url = pdf_input
 
-        response = requests.get(download_url, allow_redirects=True)
-        response.raise_for_status()
-        pdf_bytes = response.content
-        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+            response = requests.get(download_url, allow_redirects=True)
+            response.raise_for_status()
+            pdf_bytes = response.content
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        else:
+            # Assume it's a file path
+            logger.info(f"📤 Reading PDF from path: {pdf_input}")
+            with open(pdf_input, "rb") as f:
+                pdf_bytes = f.read()
     else:
-        # Assume it's a file path
-        logger.info(f"📤 Reading PDF from path: {pdf_input}")
-        with open(pdf_input, "rb") as f:
-            pdf_bytes = f.read()
+        raise ValueError(f"Invalid pdf_input type: {type(pdf_input)}. Expected bytes or string.")
 
     # REFINED INSTRUCTIONS
     # Build prompt from extraction instructions and description
@@ -248,26 +251,38 @@ def extract_diagnosis_evolution_with_gemini(pdf_input):
     if isinstance(pdf_input, bytes):
         logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
         pdf_bytes = pdf_input
-    elif pdf_input.startswith("http"):
-        logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
-        if "drive.google.com" in pdf_input:
-            match = re.search(r'/file/d/([^/]+)', pdf_input)
-            if match:
-                file_id = match.group(1)
-                download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    elif isinstance(pdf_input, str):
+        if pdf_input.startswith("/api/documents/"):
+            # Handle Firebase Storage paths
+            logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
+            try:
+                from Backend.storage_uploader import download_pdf_bytes_from_url
+            except ModuleNotFoundError:
+                from storage_uploader import download_pdf_bytes_from_url
+            pdf_bytes = download_pdf_bytes_from_url(pdf_input)
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        elif pdf_input.startswith("http"):
+            logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
+            if "drive.google.com" in pdf_input:
+                match = re.search(r'/file/d/([^/]+)', pdf_input)
+                if match:
+                    file_id = match.group(1)
+                    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                else:
+                    raise ValueError("Could not extract file ID from Google Drive URL")
             else:
-                raise ValueError("Could not extract file ID from Google Drive URL")
-        else:
-            download_url = pdf_input
+                download_url = pdf_input
 
-        response = requests.get(download_url, allow_redirects=True)
-        response.raise_for_status()
-        pdf_bytes = response.content
-        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+            response = requests.get(download_url, allow_redirects=True)
+            response.raise_for_status()
+            pdf_bytes = response.content
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        else:
+            logger.info(f"📤 Reading PDF from path: {pdf_input}")
+            with open(pdf_input, "rb") as f:
+                pdf_bytes = f.read()
     else:
-        logger.info(f"📤 Reading PDF from path: {pdf_input}")
-        with open(pdf_input, "rb") as f:
-            pdf_bytes = f.read()
+        raise ValueError(f"Invalid pdf_input type: {type(pdf_input)}. Expected bytes or string.")
 
     extraction_instruction = """
     Extract a Treatment and Stage Evolution Timeline for the patient.
@@ -1149,26 +1164,38 @@ def extract_diagnosis_footer_with_gemini(pdf_input):
     if isinstance(pdf_input, bytes):
         logger.info(f"📤 Using PDF bytes ({len(pdf_input)} bytes)")
         pdf_bytes = pdf_input
-    elif pdf_input.startswith("http"):
-        logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
-        if "drive.google.com" in pdf_input:
-            match = re.search(r'/file/d/([^/]+)', pdf_input)
-            if match:
-                file_id = match.group(1)
-                download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    elif isinstance(pdf_input, str):
+        if pdf_input.startswith("/api/documents/"):
+            # Handle Firebase Storage paths
+            logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
+            try:
+                from Backend.storage_uploader import download_pdf_bytes_from_url
+            except ModuleNotFoundError:
+                from storage_uploader import download_pdf_bytes_from_url
+            pdf_bytes = download_pdf_bytes_from_url(pdf_input)
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        elif pdf_input.startswith("http"):
+            logger.info(f"📥 Downloading PDF from URL: {pdf_input}")
+            if "drive.google.com" in pdf_input:
+                match = re.search(r'/file/d/([^/]+)', pdf_input)
+                if match:
+                    file_id = match.group(1)
+                    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                else:
+                    raise ValueError("Could not extract file ID from Google Drive URL")
             else:
-                raise ValueError("Could not extract file ID from Google Drive URL")
-        else:
-            download_url = pdf_input
+                download_url = pdf_input
 
-        response = requests.get(download_url, allow_redirects=True)
-        response.raise_for_status()
-        pdf_bytes = response.content
-        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+            response = requests.get(download_url, allow_redirects=True)
+            response.raise_for_status()
+            pdf_bytes = response.content
+            logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes")
+        else:
+            logger.info(f"📤 Reading PDF from path: {pdf_input}")
+            with open(pdf_input, "rb") as f:
+                pdf_bytes = f.read()
     else:
-        logger.info(f"📤 Reading PDF from path: {pdf_input}")
-        with open(pdf_input, "rb") as f:
-            pdf_bytes = f.read()
+        raise ValueError(f"Invalid pdf_input type: {type(pdf_input)}. Expected bytes or string.")
 
     extraction_instruction = ("Extract temporal information about the patient's cancer diagnosis, disease progression, and relapse/recurrence. "
                                     "1. DIAGNOSIS DATE: Identify the date of the first cancer diagnosis and calculate the total duration from that date to the document signature date or current date mentioned in the document. "
@@ -1473,6 +1500,15 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
     if isinstance(pdf_input, bytes):
         logger.info(f"📤 Using provided PDF bytes ({len(pdf_input)} bytes)")
         pdf_bytes = pdf_input
+    elif isinstance(pdf_input, str) and pdf_input.startswith("/api/documents/"):
+        # Handle Firebase Storage paths
+        logger.info(f"📥 Downloading PDF from Firebase Storage: {pdf_input}")
+        try:
+            from Backend.storage_uploader import download_pdf_bytes_from_url
+        except ModuleNotFoundError:
+            from storage_uploader import download_pdf_bytes_from_url
+        pdf_bytes = download_pdf_bytes_from_url(pdf_input)
+        logger.info(f"✅ Downloaded {len(pdf_bytes)} bytes (will reuse for all 3 extractions)")
     elif isinstance(pdf_input, str) and pdf_input.startswith("http"):
         # Download once for all three extractions
         logger.info(f"📥 Downloading PDF once from URL: {pdf_input}")
@@ -1522,17 +1558,17 @@ def diagnosis_extraction(pdf_input, use_gemini=True):
         logger.info("📝 Using legacy llmresponsedetailed pipeline")
 
         logger.info("🔄 Extracting patient diagnosis header data (1/3)...")
-        diagnosis_header = llmresponsedetailed(pdf_url, extraction_instructions= extraction_instruction_header, description=description_header)
+        diagnosis_header = llmresponsedetailed(pdf_input, extraction_instructions= extraction_instruction_header, description=description_header)
         log_extraction_output(logger, "Diagnosis Header", diagnosis_header)
         log_extraction_complete(logger, "Diagnosis Header", diagnosis_header.keys() if isinstance(diagnosis_header, dict) else None)
 
         logger.info("🔄 Extracting patient diagnosis stage evolution data (2/3)...")
-        diagnosis_evolution_timeline = llmresponsedetailed(pdf_url, extraction_instructions=extraction_instruction_evolution_timeline, description=description_evolution_timeline)
+        diagnosis_evolution_timeline = llmresponsedetailed(pdf_input, extraction_instructions=extraction_instruction_evolution_timeline, description=description_evolution_timeline)
         log_extraction_output(logger, "Diagnosis Evolution Timeline", diagnosis_evolution_timeline)
         log_extraction_complete(logger, "Diagnosis Evolution Timeline", diagnosis_evolution_timeline.keys() if isinstance(diagnosis_evolution_timeline, dict) else None)
 
         logger.info("🔄 Extracting patient diagnosis footer data (3/3)...")
-        diagnosis_footer = llmresponsedetailed(pdf_url, extraction_instructions=extraction_instruction_footer, description=description_footer)
+        diagnosis_footer = llmresponsedetailed(pdf_input, extraction_instructions=extraction_instruction_footer, description=description_footer)
         # Recalculate durations based on actual dates and today's date
         diagnosis_footer = recalculate_durations(diagnosis_footer)
         log_extraction_output(logger, "Diagnosis Footer", diagnosis_footer)

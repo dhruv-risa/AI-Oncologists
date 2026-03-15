@@ -658,5 +658,46 @@
     },
     "cached_at": "2026-03-15T10:23:07.007310",
     "expires_at": "2026-04-14T10:23:07.007323"
+  },
+  "e50731433ed9f32cc6f2847f728da4192a55b295781d1d3ffd59ee0d24e3dc5b": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a classic surgical pathology report detailing the histopathological examination of multiple tissue biopsies from the larynx. It includes sections like 'Final Diagnosis' and 'Gross Description' and uses morphological terms such as 'squamous mucosa', 'dysplasia', and 'parakeratosis' to describe the tissue, which are all hallmarks of a typical pathology report.",
+      "key_indicators": [
+        "TISSUE EXAM",
+        "Surgical Pathology Case",
+        "Final Diagnosis",
+        "Gross Description",
+        "low to moderate grade intraepithelial dysplasia"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--8EM4T6HC2161SZVQ5MKRLU.PD--09013742906085139--1",
+      "date": "2025-06-30T14:05:40.317+00:00",
+      "description": "TISSUE EXAM"
+    },
+    "cached_at": "2026-03-15T12:40:24.149735",
+    "expires_at": "2026-04-14T12:40:24.149747"
+  },
+  "eccbfc6534ba94c927527c8bce25645218577b7959211bfcc25b1f587d80c3d7": {
+    "classification": {
+      "category": "TYPICAL_PATHOLOGY",
+      "confidence": "high",
+      "reasoning": "The report is a standard surgical pathology report for a biopsy specimen. It includes a final diagnosis based on histopathological examination, a gross description of the tissue, and mentions the use of immunohistochemistry (pan-cytokeratin) for diagnostic purposes, all of which are hallmarks of a typical pathology report.",
+      "key_indicators": [
+        "Surgical Pathology (Final result)",
+        "Final Diagnosis",
+        "Laryngeal epiglottic lesion, biopsy",
+        "Gross Description"
+      ]
+    },
+    "document_info": {
+      "url": "https://fhir.prod.flatiron.io/fhir/DocumentReference/DH--4RXSON1NK10JKUNACP2VC0.PD--09013742906085139--1",
+      "date": "2025-04-25T13:49:46.3+00:00",
+      "description": "Surgical Path (Final Result) SNBU25-05951"
+    },
+    "cached_at": "2026-03-15T12:40:36.178974",
+    "expires_at": "2026-04-14T12:40:36.178984"
   }
 }
