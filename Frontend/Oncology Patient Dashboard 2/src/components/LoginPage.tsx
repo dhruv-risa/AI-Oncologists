@@ -40,7 +40,7 @@ export default function LoginPage() {
     }}>
       {/* Logo */}
       <img src={risaLogo} alt="RISA" style={{ width: '160px', marginBottom: '0.5rem' }} />
-      <p style={{ fontSize: '1rem', fontWeight: 500, color: '#111111', marginBottom: '2rem' }}>AI Oncologist Copilot</p>
+      <p style={{ fontSize: '1rem', fontWeight: 500, color: '#111111', marginBottom: '2rem' }}>RISA OneView</p>
 
       {/* Card */}
       <div style={{

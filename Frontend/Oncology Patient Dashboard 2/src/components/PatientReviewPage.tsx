@@ -243,7 +243,7 @@ export default function PatientReviewPage({ token }: PatientReviewPageProps) {
 
                 {/* Footer */}
                 <p className="text-center text-xs text-gray-400 mt-6">
-                    AI Oncologist Clinical Trial Matching System
+                    RISA OneView Clinical Trial Matching System
                 </p>
             </div>
         </div>

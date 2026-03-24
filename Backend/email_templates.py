@@ -7,8 +7,8 @@ To add a new app, add an entry to APP_TEMPLATES.
 
 APP_TEMPLATES = {
     "ai-oncologist-copilot": {
-        "sender_name": "AI Oncologist Copilot",
-        "subject": "Sign in to AI Oncologist Copilot",
+        "sender_name": "RISA OneView",
+        "subject": "Sign in to RISA OneView",
         "body_html": """\
 <!DOCTYPE html>
 <html>
@@ -22,7 +22,7 @@ APP_TEMPLATES = {
           <td style="background-color:#000000;padding:32px;text-align:center;">
             <span style="font-size:28px;font-weight:700;color:#ffffff;letter-spacing:0.05em;">RISA</span>
             <br>
-            <span style="font-size:14px;color:#9ca3af;margin-top:4px;display:inline-block;">AI Oncologist Copilot</span>
+            <span style="font-size:14px;color:#9ca3af;margin-top:4px;display:inline-block;">RISA OneView</span>
           </td>
         </tr>
         <!-- Body -->
