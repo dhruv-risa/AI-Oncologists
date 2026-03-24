@@ -465,9 +465,41 @@ class DataPool:
         }
 
     def _get_eligibility_counts(self):
-        """Get eligibility counts from SQLite (always local)."""
+        """Get eligibility counts. Uses Firestore if available, SQLite as fallback."""
         eligibility_counts = {}
         try:
+            if self._firestore:
+                # Query Firestore for all eligibility results
+                docs = self._firestore.collection(self.FIRESTORE_ELIGIBILITY_COLLECTION).stream()
+
+                # Aggregate counts by patient_mrn
+                for doc in docs:
+                    data = doc.to_dict()
+                    patient_mrn = data.get("patient_mrn")
+                    status = data.get("eligibility_status")
+
+                    if patient_mrn:
+                        if patient_mrn not in eligibility_counts:
+                            eligibility_counts[patient_mrn] = {
+                                "total_trials_analyzed": 0,
+                                "likely_eligible": 0,
+                                "potentially_eligible": 0,
+                                "not_eligible": 0
+                            }
+
+                        eligibility_counts[patient_mrn]["total_trials_analyzed"] += 1
+
+                        if status == "LIKELY_ELIGIBLE":
+                            eligibility_counts[patient_mrn]["likely_eligible"] += 1
+                        elif status == "POTENTIALLY_ELIGIBLE":
+                            eligibility_counts[patient_mrn]["potentially_eligible"] += 1
+                        elif status == "NOT_ELIGIBLE":
+                            eligibility_counts[patient_mrn]["not_eligible"] += 1
+
+                logger.info(f"[DataPool] Retrieved eligibility counts for {len(eligibility_counts)} patients from Firestore")
+                return eligibility_counts
+
+            # SQLite fallback
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute("""
@@ -483,8 +515,8 @@ class DataPool:
                     "potentially_eligible": row[3], "not_eligible": row[4]
                 }
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error getting eligibility counts: {e}", exc_info=True)
         return eligibility_counts
 
     def list_all_patients(self) -> List[Dict]:

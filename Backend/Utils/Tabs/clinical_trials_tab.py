@@ -17,7 +17,7 @@ from vertexai.generative_models import GenerativeModel, Part
 
 # Initialize Vertex AI
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-vertexai.init(project=os.environ.get("VERTEX_PROJECT", "prior-auth-portal-dev"), location="us-central1")
+vertexai.init(project=os.environ.get("VERTEX_PROJECT", "rapids-platform"), location="us-central1")
 
 # ClinicalTrials.gov API v2 base URL
 CLINICALTRIALS_API_BASE = "https://clinicaltrials.gov/api/v2"
@@ -2172,7 +2172,7 @@ Return ONLY the JSON array, no other text.
 """
 
     try:
-        model = GenerativeModel("gemini-2.5-flash")
+        model = GenerativeModel("gemini-2.5-pro")
         # Enforce JSON output to prevent parsing errors
         generation_config = {"response_mime_type": "application/json"}
         response = model.generate_content(
@@ -2576,7 +2576,7 @@ Return ONLY the JSON array, no other text.
 """
 
     try:
-        model = GenerativeModel("gemini-2.5-flash")
+        model = GenerativeModel("gemini-2.5-pro")
         generation_config = {"response_mime_type": "application/json"}
         response = model.generate_content(
             prompt, generation_config=generation_config
