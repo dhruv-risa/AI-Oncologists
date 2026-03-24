@@ -35,11 +35,15 @@ class DataPool:
 
     Patient data → Firestore (permanent, survives deploys)
     Eligibility results → Firestore (permanent, survives deploys)
+    Patient review tokens → Firestore (permanent, survives deploys)
     Trials cache → SQLite (ephemeral, re-syncs nightly)
+    Computation progress → SQLite (ephemeral, operational)
+    Sync logs → SQLite (ephemeral, operational)
     """
 
     FIRESTORE_COLLECTION = "patients"
     FIRESTORE_ELIGIBILITY_COLLECTION = "patient_trial_eligibility"
+    FIRESTORE_REVIEW_TOKENS_COLLECTION = "patient_review_tokens"
 
     def __init__(self, db_path: str = None):
         """
@@ -1106,8 +1110,27 @@ class DataPool:
 
     def create_review_token(self, token: str, patient_mrn: str, trial_nct_id: str,
                             criteria_snapshot: str) -> bool:
-        """Create a new patient review token with criteria snapshot."""
+        """Create a new patient review token with criteria snapshot. Uses Firestore if available."""
         try:
+            current_time = datetime.now().isoformat()
+
+            if self._firestore:
+                # Store in Firestore
+                doc_ref = self._firestore.collection(self.FIRESTORE_REVIEW_TOKENS_COLLECTION).document(token)
+                doc_ref.set({
+                    "token": token,
+                    "patient_mrn": patient_mrn,
+                    "trial_nct_id": trial_nct_id,
+                    "criteria_snapshot": criteria_snapshot,
+                    "status": "pending",
+                    "responses": None,
+                    "created_at": current_time,
+                    "completed_at": None
+                })
+                logger.info(f"[DataPool] Created review token {token} in Firestore")
+                return True
+
+            # SQLite fallback
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute("""
@@ -1119,12 +1142,30 @@ class DataPool:
             conn.close()
             return True
         except Exception as e:
-            print(f"Error creating review token: {e}")
+            logger.error(f"Error creating review token: {e}", exc_info=True)
             return False
 
     def get_review_token(self, token: str):
-        """Get review token data."""
+        """Get review token data. Uses Firestore if available."""
         try:
+            if self._firestore:
+                # Query Firestore
+                doc = self._firestore.collection(self.FIRESTORE_REVIEW_TOKENS_COLLECTION).document(token).get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    return {
+                        "token": data.get("token"),
+                        "patient_mrn": data.get("patient_mrn"),
+                        "trial_nct_id": data.get("trial_nct_id"),
+                        "criteria_snapshot": data.get("criteria_snapshot"),
+                        "status": data.get("status"),
+                        "responses": data.get("responses"),
+                        "created_at": data.get("created_at"),
+                        "completed_at": data.get("completed_at")
+                    }
+                return None
+
+            # SQLite fallback
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute("""
@@ -1148,12 +1189,30 @@ class DataPool:
                 }
             return None
         except Exception as e:
-            print(f"Error getting review token: {e}")
+            logger.error(f"Error getting review token: {e}", exc_info=True)
             return None
 
     def complete_review_token(self, token: str, responses: str) -> bool:
-        """Mark a review token as completed with patient responses."""
+        """Mark a review token as completed with patient responses. Uses Firestore if available."""
         try:
+            current_time = datetime.now().isoformat()
+
+            if self._firestore:
+                # Update in Firestore
+                doc_ref = self._firestore.collection(self.FIRESTORE_REVIEW_TOKENS_COLLECTION).document(token)
+                doc = doc_ref.get()
+
+                if doc.exists and doc.to_dict().get("status") == "pending":
+                    doc_ref.update({
+                        "status": "completed",
+                        "responses": responses,
+                        "completed_at": current_time
+                    })
+                    logger.info(f"[DataPool] Completed review token {token} in Firestore")
+                    return True
+                return False
+
+            # SQLite fallback
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute("""
@@ -1162,12 +1221,12 @@ class DataPool:
                     responses = ?,
                     completed_at = ?
                 WHERE token = ? AND status = 'pending'
-            """, (responses, datetime.now().isoformat(), token))
+            """, (responses, current_time, token))
             conn.commit()
             conn.close()
             return True
         except Exception as e:
-            print(f"Error completing review token: {e}")
+            logger.error(f"Error completing review token: {e}", exc_info=True)
             return False
 
     def get_eligible_patients_for_trial(self, nct_id: str, status_filter: str = None,
