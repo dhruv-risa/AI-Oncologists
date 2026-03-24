@@ -2172,7 +2172,7 @@ Return ONLY the JSON array, no other text.
 """
 
     try:
-        model = GenerativeModel("gemini-2.0-flash-exp")
+        model = GenerativeModel("gemini-1.5-flash")
         # Enforce JSON output to prevent parsing errors
         generation_config = {"response_mime_type": "application/json"}
         response = model.generate_content(
@@ -2576,7 +2576,7 @@ Return ONLY the JSON array, no other text.
 """
 
     try:
-        model = GenerativeModel("gemini-2.0-flash-exp")
+        model = GenerativeModel("gemini-1.5-flash")
         generation_config = {"response_mime_type": "application/json"}
         response = model.generate_content(
             prompt, generation_config=generation_config
@@ -3241,6 +3241,36 @@ def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250,
 
     # Sort by eligibility percentage (highest first)
     matched_trials.sort(key=lambda x: x["eligibility"]["percentage"], reverse=True)
+
+    # Store eligibility results in Firestore (permanent storage)
+    try:
+        from Backend.data_pool import get_data_pool
+        data_pool = get_data_pool()
+        patient_mrn = patient_data.get("demographics", {}).get("MRN", "")
+
+        if patient_mrn:
+            stored_count = 0
+            for trial in matched_trials:
+                nct_id = trial.get("nct_id")
+                if nct_id:
+                    eligibility_data = {
+                        "status": trial["eligibility"]["status"],
+                        "percentage": trial["eligibility"]["percentage"],
+                        "criteria_results": trial["eligibility"].get("criteria_results", {}),
+                        "key_matching_criteria": trial["eligibility"].get("key_matching_criteria", []),
+                        "key_exclusion_reasons": trial["eligibility"].get("key_exclusion_reasons", [])
+                    }
+                    trial_data = {
+                        "title": trial.get("title", ""),
+                        "phase": trial.get("phase", ""),
+                        "status": trial.get("status", ""),
+                        "sponsor": trial.get("sponsor", "")
+                    }
+                    if data_pool.store_eligibility(nct_id, patient_mrn, eligibility_data, trial_data):
+                        stored_count += 1
+            print(f"Stored {stored_count}/{len(matched_trials)} eligibility results in Firestore")
+    except Exception as e:
+        print(f"Warning: Could not store eligibility results: {e}")
 
     # Count trials by eligibility status
     likely_eligible = sum(1 for t in matched_trials if t["eligibility"]["status"] == "LIKELY_ELIGIBLE")

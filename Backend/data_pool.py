@@ -34,10 +34,12 @@ class DataPool:
     Data pool for storing patient data and trials cache.
 
     Patient data → Firestore (permanent, survives deploys)
-    Trials/eligibility → SQLite (ephemeral, re-syncs nightly)
+    Eligibility results → Firestore (permanent, survives deploys)
+    Trials cache → SQLite (ephemeral, re-syncs nightly)
     """
 
     FIRESTORE_COLLECTION = "patients"
+    FIRESTORE_ELIGIBILITY_COLLECTION = "patient_trial_eligibility"
 
     def __init__(self, db_path: str = None):
         """
@@ -854,19 +856,50 @@ class DataPool:
 
     # ==================== ELIGIBILITY MATRIX METHODS ====================
 
-    def store_eligibility(self, trial_nct_id: str, patient_mrn: str, eligibility_data: Dict) -> bool:
+    def store_eligibility(self, trial_nct_id: str, patient_mrn: str, eligibility_data: Dict, trial_data: Dict = None) -> bool:
         """
-        Store eligibility result for a patient-trial pair.
+        Store eligibility result for a patient-trial pair. Uses Firestore if available, SQLite as fallback.
 
         Args:
             trial_nct_id: ClinicalTrials.gov NCT ID
             patient_mrn: Patient's Medical Record Number
             eligibility_data: Dictionary containing eligibility analysis
+            trial_data: Optional trial details (title, phase, status, sponsor) to store with eligibility
 
         Returns:
             True if successful, False otherwise
         """
         try:
+            current_time = datetime.now().isoformat()
+
+            if self._firestore:
+                # Store in Firestore - use composite key as document ID
+                doc_id = f"{patient_mrn}_{trial_nct_id}"
+                doc_ref = self._firestore.collection(self.FIRESTORE_ELIGIBILITY_COLLECTION).document(doc_id)
+
+                eligibility_doc = {
+                    "trial_nct_id": trial_nct_id,
+                    "patient_mrn": patient_mrn,
+                    "eligibility_status": eligibility_data.get("status", "Unknown"),
+                    "eligibility_percentage": eligibility_data.get("percentage", 0),
+                    "criteria_results": eligibility_data.get("criteria_results", {}),
+                    "key_matching_criteria": eligibility_data.get("key_matching_criteria", []),
+                    "key_exclusion_reasons": eligibility_data.get("key_exclusion_reasons", []),
+                    "computed_at": current_time
+                }
+
+                # Include trial details if provided
+                if trial_data:
+                    eligibility_doc["trial_title"] = trial_data.get("title", "")
+                    eligibility_doc["trial_phase"] = trial_data.get("phase", "")
+                    eligibility_doc["trial_status"] = trial_data.get("status", "")
+                    eligibility_doc["trial_sponsor"] = trial_data.get("sponsor", "")
+
+                doc_ref.set(eligibility_doc)
+                logger.info(f"[DataPool] Stored eligibility for {patient_mrn} × {trial_nct_id} in Firestore")
+                return True
+
+            # SQLite fallback
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
@@ -883,14 +916,14 @@ class DataPool:
                 json.dumps(eligibility_data.get("criteria_results", {})),
                 json.dumps(eligibility_data.get("key_matching_criteria", [])),
                 json.dumps(eligibility_data.get("key_exclusion_reasons", [])),
-                datetime.now().isoformat()
+                current_time
             ))
 
             conn.commit()
             conn.close()
             return True
         except Exception as e:
-            print(f"Error storing eligibility: {e}")
+            logger.error(f"Error storing eligibility: {e}", exc_info=True)
             return False
 
     def bulk_store_eligibility(self, eligibility_results: List[Dict]) -> int:
@@ -1189,7 +1222,7 @@ class DataPool:
 
     def get_eligible_trials_for_patient(self, mrn: str, status_filter: str = None) -> List[Dict]:
         """
-        Get all trials a patient is eligible for (from cache).
+        Get all trials a patient is eligible for. Uses Firestore if available, SQLite as fallback.
 
         Args:
             mrn: Patient's Medical Record Number
@@ -1199,6 +1232,42 @@ class DataPool:
             List of trial eligibility results with trial details
         """
         try:
+            if self._firestore:
+                # Query Firestore
+                query = self._firestore.collection(self.FIRESTORE_ELIGIBILITY_COLLECTION).where("patient_mrn", "==", mrn)
+
+                if status_filter:
+                    query = query.where("eligibility_status", "==", status_filter)
+
+                docs = query.stream()
+
+                results = []
+                for doc in docs:
+                    data = doc.to_dict()
+                    # Convert Firestore document to expected format
+                    result = {
+                        "trial_nct_id": data.get("trial_nct_id"),
+                        "patient_mrn": data.get("patient_mrn"),
+                        "eligibility_status": data.get("eligibility_status"),
+                        "eligibility_percentage": data.get("eligibility_percentage"),
+                        "criteria_results": data.get("criteria_results", {}),
+                        "key_matching_criteria": data.get("key_matching_criteria", []),
+                        "key_exclusion_reasons": data.get("key_exclusion_reasons", []),
+                        "computed_at": data.get("computed_at"),
+                        # Trial details would need to be fetched separately or stored with eligibility
+                        "title": data.get("trial_title", ""),
+                        "phase": data.get("trial_phase", ""),
+                        "trial_status": data.get("trial_status", ""),
+                        "sponsor": data.get("trial_sponsor", "")
+                    }
+                    results.append(result)
+
+                # Sort by eligibility percentage descending
+                results.sort(key=lambda x: x.get("eligibility_percentage", 0), reverse=True)
+                logger.info(f"[DataPool] Retrieved {len(results)} eligibility results for {mrn} from Firestore")
+                return results
+
+            # SQLite fallback
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
@@ -1225,7 +1294,7 @@ class DataPool:
 
             return [self._row_to_eligibility_dict(row, description) for row in rows]
         except Exception as e:
-            print(f"Error getting eligible trials for patient: {e}")
+            logger.error(f"Error getting eligible trials for patient: {e}", exc_info=True)
             return []
 
     def get_eligibility_stats_for_trial(self, nct_id: str) -> Dict:
