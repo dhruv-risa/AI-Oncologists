@@ -2172,7 +2172,7 @@ Return ONLY the JSON array, no other text.
 """
 
     try:
-        model = GenerativeModel("gemini-2.5-pro")
+        model = GenerativeModel("gemini-2.0-flash-exp")
         # Enforce JSON output to prevent parsing errors
         generation_config = {"response_mime_type": "application/json"}
         response = model.generate_content(
@@ -2576,7 +2576,7 @@ Return ONLY the JSON array, no other text.
 """
 
     try:
-        model = GenerativeModel("gemini-2.5-pro")
+        model = GenerativeModel("gemini-2.0-flash-exp")
         generation_config = {"response_mime_type": "application/json"}
         response = model.generate_content(
             prompt, generation_config=generation_config
