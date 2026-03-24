@@ -185,18 +185,18 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
   );
 
   const getPhaseColor = (phase: string) => {
-    if (phase.includes('1')) return 'bg-yellow-100 text-yellow-800';
-    if (phase.includes('2')) return 'bg-blue-100 text-blue-800';
-    if (phase.includes('3')) return 'bg-green-100 text-green-800';
-    if (phase.includes('4')) return 'bg-purple-100 text-purple-800';
-    return 'bg-gray-100 text-gray-800';
+    if (phase.includes('1')) return 'bg-amber-100 text-amber-800';
+    if (phase.includes('2')) return 'bg-blue-100 text-blue-700';
+    if (phase.includes('3')) return 'bg-green-100 text-green-700';
+    if (phase.includes('4')) return 'bg-purple-100 text-purple-700';
+    return 'bg-gray-100 text-gray-700';
   };
 
   const getStatusColor = (status: string) => {
-    if (status === 'RECRUITING') return 'bg-green-100 text-green-800';
-    if (status === 'ACTIVE_NOT_RECRUITING') return 'bg-yellow-100 text-yellow-800';
-    if (status === 'COMPLETED') return 'bg-gray-100 text-gray-800';
-    return 'bg-gray-100 text-gray-800';
+    if (status === 'RECRUITING') return 'bg-green-100 text-green-700';
+    if (status === 'ACTIVE_NOT_RECRUITING') return 'bg-amber-100 text-amber-800';
+    if (status === 'COMPLETED') return 'bg-gray-100 text-gray-700';
+    return 'bg-gray-100 text-gray-700';
   };
 
   return (
@@ -324,7 +324,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
             {filteredTrials.map((trial) => (
               <Card
                 key={trial.nct_id}
-                className="hover:shadow-lg transition-shadow cursor-pointer"
+                className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
                 onClick={() => onSelectTrial(trial.nct_id)}
               >
                 <CardHeader className="pb-2">
@@ -350,7 +350,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
 
                   {/* Eligible Patients Badge */}
                   {(trial as any).eligible_patient_count > 0 && (
-                    <div className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 bg-green-100 text-green-800 rounded-full text-sm font-medium">
+                    <div className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-sm font-medium">
                       <Users className="h-4 w-4" />
                       {(trial as any).eligible_patient_count} eligible patient{(trial as any).eligible_patient_count !== 1 ? 's' : ''}
                     </div>

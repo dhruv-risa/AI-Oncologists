@@ -5,11 +5,16 @@ import { TrialsListView } from './components/TrialsListView';
 import { TrialDetailView } from './components/TrialDetailView';
 import PatientReviewPage from './components/PatientReviewPage';
 import { PatientProvider } from './contexts/PatientContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import LoginPage from './components/LoginPage';
+import { Loader2 } from 'lucide-react';
 
 type ViewMode = 'patients' | 'patient-detail' | 'trials' | 'trial-detail';
 
-export default function App() {
-  // Check if this is a patient review page
+function AppContent() {
+  const { user, loading } = useAuth();
+
+  // Check if this is a patient review page (public, no auth needed)
   const [reviewToken, setReviewToken] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('patients');
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
@@ -24,9 +29,23 @@ export default function App() {
     }
   }, []);
 
-  // Render standalone review page if token detected
+  // Render standalone review page if token detected (no auth required)
   if (reviewToken) {
     return <PatientReviewPage token={reviewToken} />;
+  }
+
+  // Show loading spinner while auth state initializes
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+      </div>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!user) {
+    return <LoginPage />;
   }
 
   const handleSelectPatient = (patientId: string) => {
@@ -66,7 +85,6 @@ export default function App() {
     setViewMode('patients');
   };
 
-  // Navigate from trial detail to patient detail (open Clinical Trials tab focused on this trial)
   const handleSelectPatientFromTrial = (mrn: string, trialNctId?: string) => {
     setInitialTab('clinical-trials');
     setFocusTrialId(trialNctId);
@@ -102,5 +120,13 @@ export default function App() {
         />
       )}
     </PatientProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

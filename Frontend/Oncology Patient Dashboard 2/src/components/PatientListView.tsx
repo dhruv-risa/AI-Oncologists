@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Users, Search, Filter, ArrowRight, AlertCircle, Activity, Plus, Loader2, Trash2, Beaker } from 'lucide-react';
+import { Users, Search, Filter, ArrowRight, AlertCircle, Activity, Plus, Loader2, Trash2, Beaker, LogOut } from 'lucide-react';
 import { usePatient } from '../contexts/PatientContext';
+import { useAuth } from '../contexts/AuthContext';
 import { apiService } from '../services/api';
 import { PatientListSkeleton } from './PatientCardSkeleton';
 import { LoadingModal } from './LoadingModal';
@@ -32,6 +33,7 @@ interface PatientListViewProps {
 
 export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListViewProps) {
   const { cachedPatients, loadCachedPatients, fetchPatientData, deletePatient, error, clearError, setCurrentPatient } = usePatient();
+  const { signOut, user } = useAuth();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientDataMap, setPatientDataMap] = useState<Map<string, any>>(new Map());
   const [searchMRN, setSearchMRN] = useState('');
@@ -299,6 +301,14 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Patient by MRN</span>
+              </button>
+              <button
+                onClick={() => signOut()}
+                className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+                title={user?.email || 'Sign out'}
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out</span>
               </button>
             </div>
           </div>

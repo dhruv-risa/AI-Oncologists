@@ -46,72 +46,46 @@ function ReviewModal({
 
     const isPatient = type === 'patient';
 
-    // Patient = dark blue tones, Clinician = maroon tones
-    const colors = isPatient
-        ? { border: '#93c5fd', headerBg: '#eff6ff', headerText: '#1e3a5f', accent: '#1d4ed8', light: '#dbeafe' }
-        : { border: '#e8a0a0', headerBg: '#fdf2f2', headerText: '#7f1d1d', accent: '#991b1b', light: '#fde8e8' };
-
     return (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.2)' }} onClick={onClose} />
-            <div style={{
-                position: 'relative', backgroundColor: '#fff', borderRadius: 10, width: 720, maxHeight: '80vh',
-                display: 'flex', flexDirection: 'column', border: `1.5px solid ${colors.border}`,
-                boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
-            }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/20" onClick={onClose} />
+            <div className={`relative bg-white rounded-lg w-[720px] max-h-[80vh] flex flex-col shadow-lg border ${isPatient ? 'border-blue-300' : 'border-red-300'}`}>
                 {/* Header */}
-                <div style={{
-                    padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    backgroundColor: colors.headerBg, borderBottom: `1px solid ${colors.border}`,
-                    borderRadius: '10px 10px 0 0',
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <ClipboardCheck style={{ width: 14, height: 14, color: colors.accent }} />
-                        <span style={{ fontSize: 12, fontWeight: 600, color: colors.headerText }}>
+                <div className={`px-3.5 py-2.5 flex items-center justify-between rounded-t-lg ${isPatient ? 'bg-blue-50 border-b border-blue-300' : 'bg-red-50 border-b border-red-300'}`}>
+                    <div className="flex items-center gap-2">
+                        <ClipboardCheck className={`w-3.5 h-3.5 ${isPatient ? 'text-blue-600' : 'text-red-600'}`} />
+                        <span className={`text-xs font-semibold ${isPatient ? 'text-blue-900' : 'text-red-900'}`}>
                             {isPatient ? 'Patient Review' : 'Clinician Review'}
                         </span>
-                        <span style={{ fontSize: 10, color: '#9ca3af' }}>{trialId}</span>
+                        <span className="text-[10px] text-gray-400">{trialId}</span>
                     </div>
-                    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: 2 }}>
-                        <X style={{ width: 14, height: 14 }} />
+                    <button onClick={onClose} className="bg-transparent border-none cursor-pointer text-gray-400 p-0.5">
+                        <X className="w-3.5 h-3.5" />
                     </button>
                 </div>
 
                 {/* Checklist */}
-                <div style={{ flex: 1, overflowY: 'auto', padding: '8px 14px' }}>
+                <div className="flex-1 overflow-y-auto px-3.5 py-2">
                     {criteria.length === 0 ? (
-                        <p style={{ textAlign: 'center', fontSize: 11, color: '#9ca3af', padding: '20px 0' }}>All items reviewed</p>
+                        <p className="text-center text-[11px] text-gray-400 py-5">All items reviewed</p>
                     ) : (
                         criteria.map((criterion, idx) => {
                             const key = `${criterion.criterion_type}-${criterion.criterion_number}`;
                             const resolved = resolutions.get(key);
 
                             return (
-                                <div key={idx} style={{
-                                    display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0',
-                                    borderBottom: idx < criteria.length - 1 ? '1px solid #f3f4f6' : 'none',
-                                }}>
-                                    <p style={{ flex: 1, fontSize: 11, color: '#374151', lineHeight: 1.4, margin: 0, paddingTop: 2 }}>
+                                <div key={idx} className="flex items-start gap-2 py-1.5 border-b border-gray-100 last:border-b-0">
+                                    <p className="flex-1 text-[11px] text-gray-700 leading-snug m-0 pt-0.5">
                                         {criterion.criterion_text}
                                     </p>
-                                    <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+                                    <div className="flex gap-0.5 shrink-0">
                                         <button
                                             onClick={() => toggle(criterion.criterion_type, criterion.criterion_number, true)}
-                                            style={{
-                                                padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: 'pointer',
-                                                border: 'none', transition: 'all 0.15s',
-                                                backgroundColor: resolved === true ? '#059669' : '#f3f4f6',
-                                                color: resolved === true ? '#fff' : '#9ca3af',
-                                            }}
+                                            className={`px-2 py-0.5 rounded text-[10px] font-semibold cursor-pointer border-none transition-all ${resolved === true ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-400'}`}
                                         >Yes</button>
                                         <button
                                             onClick={() => toggle(criterion.criterion_type, criterion.criterion_number, false)}
-                                            style={{
-                                                padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: 'pointer',
-                                                border: 'none', transition: 'all 0.15s',
-                                                backgroundColor: resolved === false ? '#dc2626' : '#f3f4f6',
-                                                color: resolved === false ? '#fff' : '#9ca3af',
-                                            }}
+                                            className={`px-2 py-0.5 rounded text-[10px] font-semibold cursor-pointer border-none transition-all ${resolved === false ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-400'}`}
                                         >No</button>
                                     </div>
                                 </div>
@@ -121,23 +95,14 @@ function ReviewModal({
                 </div>
 
                 {/* Footer */}
-                <div style={{
-                    padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    backgroundColor: colors.headerBg, borderTop: `1px solid ${colors.border}`,
-                    borderRadius: '0 0 10px 10px',
-                }}>
-                    <span style={{ fontSize: 10, color: '#9ca3af' }}>{resolutions.size}/{criteria.length}</span>
+                <div className={`px-3.5 py-2 flex items-center justify-between rounded-b-lg ${isPatient ? 'bg-blue-50 border-t border-blue-300' : 'bg-red-50 border-t border-red-300'}`}>
+                    <span className="text-[10px] text-gray-400">{resolutions.size}/{criteria.length}</span>
                     <button
                         onClick={handleSave}
                         disabled={resolutions.size === 0 || saving}
-                        style={{
-                            padding: '4px 12px', fontSize: 11, fontWeight: 600, color: '#fff', borderRadius: 5,
-                            backgroundColor: (resolutions.size === 0 || saving) ? '#d1d5db' : colors.accent,
-                            border: 'none', cursor: (resolutions.size === 0 || saving) ? 'not-allowed' : 'pointer',
-                            display: 'flex', alignItems: 'center', gap: 4,
-                        }}
+                        className={`px-3 py-1 text-[11px] font-semibold text-white rounded-md border-none flex items-center gap-1 ${(resolutions.size === 0 || saving) ? 'bg-gray-300 cursor-not-allowed' : isPatient ? 'bg-blue-600 cursor-pointer' : 'bg-red-700 cursor-pointer'}`}
                     >
-                        {saving && <Loader2 style={{ width: 10, height: 10 }} className="animate-spin" />}
+                        {saving && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
                         {saving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
@@ -156,51 +121,35 @@ function TestingModal({
     criteria: CriterionResult[];
     onClose: () => void;
 }) {
-    const colors = { border: '#fde68a', headerBg: '#fffbeb', headerText: '#92400e', accent: '#d97706', light: '#fef3c7' };
-
     return (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.2)' }} onClick={onClose} />
-            <div style={{
-                position: 'relative', backgroundColor: '#fff', borderRadius: 10, width: 840, maxHeight: '80vh',
-                display: 'flex', flexDirection: 'column', border: `1.5px solid ${colors.border}`,
-                boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
-            }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/20" onClick={onClose} />
+            <div className="relative bg-white rounded-lg w-[840px] max-h-[80vh] flex flex-col shadow-lg border border-amber-200">
                 {/* Header */}
-                <div style={{
-                    padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    backgroundColor: colors.headerBg, borderBottom: `1px solid ${colors.border}`,
-                    borderRadius: '10px 10px 0 0',
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <HelpCircle style={{ width: 14, height: 14, color: colors.accent }} />
-                        <span style={{ fontSize: 12, fontWeight: 600, color: colors.headerText }}>
+                <div className="px-3.5 py-2.5 flex items-center justify-between bg-amber-50 border-b border-amber-200 rounded-t-lg">
+                    <div className="flex items-center gap-2">
+                        <HelpCircle className="w-3.5 h-3.5 text-amber-600" />
+                        <span className="text-xs font-semibold text-amber-800">
                             Needs Testing
                         </span>
-                        <span style={{ fontSize: 10, color: '#9ca3af' }}>{trialId}</span>
+                        <span className="text-[10px] text-gray-400">{trialId}</span>
                     </div>
-                    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: 2 }}>
-                        <X style={{ width: 14, height: 14 }} />
+                    <button onClick={onClose} className="bg-transparent border-none cursor-pointer text-gray-400 p-0.5">
+                        <X className="w-3.5 h-3.5" />
                     </button>
                 </div>
 
                 {/* Criteria + Suggested Tests */}
-                <div style={{ flex: 1, overflowY: 'auto', padding: '8px 14px' }}>
+                <div className="flex-1 overflow-y-auto px-3.5 py-2">
                     {criteria.length === 0 ? (
-                        <p style={{ textAlign: 'center', fontSize: 11, color: '#9ca3af', padding: '20px 0' }}>No testing criteria</p>
+                        <p className="text-center text-[11px] text-gray-400 py-5">No testing criteria</p>
                     ) : (
                         criteria.map((criterion, idx) => (
-                            <div key={idx} style={{
-                                display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 0',
-                                borderBottom: idx < criteria.length - 1 ? '1px solid #f3f4f6' : 'none',
-                            }}>
-                                <p style={{ flex: 1, fontSize: 11, color: '#374151', lineHeight: 1.4, margin: 0, paddingTop: 2 }}>
+                            <div key={idx} className="flex items-start gap-2.5 py-1.5 border-b border-gray-100 last:border-b-0">
+                                <p className="flex-1 text-[11px] text-gray-700 leading-snug m-0 pt-0.5">
                                     {criterion.criterion_text}
                                 </p>
-                                <span style={{
-                                    flexShrink: 0, fontSize: 10, fontWeight: 600, color: colors.accent,
-                                    backgroundColor: colors.light, padding: '2px 8px', borderRadius: 4, whiteSpace: 'nowrap',
-                                }}>
+                                <span className="shrink-0 text-[10px] font-semibold text-amber-600 bg-amber-100 px-2 py-0.5 rounded whitespace-nowrap">
                                     {(criterion as any).suggested_test || 'Clinical Assessment'}
                                 </span>
                             </div>
@@ -209,18 +158,11 @@ function TestingModal({
                 </div>
 
                 {/* Footer */}
-                <div style={{
-                    padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    backgroundColor: colors.headerBg, borderTop: `1px solid ${colors.border}`,
-                    borderRadius: '0 0 10px 10px',
-                }}>
-                    <span style={{ fontSize: 10, color: '#9ca3af' }}>{criteria.length} criteria need testing</span>
+                <div className="px-3.5 py-2 flex items-center justify-between bg-amber-50 border-t border-amber-200 rounded-b-lg">
+                    <span className="text-[10px] text-gray-400">{criteria.length} criteria need testing</span>
                     <button
                         onClick={onClose}
-                        style={{
-                            padding: '4px 12px', fontSize: 11, fontWeight: 600, color: '#fff', borderRadius: 5,
-                            backgroundColor: colors.accent, border: 'none', cursor: 'pointer',
-                        }}
+                        className="px-3 py-1 text-[11px] font-semibold text-white rounded-md border-none cursor-pointer bg-amber-600"
                     >
                         Close
                     </button>
@@ -477,14 +419,14 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
     };
 
     const getStatusIcon = (met: boolean | null) => {
-        if (met === true) return <CheckCircle className="w-4 h-4 text-emerald-600" />;
+        if (met === true) return <CheckCircle className="w-4 h-4 text-green-600" />;
         if (met === false) return <XCircle className="w-4 h-4 text-red-500" />;
         return <HelpCircle className="w-4 h-4 text-amber-500" />;
     };
 
     const getStatusBadge = (status: string) => {
         const colors: Record<string, string> = {
-            'LIKELY_ELIGIBLE': 'bg-emerald-100 text-emerald-800 border-emerald-300',
+            'LIKELY_ELIGIBLE': 'bg-green-100 text-green-700 border-green-300',
             'POTENTIALLY_ELIGIBLE': 'bg-amber-100 text-amber-800 border-amber-300',
             'NOT_ELIGIBLE': 'bg-red-100 text-red-800 border-red-300'
         };
@@ -494,14 +436,14 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
             'NOT_ELIGIBLE': 'Not Eligible'
         };
         return (
-            <span className={`px-3 py-1 rounded-full text-xs font-medium border ${colors[status] || 'bg-gray-100 text-gray-800'}`}>
+            <span className={`px-3 py-1 rounded-lg text-xs font-medium border ${colors[status] || 'bg-gray-100 text-gray-800'}`}>
                 {labels[status] || status}
             </span>
         );
     };
 
     const getPercentageColor = (pct: number) => {
-        if (pct >= 80) return 'text-emerald-600';
+        if (pct >= 80) return 'text-green-600';
         if (pct >= 60) return 'text-amber-600';
         return 'text-red-500';
     };
@@ -679,7 +621,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
         return (
             <div className="overflow-hidden rounded-lg border border-gray-200">
                 <table className="w-full text-sm">
-                    <thead className={type === 'inclusion' ? 'bg-emerald-50' : 'bg-red-50'}>
+                    <thead className={type === 'inclusion' ? 'bg-green-50' : 'bg-red-50'}>
                         <tr>
                             <th className="px-3 py-2 text-left font-medium text-gray-700" style={{width: '45%'}}>Criterion</th>
                             <th className="px-3 py-2 text-left font-medium text-gray-700" style={{width: '40%'}}>Patient Value</th>
@@ -708,8 +650,8 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                                 {resolvedBy === 'patient' ? 'Patient Reviewed' : 'Clinician Reviewed'}
                                             </span>
                                         ) : needsReview && reviewType === 'patient' ? (
-                                            <div className="rounded px-2 py-1.5 max-w-xs" style={{ backgroundColor: '#eff6ff', border: '1px solid #93c5fd' }}>
-                                                <div className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mb-0.5" style={{ color: '#1e3a5f' }}>
+                                            <div className="rounded px-2 py-1.5 max-w-xs bg-blue-50 border border-blue-300">
+                                                <div className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mb-0.5 text-blue-900">
                                                     <ClipboardCheck className="w-3 h-3" />
                                                     Patient Can Answer
                                                 </div>
@@ -718,8 +660,8 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                                 </p>
                                             </div>
                                         ) : needsReview && reviewType === 'clinician' ? (
-                                            <div className="rounded px-2 py-1.5 max-w-xs" style={{ backgroundColor: '#fdf2f2', border: '1px solid #e8a0a0' }}>
-                                                <div className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mb-0.5" style={{ color: '#7f1d1d' }}>
+                                            <div className="rounded px-2 py-1.5 max-w-xs bg-red-50 border border-red-300">
+                                                <div className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mb-0.5 text-red-900">
                                                     <ClipboardCheck className="w-3 h-3" />
                                                     Clinician Review
                                                 </div>
@@ -747,24 +689,24 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                     </td>
                                     <td className="px-3 py-2 text-center">
                                         {needsReview && reviewType === 'patient' ? (
-                                            <ClipboardCheck className="w-4 h-4 mx-auto" style={{ color: '#1d4ed8' }} title="Patient Can Answer" />
+                                            <ClipboardCheck className="w-4 h-4 mx-auto text-blue-600" title="Patient Can Answer" />
                                         ) : needsReview && reviewType === 'clinician' ? (
-                                            <ClipboardCheck className="w-4 h-4 mx-auto" style={{ color: '#991b1b' }} title="Clinician Review" />
+                                            <ClipboardCheck className="w-4 h-4 mx-auto text-red-700" title="Clinician Review" />
                                         ) : needsReview && (reviewType === 'testing' || !reviewType) ? (
                                             <FlaskConical className="w-4 h-4 text-purple-500 mx-auto" title="Testing Needed" />
                                         ) : isResolved ? (
                                             type === 'exclusion' ? (
                                                 criterion.met === true
                                                     ? <XCircle className="w-4 h-4 text-red-500 mx-auto" title="Excluded" />
-                                                    : <CheckCircle className="w-4 h-4 text-emerald-600 mx-auto" title="Clear" />
+                                                    : <CheckCircle className="w-4 h-4 text-green-600 mx-auto" title="Clear" />
                                             ) : (
                                                 criterion.met === true
-                                                    ? <CheckCircle className="w-4 h-4 text-emerald-600 mx-auto" title="Met" />
+                                                    ? <CheckCircle className="w-4 h-4 text-green-600 mx-auto" title="Met" />
                                                     : <XCircle className="w-4 h-4 text-red-500 mx-auto" title="Not met" />
                                             )
                                         ) : type === 'exclusion' ? (
                                             criterion.met === false
-                                                ? <CheckCircle className="w-4 h-4 text-emerald-600 mx-auto" title="Clear" />
+                                                ? <CheckCircle className="w-4 h-4 text-green-600 mx-auto" title="Clear" />
                                                 : criterion.met === true
                                                 ? <XCircle className="w-4 h-4 text-red-500 mx-auto" title="Violated" />
                                                 : <HelpCircle className="w-4 h-4 text-amber-500 mx-auto" title="Unknown" />
@@ -795,8 +737,8 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl flex items-center justify-center">
-                        <FlaskConical className="w-5 h-5 text-white" />
+                    <div className="w-10 h-10 bg-blue-100 p-2 rounded-lg flex items-center justify-center">
+                        <FlaskConical className="w-5 h-5 text-blue-600" />
                     </div>
                     <div>
                         <h2 className="text-lg font-semibold text-gray-900">Clinical Trials</h2>
@@ -819,7 +761,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                         <button
                             onClick={() => fetchTrials(true)}
                             disabled={loading}
-                            className="flex flex-row items-center gap-2 px-4 py-2 bg-white border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50 transition-colors disabled:opacity-50 whitespace-nowrap"
+                            className="flex flex-row items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 whitespace-nowrap"
                         >
                             <Search className="w-4 h-4 flex-shrink-0" />
                             <span>Search New Trials</span>
@@ -828,7 +770,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                     <button
                         onClick={() => fetchTrials()}
                         disabled={loading}
-                        className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50"
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
                     >
                         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                         {loading ? 'Searching...' : 'Refresh'}
@@ -839,7 +781,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
             {/* Loading */}
             {loading && (
                 <div className="flex flex-col items-center justify-center py-16">
-                    <div className="w-16 h-16 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin mb-4"></div>
+                    <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
                     <p className="text-gray-600">Searching for matching clinical trials...</p>
                     <p className="text-sm text-gray-400 mt-2">Analyzing eligibility criteria for each trial</p>
                 </div>
@@ -969,11 +911,11 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                 <div className="space-y-4">
                     {/* Summary + Search */}
                     <div className="flex items-center justify-between gap-4">
-                        <div className="bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200 rounded-lg px-4 py-3 flex-shrink-0">
-                            <p className="text-violet-800 font-medium text-sm">
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex-shrink-0">
+                            <p className="text-blue-800 font-medium text-sm">
                                 {trials.length} trial{trials.length !== 1 ? 's' : ''} analyzed
                                 {computationStatus === 'computing' && progress.total > 0 && (
-                                    <span className="text-violet-500 font-normal ml-1">
+                                    <span className="text-blue-500 font-normal ml-1">
                                         (analyzing {progress.total - progress.completed} more...)
                                     </span>
                                 )}
@@ -986,7 +928,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                 placeholder="Search by NCT ID, title, phase, or eligibility..."
                                 value={filterText}
                                 onChange={e => setFilterText(e.target.value)}
-                                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-400"
+                                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400"
                             />
                             {filterText && (
                                 <button
@@ -1016,18 +958,18 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                     {filteredTrials.map((trial) => {
                         const rc = getReviewCounts(trial);
                         return (
-                            <div key={trial.nct_id} ref={el => { if (el) trialRefs.current.set(trial.nct_id, el); }} className={`border-2 rounded-xl overflow-hidden transition-colors relative ${highlightedTrial === trial.nct_id ? 'border-violet-400 ring-2 ring-violet-200' : 'border-gray-200 hover:border-violet-300'}`}>
+                            <div key={trial.nct_id} ref={el => { if (el) trialRefs.current.set(trial.nct_id, el); }} className={`border-2 rounded-lg overflow-hidden transition-colors relative ${highlightedTrial === trial.nct_id ? 'border-blue-400 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300'}`}>
                                 {/* Refreshing overlay */}
                                 {refreshingTrials.has(trial.nct_id) && (
                                     <div className="absolute inset-0 bg-white/70 z-10 flex flex-col items-center justify-center rounded-xl">
-                                        <Loader2 className="w-8 h-8 text-violet-600 animate-spin mb-2" />
-                                        <p className="text-sm text-violet-700 font-medium">Re-analyzing eligibility...</p>
+                                        <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-2" />
+                                        <p className="text-sm text-blue-700 font-medium">Re-analyzing eligibility...</p>
                                         <p className="text-xs text-gray-500 mt-1">This may take 1-3 minutes</p>
                                     </div>
                                 )}
                                 {/* Trial Header */}
                                 <div
-                                    className="p-5 cursor-pointer bg-gradient-to-r from-gray-50 to-white hover:from-violet-50 hover:to-white transition-colors"
+                                    className="p-5 cursor-pointer bg-gradient-to-r from-gray-50 to-white hover:from-blue-50 hover:to-white transition-colors"
                                     onClick={() => toggleTrialExpanded(trial.nct_id)}
                                 >
                                     <div className="flex items-start justify-between gap-4">
@@ -1038,7 +980,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     onClick={(e) => e.stopPropagation()}
-                                                    className="text-violet-600 font-mono font-medium hover:underline flex items-center gap-1"
+                                                    className="text-blue-600 font-mono font-medium hover:underline flex items-center gap-1"
                                                 >
                                                     {trial.nct_id}
                                                     <ExternalLink className="w-3 h-3" />
@@ -1065,7 +1007,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); handleRefreshTrial(trial.nct_id); }}
                                                 disabled={refreshingTrials.has(trial.nct_id)}
-                                                className="p-2 rounded-lg text-gray-300 hover:text-violet-600 hover:bg-violet-50 transition-colors disabled:opacity-50"
+                                                className="p-2 rounded-lg text-gray-300 hover:text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50"
                                                 title="Re-run eligibility analysis"
                                             >
                                                 <RefreshCw className={`w-4 h-4 ${refreshingTrials.has(trial.nct_id) ? 'animate-spin' : ''}`} />
@@ -1076,13 +1018,13 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                     {/* Criteria Summary Bar */}
                                     <div className="mt-4 flex items-center gap-3 text-sm flex-wrap">
                                         <div className="flex items-center gap-1.5">
-                                            <CheckCircle className="w-4 h-4 text-emerald-600" />
+                                            <CheckCircle className="w-4 h-4 text-green-600" />
                                             <span className="text-gray-600">
                                                 Inclusion: {trial.eligibility.inclusion.met}/{trial.eligibility.inclusion.total}
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
-                                            <CheckCircle className="w-4 h-4 text-emerald-600" />
+                                            <CheckCircle className="w-4 h-4 text-green-600" />
                                             <span className="text-gray-600">
                                                 Exclusion Clear: {trial.eligibility.exclusion.clear}/{trial.eligibility.exclusion.total}
                                             </span>
@@ -1093,16 +1035,14 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                             <div className="flex items-center gap-2">
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); setReviewModal({ type: 'patient', trialNctId: trial.nct_id }); }}
-                                                    className="flex items-center gap-1 hover:underline cursor-pointer"
-                                                    style={{ color: '#1d4ed8' }}
+                                                    className="flex items-center gap-1 hover:underline cursor-pointer text-blue-600"
                                                 >
                                                     <ClipboardCheck className="w-3.5 h-3.5" />
                                                     <span>{rc.patient} Patient Review Needed</span>
                                                 </button>
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); handleSendToPatient(trial.nct_id); }}
-                                                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium hover:opacity-80 cursor-pointer"
-                                                    style={{ backgroundColor: '#dbeafe', color: '#1d4ed8' }}
+                                                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium hover:opacity-80 cursor-pointer bg-blue-100 text-blue-600"
                                                     title="Generate a shareable link for the patient"
                                                     disabled={sendingLink}
                                                 >
@@ -1116,8 +1056,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                         {rc.clinician > 0 && (
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); setReviewModal({ type: 'clinician', trialNctId: trial.nct_id }); }}
-                                                className="flex items-center gap-1 hover:underline cursor-pointer"
-                                                style={{ color: '#991b1b' }}
+                                                className="flex items-center gap-1 hover:underline cursor-pointer text-red-700"
                                             >
                                                 <ClipboardCheck className="w-3.5 h-3.5" />
                                                 <span>{rc.clinician} Clinician Review Needed</span>
@@ -1143,7 +1082,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                                         <div className="grid grid-cols-2 gap-6 mb-6">
                                             <div>
                                                 <div className="flex items-center gap-2 mb-3">
-                                                    <CheckCircle className="w-5 h-5 text-emerald-600" />
+                                                    <CheckCircle className="w-5 h-5 text-green-600" />
                                                     <h4 className="font-medium text-gray-900">Inclusion Criteria</h4>
                                                     <span className="text-sm text-gray-500">
                                                         ({trial.eligibility.inclusion.met}/{trial.eligibility.inclusion.total} met)
@@ -1248,11 +1187,11 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
             {/* Patient Review Link Modal */}
             {linkModal && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setLinkModal(null)}>
-                    <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 p-6" onClick={e => e.stopPropagation()}>
+                    <div className="bg-white rounded-lg shadow-lg max-w-lg w-full mx-4 p-6" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-2">
-                                <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: '#dbeafe' }}>
-                                    <Send className="w-4 h-4" style={{ color: '#1d4ed8' }} />
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center bg-blue-100">
+                                    <Send className="w-4 h-4 text-blue-600" />
                                 </div>
                                 <h3 className="text-lg font-semibold text-gray-900">Patient Review Link</h3>
                             </div>
@@ -1276,8 +1215,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                             />
                             <button
                                 onClick={handleCopyLink}
-                                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors"
-                                style={{ backgroundColor: copied ? '#059669' : '#1d4ed8' }}
+                                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors ${copied ? 'bg-green-600' : 'bg-blue-600'}`}
                             >
                                 {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                                 {copied ? 'Copied!' : 'Copy Link'}

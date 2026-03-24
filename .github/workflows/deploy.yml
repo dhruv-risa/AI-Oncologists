@@ -115,6 +115,12 @@ jobs:
         run: npm run build
         env:
           VITE_API_BASE_URL: ${{ needs.deploy-backend.outputs.backend_url }}
+          VITE_FIREBASE_API_KEY: AIzaSyAaAd5ju7W_-BY_L0Vk6ecaE03DlCWr6g8
+          VITE_FIREBASE_AUTH_DOMAIN: rapids-platform.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: rapids-platform
+          VITE_FIREBASE_STORAGE_BUCKET: rapids-platform.firebasestorage.app
+          VITE_FIREBASE_MESSAGING_SENDER_ID: "835676485453"
+          VITE_FIREBASE_APP_ID: 1:835676485453:web:cb7c3cd9c689b6bcc96904
 
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0

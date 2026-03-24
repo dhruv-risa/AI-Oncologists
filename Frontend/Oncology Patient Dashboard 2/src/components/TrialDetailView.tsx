@@ -117,8 +117,8 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
   };
 
   const getStatusColor = (status: string) => {
-    if (status === 'LIKELY_ELIGIBLE' || status === 'Likely Eligible') return 'bg-green-100 text-green-800';
-    if (status === 'POTENTIALLY_ELIGIBLE' || status === 'Potentially Eligible') return 'bg-yellow-100 text-yellow-800';
+    if (status === 'LIKELY_ELIGIBLE' || status === 'Likely Eligible') return 'bg-green-100 text-green-700';
+    if (status === 'POTENTIALLY_ELIGIBLE' || status === 'Potentially Eligible') return 'bg-amber-100 text-amber-800';
     return 'bg-red-100 text-red-800';
   };
 
@@ -132,11 +132,11 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
   };
 
   const getPhaseColor = (phase: string) => {
-    if (phase?.includes('1')) return 'bg-yellow-100 text-yellow-800';
-    if (phase?.includes('2')) return 'bg-blue-100 text-blue-800';
-    if (phase?.includes('3')) return 'bg-green-100 text-green-800';
-    if (phase?.includes('4')) return 'bg-purple-100 text-purple-800';
-    return 'bg-gray-100 text-gray-800';
+    if (phase?.includes('1')) return 'bg-amber-100 text-amber-800';
+    if (phase?.includes('2')) return 'bg-blue-100 text-blue-700';
+    if (phase?.includes('3')) return 'bg-green-100 text-green-700';
+    if (phase?.includes('4')) return 'bg-purple-100 text-purple-700';
+    return 'bg-gray-100 text-gray-700';
   };
 
   if (loading) {
@@ -187,7 +187,7 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
               {trial.phase && trial.phase !== 'N/A' && trial.phase !== 'NA' && (
                 <Badge className={getPhaseColor(trial.phase)}>{trial.phase}</Badge>
               )}
-              <Badge className="bg-green-100 text-green-800">{trial.status?.replace(/_/g, ' ')}</Badge>
+              <Badge className="bg-green-100 text-green-700">{trial.status?.replace(/_/g, ' ')}</Badge>
             </div>
             <h1 className="text-xl font-bold text-gray-900">{trial.title}</h1>
           </div>
@@ -195,34 +195,40 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
 
         {/* Trial Info Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <Card>
+          <Card className="border border-gray-200 shadow-sm">
             <CardContent className="pt-4">
               <div className="flex items-center gap-3">
-                <Building2 className="h-8 w-8 text-gray-400" />
+                <div className="bg-blue-100 p-2 rounded-lg">
+                  <Building2 className="h-5 w-5 text-blue-600" />
+                </div>
                 <div>
-                  <p className="text-sm text-gray-500">Sponsor</p>
+                  <p className="text-xs text-gray-500 mb-1">Sponsor</p>
                   <p className="font-medium">{trial.sponsor || 'Not specified'}</p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="border border-gray-200 shadow-sm">
             <CardContent className="pt-4">
               <div className="flex items-center gap-3">
-                <Users className="h-8 w-8 text-gray-400" />
+                <div className="bg-blue-100 p-2 rounded-lg">
+                  <Users className="h-5 w-5 text-blue-600" />
+                </div>
                 <div>
-                  <p className="text-sm text-gray-500">Target Enrollment</p>
+                  <p className="text-xs text-gray-500 mb-1">Target Enrollment</p>
                   <p className="font-medium">{trial.enrollment || 'Not specified'}</p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="border border-gray-200 shadow-sm">
             <CardContent className="pt-4">
               <div className="flex items-center gap-3">
-                <Calendar className="h-8 w-8 text-gray-400" />
+                <div className="bg-blue-100 p-2 rounded-lg">
+                  <Calendar className="h-5 w-5 text-blue-600" />
+                </div>
                 <div>
-                  <p className="text-sm text-gray-500">Start Date</p>
+                  <p className="text-xs text-gray-500 mb-1">Start Date</p>
                   <p className="font-medium">{trial.start_date || 'Not specified'}</p>
                 </div>
               </div>
@@ -261,30 +267,30 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
               <div className="grid grid-cols-4 gap-4 mb-6">
                 <div className="text-center p-4 bg-gray-50 rounded-lg">
                   <p className="text-2xl font-bold">{stats.total}</p>
-                  <p className="text-sm text-gray-500">Total Analyzed</p>
+                  <p className="text-xs text-gray-500">Total Analyzed</p>
                 </div>
-                <div className="text-center p-4 bg-green-50 rounded-lg">
+                <div className="text-center p-4 bg-green-50 rounded-lg border border-green-200">
                   <p className="text-2xl font-bold text-green-600">
                     {stats['LIKELY_ELIGIBLE'] || stats['Likely Eligible'] || 0}
                   </p>
-                  <p className="text-sm text-gray-500">Likely Eligible</p>
+                  <p className="text-xs text-gray-500">Likely Eligible</p>
                 </div>
-                <div className="text-center p-4 bg-yellow-50 rounded-lg">
-                  <p className="text-2xl font-bold text-yellow-600">
+                <div className="text-center p-4 bg-amber-50 rounded-lg border border-amber-200">
+                  <p className="text-2xl font-bold text-amber-600">
                     {stats['POTENTIALLY_ELIGIBLE'] || stats['Potentially Eligible'] || 0}
                   </p>
-                  <p className="text-sm text-gray-500">Potentially Eligible</p>
+                  <p className="text-xs text-gray-500">Potentially Eligible</p>
                 </div>
-                <div className="text-center p-4 bg-red-50 rounded-lg">
+                <div className="text-center p-4 bg-red-50 rounded-lg border border-red-200">
                   <p className="text-2xl font-bold text-red-600">
                     {stats['NOT_ELIGIBLE'] || stats['Not Eligible'] || 0}
                   </p>
-                  <p className="text-sm text-gray-500">Not Eligible</p>
+                  <p className="text-xs text-gray-500">Not Eligible</p>
                 </div>
               </div>
             ) : (
               <div className="text-center py-8 text-gray-500">
-                <Users className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <Users className="h-12 w-12 mx-auto mb-4 text-gray-400" />
                 <p>No eligibility data computed yet.</p>
                 <p className="text-sm">Click "Recompute Eligibility" to analyze patients.</p>
               </div>
@@ -313,8 +319,9 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
               </div>
             ) : patients.length > 0 ? (
+              <div className="overflow-hidden rounded-lg border border-gray-200">
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-gray-50">
                   <TableRow>
                     <TableHead>Patient</TableHead>
                     <TableHead>Cancer Type</TableHead>
@@ -360,6 +367,7 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
                   ))}
                 </TableBody>
               </Table>
+              </div>
             ) : stats && stats.total > 0 ? (
               <p className="text-center py-4 text-gray-500">
                 No patients match the selected filter.

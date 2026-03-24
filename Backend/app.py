@@ -11,13 +11,24 @@ import os
 import json
 from pathlib import Path
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
+
+# Firebase Admin SDK for token verification
+import firebase_admin
+from firebase_admin import credentials as fb_credentials, auth as fb_auth, firestore as fb_firestore
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+from email_templates import get_template
+
+# Initialize Firebase Admin (uses Application Default Credentials on Cloud Run)
+if not firebase_admin._apps:
+    firebase_admin.initialize_app()
 import threading
 
 # Add project root to path
@@ -236,6 +247,39 @@ app.add_middleware(
 
 
 # ============================================================================
+# Firebase Auth Middleware
+# ============================================================================
+
+# Routes that don't require authentication
+_PUBLIC_PATHS = {"/", "/health", "/auth/send-magic-link", "/docs", "/openapi.json"}
+
+
+@app.middleware("http")
+async def verify_firebase_token(request: Request, call_next):
+    """Verify Firebase ID token on all protected routes."""
+    path = request.url.path
+
+    # Skip auth for public paths, OPTIONS (CORS preflight), and document serving
+    if path in _PUBLIC_PATHS or request.method == "OPTIONS" or path.startswith("/api/documents/") or path.startswith("/api/review/"):
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Missing or invalid Authorization header"})
+
+    token = auth_header.split("Bearer ")[1]
+    try:
+        decoded = fb_auth.verify_id_token(token)
+        request.state.user = decoded
+    except Exception:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    return await call_next(request)
+
+
+# ============================================================================
 # Request/Response Models
 # ============================================================================
 
@@ -313,6 +357,98 @@ class TestTabResponse(BaseModel):
     workflow_metadata: Optional[TestWorkflowMetadata] = None
     extracted_data: Optional[dict] = None
     error: Optional[str] = None
+
+
+# ============================================================================
+# Auth Models & Routes
+# ============================================================================
+
+class MagicLinkRequest(BaseModel):
+    email: str = Field(..., description="User's email address")
+    app_id: Optional[str] = Field(None, description="App identifier for branding (default: ai-oncologist-copilot)")
+
+
+def _get_sendgrid_api_key() -> str:
+    """Fetch SendGrid API key from env var or GCP Secret Manager."""
+    key = os.environ.get("SENDGRID_API_KEY")
+    if key:
+        return key
+    try:
+        from google.cloud import secretmanager
+        client = secretmanager.SecretManagerServiceClient()
+        response = client.access_secret_version(
+            name="projects/939421517637/secrets/sendgrid-api-key/versions/latest"
+        )
+        return response.payload.data.decode("UTF-8")
+    except Exception as e:
+        logger.error(f"Failed to fetch SendGrid API key: {e}")
+        raise HTTPException(status_code=500, detail="Email service unavailable.")
+
+
+@app.post("/auth/send-magic-link", tags=["Auth"])
+async def send_magic_link(request: Request, body: MagicLinkRequest):
+    """
+    Check allowlist, generate a sign-in link via Admin SDK, and email it
+    to the user via SendGrid.
+    """
+    email = body.email.strip().lower()
+
+    # --- Check allowlist in Firestore ---
+    try:
+        fs = fb_firestore.client()
+        # Check exact email
+        email_doc = fs.collection("allowlist").document(email).get()
+        allowed = email_doc.exists and email_doc.to_dict().get("allowed", False)
+
+        if not allowed:
+            # Check domain-level allowlist
+            domain = email.split("@")[1]
+            domain_doc = fs.collection("allowlist_domains").document(domain).get()
+            allowed = domain_doc.exists and domain_doc.to_dict().get("allowed", False)
+
+        if not allowed:
+            return {"success": False, "error": "This email is not authorized. Please contact your administrator."}
+    except Exception as e:
+        logger.error(f"Allowlist check failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to verify authorization.")
+
+    # --- Generate sign-in link via Admin SDK ---
+    origin = request.headers.get("origin", "https://ai-oncologist-copilot.web.app")
+    try:
+        action_code_settings = fb_auth.ActionCodeSettings(
+            url=origin,
+            handle_code_in_app=True,
+        )
+        link = fb_auth.generate_sign_in_with_email_link(email, action_code_settings)
+    except Exception as e:
+        logger.error(f"Failed to generate magic link: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate sign-in link.")
+
+    # --- Send email via SendGrid ---
+    try:
+        template = get_template(body.app_id)
+        sendgrid_api_key = _get_sendgrid_api_key()
+
+        message = Mail(
+            from_email="donotreply.dashboardnotification@risalabs.ai",
+            to_emails=email,
+            subject=template["subject"],
+            html_content=template["body_html"].format(link=link),
+        )
+
+        sg = SendGridAPIClient(sendgrid_api_key)
+        response = sg.client.mail.send.post(request_body=message.get())
+
+        if response.status_code < 200 or response.status_code >= 300:
+            logger.error(f"SendGrid returned status {response.status_code}")
+            raise HTTPException(status_code=500, detail="Failed to send email.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to send magic link email: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send sign-in email.")
+
+    return {"success": True}
 
 
 # ============================================================================

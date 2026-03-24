@@ -11,3 +11,6 @@ uvicorn[standard]
 pydantic
 apscheduler>=3.10,<4.0
 PyPDF2
+firebase-admin
+sendgrid
+google-cloud-secret-manager

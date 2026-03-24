@@ -7,6 +7,17 @@
 // In production, VITE_API_BASE_URL is set during the CI/CD build step
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
+import { auth } from '../lib/firebase';
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const user = auth.currentUser;
+  if (user) {
+    const token = await user.getIdToken();
+    return { Authorization: `Bearer ${token}` };
+  }
+  return {};
+}
+
 /**
  * Resolve a document URL. Handles:
  * - Relative paths from Firebase Storage (/api/documents/...)
@@ -554,10 +565,12 @@ class ApiService {
     options: RequestInit = {}
   ): Promise<T> {
     try {
+      const authHeaders = await getAuthHeaders();
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         ...options,
         headers: {
           'Content-Type': 'application/json',
+          ...authHeaders,
           ...options.headers,
         },
       });
