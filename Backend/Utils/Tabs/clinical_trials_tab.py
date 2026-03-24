@@ -3048,32 +3048,32 @@ def build_search_queries_from_patient(patient_data: Dict) -> List[str]:
 
     # MSI status
     msi = immuno.get("msi_status", {}) if immuno else {}
-    msi_status = msi.get("status", "").upper() if msi else ""
+    msi_status = (msi.get("status") or "").upper() if msi else ""
     if "HIGH" in msi_status or "MSI-H" in msi_status:
         queries.append("MSI-H")
         queries.append("microsatellite instability high")
 
     # MMR status
-    mmr_status = genomic_info.get("mmr_status", "").upper() if genomic_info else ""
+    mmr_status = (genomic_info.get("mmr_status") or "").upper() if genomic_info else ""
     if "DEFICIENT" in mmr_status or "DMMR" in mmr_status:
         queries.append("dMMR")
         queries.append("mismatch repair deficient")
 
     # TMB
     tmb = immuno.get("tmb", {}) if immuno else {}
-    tmb_value = str(tmb.get("value", "")).lower() if tmb else ""
+    tmb_value = str(tmb.get("value") or "").lower() if tmb else ""
     if "high" in tmb_value:
         queries.append("TMB-high")
         queries.append("tumor mutational burden high")
 
     # PD-L1
     pd_l1 = immuno.get("pd_l1", {}) if immuno else {}
-    pd_l1_value = str(pd_l1.get("value", "")).lower() if pd_l1 else ""
+    pd_l1_value = str(pd_l1.get("value") or "").lower() if pd_l1 else ""
     if pd_l1_value and ("positive" in pd_l1_value or "%" in pd_l1_value):
         queries.append("PD-L1 positive")
 
     # 6. Disease stage/status
-    metastatic_status = diagnosis.get("metastatic_status", "").lower() if diagnosis else ""
+    metastatic_status = (diagnosis.get("metastatic_status") or "").lower() if diagnosis else ""
     if "yes" in metastatic_status or "metastatic" in metastatic_status:
         queries.append("metastatic cancer")
         if cancer_type:
