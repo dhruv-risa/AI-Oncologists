@@ -138,22 +138,16 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
                 {/* Action buttons */}
                 <div className="flex items-center gap-1 mt-2">
                   <button
-                    className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded transition-colors"
-                    title="View document"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      window.open(resolveDocumentUrl(report.drive_url), '_blank');
-                    }}
+                    className="p-1 text-gray-300 cursor-not-allowed rounded opacity-50"
+                    title="View document (disabled)"
+                    disabled
                   >
                     <Eye className="w-3 h-3" />
                   </button>
                   <button
-                    className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded transition-colors"
-                    title="Download document"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      window.open(resolveDocumentUrl(report.drive_url), '_blank');
-                    }}
+                    className="p-1 text-gray-300 cursor-not-allowed rounded opacity-50"
+                    title="Download document (disabled)"
+                    disabled
                   >
                     <Download className="w-3 h-3" />
                   </button>

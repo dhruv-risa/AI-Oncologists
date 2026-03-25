@@ -130,18 +130,16 @@ export function DocumentsSection({ patientData }: DocumentsSectionProps) {
               </div>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => doc.url && window.open(resolveDocumentUrl(doc.url), '_blank')}
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="View document"
-                  disabled={!doc.url}
+                  className="p-2 text-gray-300 cursor-not-allowed rounded-lg opacity-50"
+                  title="View document (disabled)"
+                  disabled
                 >
                   <Eye className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => doc.url && window.open(resolveDocumentUrl(doc.url), '_blank')}
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Download document"
-                  disabled={!doc.url}
+                  className="p-2 text-gray-300 cursor-not-allowed rounded-lg opacity-50"
+                  title="Download document (disabled)"
+                  disabled
                 >
                   <Download className="w-4 h-4" />
                 </button>

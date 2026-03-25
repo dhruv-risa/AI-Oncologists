@@ -350,22 +350,16 @@ export function RadiologyTab() {
                   {/* Action buttons */}
                   <div className="flex items-center gap-1">
                     <button
-                      className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded transition-colors"
-                      title="View document"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleViewDocument(report.drive_url);
-                      }}
+                      className="p-1 text-gray-300 cursor-not-allowed rounded opacity-50"
+                      title="View document (disabled)"
+                      disabled
                     >
                       <Eye className="w-3 h-3" />
                     </button>
                     <button
-                      className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded transition-colors"
-                      title="Download document"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDownloadDocument(report.drive_url, `${report.description}_${formatDate(getReportDate(report))}.pdf`);
-                      }}
+                      className="p-1 text-gray-300 cursor-not-allowed rounded opacity-50"
+                      title="Download document (disabled)"
+                      disabled
                     >
                       <Download className="w-3 h-3" />
                     </button>
@@ -411,8 +405,9 @@ export function RadiologyTab() {
                 </span>
               </div>
               <button
-                className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-lg text-sm transition-colors"
-                onClick={() => handleViewDocument(selectedReport.drive_url)}
+                className="flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm opacity-50 cursor-not-allowed"
+                disabled
+                title="View Source (disabled)"
               >
                 <ExternalLink className="w-4 h-4" />
                 View Source
