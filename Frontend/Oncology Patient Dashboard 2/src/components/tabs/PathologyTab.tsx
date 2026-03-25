@@ -152,12 +152,9 @@ export function PathologyTab({ patientData }: PathologyTabProps) {
                     <Download className="w-3 h-3" />
                   </button>
                   <button
-                    className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded transition-colors"
-                    title="Open in new tab"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      window.open(resolveDocumentUrl(report.drive_url), '_blank');
-                    }}
+                    className="p-1 text-gray-300 cursor-not-allowed rounded opacity-50"
+                    title="Open in new tab (disabled)"
+                    disabled
                   >
                     <ExternalLink className="w-3 h-3" />
                   </button>

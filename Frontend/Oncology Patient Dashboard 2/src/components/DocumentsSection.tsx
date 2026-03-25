@@ -1,7 +1,7 @@
 import { FileText, ExternalLink, Download, Eye } from 'lucide-react';
 import { SectionCard } from './SectionCard';
 import { useState, useMemo } from 'react';
-import { PatientData, resolveDocumentUrl } from '../services/api';
+import { PatientData } from '../services/api';
 import { formatDate } from '../utils/dateFormatter';
 
 interface DocumentsSectionProps {
@@ -144,10 +144,9 @@ export function DocumentsSection({ patientData }: DocumentsSectionProps) {
                   <Download className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => doc.url && window.open(resolveDocumentUrl(doc.url), '_blank')}
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Open in new tab"
-                  disabled={!doc.url}
+                  className="p-2 text-gray-300 cursor-not-allowed rounded-lg opacity-50"
+                  title="Open in new tab (disabled)"
+                  disabled
                 >
                   <ExternalLink className="w-4 h-4" />
                 </button>
