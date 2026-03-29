@@ -41,9 +41,13 @@ class DataPool:
     Sync logs → SQLite (ephemeral, operational)
     """
 
-    FIRESTORE_COLLECTION = "patients"
-    FIRESTORE_ELIGIBILITY_COLLECTION = "patient_trial_eligibility"
-    FIRESTORE_REVIEW_TOKENS_COLLECTION = "patient_review_tokens"
+    # Collection names for different hospitals
+    FIRESTORE_DEMO_COLLECTION = "Demo_hospital_patients"
+    FIRESTORE_ASTERA_COLLECTION = "Astera_hospital_patients"
+    FIRESTORE_DEMO_ELIGIBILITY_COLLECTION = "Demo_hospital_patient_trial_eligibility"
+    FIRESTORE_ASTERA_ELIGIBILITY_COLLECTION = "Astera_hospital_patient_trial_eligibility"
+    FIRESTORE_DEMO_REVIEW_TOKENS_COLLECTION = "Demo_hospital_patient_review_tokens"
+    FIRESTORE_ASTERA_REVIEW_TOKENS_COLLECTION = "Astera_hospital_patient_review_tokens"
 
     def __init__(self, db_path: str = None):
         """
@@ -80,11 +84,33 @@ class DataPool:
         if self._firestore:
             self._migrate_sqlite_to_firestore()
 
+    def _get_collection_name(self, db_type: str = None) -> str:
+        """Get the Firestore collection name based on db_type."""
+        if db_type == 'astera':
+            return self.FIRESTORE_ASTERA_COLLECTION
+        else:
+            return self.FIRESTORE_DEMO_COLLECTION
+
+    def _get_eligibility_collection_name(self, db_type: str = None) -> str:
+        """Get the Firestore eligibility collection name based on db_type."""
+        if db_type == 'astera':
+            return self.FIRESTORE_ASTERA_ELIGIBILITY_COLLECTION
+        else:
+            return self.FIRESTORE_DEMO_ELIGIBILITY_COLLECTION
+
+    def _get_review_tokens_collection_name(self, db_type: str = None) -> str:
+        """Get the Firestore review tokens collection name based on db_type."""
+        if db_type == 'astera':
+            return self.FIRESTORE_ASTERA_REVIEW_TOKENS_COLLECTION
+        else:
+            return self.FIRESTORE_DEMO_REVIEW_TOKENS_COLLECTION
+
     def _migrate_sqlite_to_firestore(self):
-        """One-time migration: if Firestore has 0 patients but SQLite has data, copy over."""
+        """One-time migration: if Firestore has 0 patients but SQLite has data, copy over to Demo collection."""
         try:
-            # Check if Firestore already has patients
-            docs = list(self._firestore.collection(self.FIRESTORE_COLLECTION).limit(1).stream())
+            # Check if Firestore already has patients in Demo collection
+            demo_collection = self._get_collection_name('demo')
+            docs = list(self._firestore.collection(demo_collection).limit(1).stream())
             if docs:
                 logger.info("[DataPool] Firestore already has patients, skipping migration")
                 return
@@ -100,14 +126,14 @@ class DataPool:
                 logger.info("[DataPool] No patients in SQLite to migrate")
                 return
 
-            logger.info(f"[DataPool] Migrating {len(rows)} patients from SQLite to Firestore...")
+            logger.info(f"[DataPool] Migrating {len(rows)} patients from SQLite to Firestore Demo collection...")
             batch = self._firestore.batch()
             count = 0
             for mrn, data_str, created_at, updated_at in rows:
                 try:
                     # Validate the JSON is parseable
                     json.loads(data_str)
-                    doc_ref = self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn)
+                    doc_ref = self._firestore.collection(demo_collection).document(mrn)
                     batch.set(doc_ref, {
                         "mrn": mrn,
                         "data": data_str,
@@ -296,9 +322,14 @@ class DataPool:
             )
         """)
 
-    def store_patient_data(self, mrn: str, data: dict) -> bool:
+    def store_patient_data(self, mrn: str, data: dict, db_type: str = None) -> bool:
         """
         Store patient data. Uses Firestore if available, SQLite as fallback.
+
+        Args:
+            mrn: Patient MRN
+            data: Patient data dictionary
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
         """
         try:
             if not mrn or not isinstance(mrn, str) or mrn.strip() == "":
@@ -311,13 +342,14 @@ class DataPool:
             current_time = datetime.now().isoformat()
 
             if self._firestore:
-                doc_ref = self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn)
+                collection_name = self._get_collection_name(db_type)
+                doc_ref = self._firestore.collection(collection_name).document(mrn)
                 doc_ref.set({
                     "mrn": mrn,
                     "data": json.dumps(data),
                     "updated_at": current_time,
                 })
-                logger.info(f"[DataPool] Stored patient {mrn} in Firestore")
+                logger.info(f"[DataPool] Stored patient {mrn} in Firestore collection {collection_name}")
                 return True
 
             # SQLite fallback
@@ -404,11 +436,18 @@ class DataPool:
 
         return data
 
-    def get_patient_data(self, mrn: str) -> Optional[Dict]:
-        """Retrieve patient data. Uses Firestore if available, SQLite as fallback."""
+    def get_patient_data(self, mrn: str, db_type: str = None) -> Optional[Dict]:
+        """
+        Retrieve patient data. Uses Firestore if available, SQLite as fallback.
+
+        Args:
+            mrn: Patient MRN
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+        """
         try:
             if self._firestore:
-                doc = self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn).get()
+                collection_name = self._get_collection_name(db_type)
+                doc = self._firestore.collection(collection_name).document(mrn).get()
                 if doc.exists:
                     doc_data = doc.to_dict()
                     data = json.loads(doc_data["data"])
@@ -468,13 +507,19 @@ class DataPool:
             "matchedTrials": trial_counts["likely_eligible"] + trial_counts["potentially_eligible"],
         }
 
-    def _get_eligibility_counts(self):
-        """Get eligibility counts. Uses Firestore if available, SQLite as fallback."""
+    def _get_eligibility_counts(self, db_type: str = None):
+        """
+        Get eligibility counts. Uses Firestore if available, SQLite as fallback.
+
+        Args:
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+        """
         eligibility_counts = {}
         try:
             if self._firestore:
                 # Query Firestore for all eligibility results
-                docs = self._firestore.collection(self.FIRESTORE_ELIGIBILITY_COLLECTION).stream()
+                eligibility_collection = self._get_eligibility_collection_name(db_type)
+                docs = self._firestore.collection(eligibility_collection).stream()
 
                 # Aggregate counts by patient_mrn
                 for doc in docs:
@@ -523,14 +568,20 @@ class DataPool:
             logger.error(f"Error getting eligibility counts: {e}", exc_info=True)
         return eligibility_counts
 
-    def list_all_patients(self) -> List[Dict]:
-        """List all patients with summary details. Uses Firestore if available."""
+    def list_all_patients(self, db_type: str = None) -> List[Dict]:
+        """
+        List all patients with summary details. Uses Firestore if available.
+
+        Args:
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+        """
         try:
-            eligibility_counts = self._get_eligibility_counts()
+            eligibility_counts = self._get_eligibility_counts(db_type)
 
             if self._firestore:
                 patients = []
-                docs = self._firestore.collection(self.FIRESTORE_COLLECTION).stream()
+                collection_name = self._get_collection_name(db_type)
+                docs = self._firestore.collection(collection_name).stream()
                 for doc in docs:
                     try:
                         doc_data = doc.to_dict()
@@ -574,11 +625,18 @@ class DataPool:
             logger.error(f"Error listing patients: {e}")
             return []
 
-    def delete_patient_data(self, mrn: str) -> bool:
-        """Delete patient data."""
+    def delete_patient_data(self, mrn: str, db_type: str = None) -> bool:
+        """
+        Delete patient data.
+
+        Args:
+            mrn: Patient's Medical Record Number
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+        """
         try:
             if self._firestore:
-                self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn).delete()
+                collection_name = self._get_collection_name(db_type)
+                self._firestore.collection(collection_name).document(mrn).delete()
                 return True
             conn = sqlite3.connect(self.db_path)
             self._ensure_table_exists(conn)
@@ -608,11 +666,18 @@ class DataPool:
             logger.error(f"Error clearing pool: {e}")
             return False
 
-    def patient_exists(self, mrn: str) -> bool:
-        """Check if patient data exists."""
+    def patient_exists(self, mrn: str, db_type: str = None) -> bool:
+        """
+        Check if patient data exists.
+
+        Args:
+            mrn: Patient's Medical Record Number
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+        """
         try:
             if self._firestore:
-                return self._firestore.collection(self.FIRESTORE_COLLECTION).document(mrn).get().exists
+                collection_name = self._get_collection_name(db_type)
+                return self._firestore.collection(collection_name).document(mrn).get().exists
             conn = sqlite3.connect(self.db_path)
             self._ensure_table_exists(conn)
             cursor = conn.cursor()
@@ -892,7 +957,7 @@ class DataPool:
 
     # ==================== ELIGIBILITY MATRIX METHODS ====================
 
-    def store_eligibility(self, trial_nct_id: str, patient_mrn: str, eligibility_data: Dict, trial_data: Dict = None) -> bool:
+    def store_eligibility(self, trial_nct_id: str, patient_mrn: str, eligibility_data: Dict, trial_data: Dict = None, db_type: str = None) -> bool:
         """
         Store eligibility result for a patient-trial pair. Uses Firestore if available, SQLite as fallback.
 
@@ -901,6 +966,7 @@ class DataPool:
             patient_mrn: Patient's Medical Record Number
             eligibility_data: Dictionary containing eligibility analysis
             trial_data: Optional trial details (title, phase, status, sponsor) to store with eligibility
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
             True if successful, False otherwise
@@ -911,7 +977,8 @@ class DataPool:
             if self._firestore:
                 # Store in Firestore - use composite key as document ID
                 doc_id = f"{patient_mrn}_{trial_nct_id}"
-                doc_ref = self._firestore.collection(self.FIRESTORE_ELIGIBILITY_COLLECTION).document(doc_id)
+                eligibility_collection = self._get_eligibility_collection_name(db_type)
+                doc_ref = self._firestore.collection(eligibility_collection).document(doc_id)
 
                 eligibility_doc = {
                     "trial_nct_id": trial_nct_id,
@@ -1109,14 +1176,24 @@ class DataPool:
     # ── Patient Review Tokens ──────────────────────────────────────────────
 
     def create_review_token(self, token: str, patient_mrn: str, trial_nct_id: str,
-                            criteria_snapshot: str) -> bool:
-        """Create a new patient review token with criteria snapshot. Uses Firestore if available."""
+                            criteria_snapshot: str, db_type: str = None) -> bool:
+        """
+        Create a new patient review token with criteria snapshot. Uses Firestore if available.
+
+        Args:
+            token: Unique token for the review
+            patient_mrn: Patient's Medical Record Number
+            trial_nct_id: Clinical trial NCT ID
+            criteria_snapshot: Snapshot of eligibility criteria
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+        """
         try:
             current_time = datetime.now().isoformat()
 
             if self._firestore:
                 # Store in Firestore
-                doc_ref = self._firestore.collection(self.FIRESTORE_REVIEW_TOKENS_COLLECTION).document(token)
+                review_tokens_collection = self._get_review_tokens_collection_name(db_type)
+                doc_ref = self._firestore.collection(review_tokens_collection).document(token)
                 doc_ref.set({
                     "token": token,
                     "patient_mrn": patient_mrn,
@@ -1145,12 +1222,19 @@ class DataPool:
             logger.error(f"Error creating review token: {e}", exc_info=True)
             return False
 
-    def get_review_token(self, token: str):
-        """Get review token data. Uses Firestore if available."""
+    def get_review_token(self, token: str, db_type: str = None):
+        """
+        Get review token data. Uses Firestore if available.
+
+        Args:
+            token: Unique token for the review
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+        """
         try:
             if self._firestore:
                 # Query Firestore
-                doc = self._firestore.collection(self.FIRESTORE_REVIEW_TOKENS_COLLECTION).document(token).get()
+                review_tokens_collection = self._get_review_tokens_collection_name(db_type)
+                doc = self._firestore.collection(review_tokens_collection).document(token).get()
                 if doc.exists:
                     data = doc.to_dict()
                     return {
@@ -1311,13 +1395,14 @@ class DataPool:
             print(f"Error getting eligible patients for trial: {e}")
             return []
 
-    def get_eligible_trials_for_patient(self, mrn: str, status_filter: str = None) -> List[Dict]:
+    def get_eligible_trials_for_patient(self, mrn: str, status_filter: str = None, db_type: str = None) -> List[Dict]:
         """
         Get all trials a patient is eligible for. Uses Firestore if available, SQLite as fallback.
 
         Args:
             mrn: Patient's Medical Record Number
             status_filter: Filter by eligibility status
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
             List of trial eligibility results with trial details
@@ -1325,7 +1410,8 @@ class DataPool:
         try:
             if self._firestore:
                 # Query Firestore
-                query = self._firestore.collection(self.FIRESTORE_ELIGIBILITY_COLLECTION).where("patient_mrn", "==", mrn)
+                eligibility_collection = self._get_eligibility_collection_name(db_type)
+                query = self._firestore.collection(eligibility_collection).where("patient_mrn", "==", mrn)
 
                 if status_filter:
                     query = query.where("eligibility_status", "==", status_filter)

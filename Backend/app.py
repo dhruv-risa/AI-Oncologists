@@ -285,6 +285,7 @@ async def verify_firebase_token(request: Request, call_next):
 
 class MRNRequest(BaseModel):
     mrn: str = Field(..., description="Patient's Medical Record Number", example="A2451440")
+    db_type: Optional[str] = Field(None, description="Hospital type: 'demo' or 'astera'. Defaults to 'demo' if not provided.", example="demo")
 
 
 class MRNResponse(BaseModel):
@@ -520,10 +521,10 @@ async def get_patient_data(request: MRNRequest):
     """
     try:
         # Check if patient data already exists in pool
-        cached_data = data_pool.get_patient_data(request.mrn)
-        logger.info(f"Cache check for MRN {request.mrn}: {'HIT' if cached_data is not None else 'MISS'} (db_path={data_pool.db_path})")
+        cached_data = data_pool.get_patient_data(request.mrn, request.db_type)
+        logger.info(f"Cache check for MRN {request.mrn} in {request.db_type or 'demo'} hospital: {'HIT' if cached_data is not None else 'MISS'} (db_path={data_pool.db_path})")
         if cached_data is not None:
-            logger.info(f"Returning cached data for MRN: {request.mrn}")
+            logger.info(f"Returning cached data for MRN: {request.mrn} from {request.db_type or 'demo'} hospital")
             return cached_data
 
         # If not in cache, fetch fresh data with TWO SEQUENTIAL PIPELINES
@@ -819,9 +820,9 @@ async def get_patient_data(request: MRNRequest):
         logger.info(f"📊 Radiology Reports: {len(result['radiology_reports'])} reports")
 
         # Auto-store in data pool
-        logger.info(f"Storing patient {request.mrn} in data pool (db_path={data_pool.db_path}, result_keys={list(result.keys()) if result else 'None'})")
-        store_ok = data_pool.store_patient_data(mrn=request.mrn, data=result)
-        logger.info(f"Store result for {request.mrn}: {store_ok}")
+        logger.info(f"Storing patient {request.mrn} in data pool for {request.db_type or 'demo'} hospital (db_path={data_pool.db_path}, result_keys={list(result.keys()) if result else 'None'})")
+        store_ok = data_pool.store_patient_data(mrn=request.mrn, data=result, db_type=request.db_type)
+        logger.info(f"Store result for {request.mrn} in {request.db_type or 'demo'} hospital: {store_ok}")
 
         # Auto-compute eligibility for this patient against all cached trials (background)
         try:
@@ -1536,41 +1537,49 @@ def _test_get_md_note_url(mrn: str) -> str:
 # ============================================================================
 
 @app.get("/api/pool/patient/{mrn}", tags=["Data Pool"])
-async def get_patient_from_pool(mrn: str):
+async def get_patient_from_pool(mrn: str, db_type: Optional[str] = None):
     """
     Retrieve patient data from the data pool.
 
     This endpoint retrieves previously fetched patient data from the pool.
     If the patient data is not in the pool, returns 404.
 
+    Args:
+        mrn: Patient's Medical Record Number
+        db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+
     Use this endpoint in your static UI to fetch patient data without
     making expensive API calls to the EMR system.
     """
-    patient_data = data_pool.get_patient_data(mrn)
+    patient_data = data_pool.get_patient_data(mrn, db_type)
 
     if patient_data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient with MRN {mrn} not found in data pool. Please fetch the data first using /api/patient/all endpoint."
+            detail=f"Patient with MRN {mrn} not found in {db_type or 'demo'} hospital data pool. Please fetch the data first using /api/patient/all endpoint."
         )
 
     return patient_data
 
 
 @app.get("/api/pool/patients", tags=["Data Pool"])
-async def list_patients_in_pool():
+async def list_patients_in_pool(db_type: Optional[str] = None):
     """
     List all patients in the data pool.
+
+    Args:
+        db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
     Returns a list of all patients currently stored in the pool
     with their MRN and timestamp information.
     """
-    patients = data_pool.list_all_patients()
+    patients = data_pool.list_all_patients(db_type)
 
     return {
         "success": True,
         "count": len(patients),
-        "patients": patients
+        "patients": patients,
+        "hospital": db_type or 'demo'
     }
 
 
@@ -1781,40 +1790,50 @@ async def migrate_documents_to_firebase():
 
 
 @app.get("/api/pool/patient/{mrn}/exists", tags=["Data Pool"])
-async def check_patient_in_pool(mrn: str):
+async def check_patient_in_pool(mrn: str, db_type: Optional[str] = None):
     """
     Check if patient data exists in the pool.
 
+    Args:
+        mrn: Patient's Medical Record Number
+        db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+
     Returns whether the specified patient's data is available in the pool.
     """
-    exists = data_pool.patient_exists(mrn)
+    exists = data_pool.patient_exists(mrn, db_type)
 
     return {
         "success": True,
         "mrn": mrn,
-        "exists": exists
+        "exists": exists,
+        "hospital": db_type or 'demo'
     }
 
 
 @app.delete("/api/pool/patient/{mrn}", tags=["Data Pool"])
-async def delete_patient_from_pool(mrn: str):
+async def delete_patient_from_pool(mrn: str, db_type: Optional[str] = None):
     """
     Delete patient data from the pool.
 
+    Args:
+        mrn: Patient's Medical Record Number
+        db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+
     Removes the specified patient's data from the data pool.
     """
-    success = data_pool.delete_patient_data(mrn)
+    success = data_pool.delete_patient_data(mrn, db_type)
 
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete patient with MRN {mrn} from data pool"
+            detail=f"Failed to delete patient with MRN {mrn} from {db_type or 'demo'} hospital data pool"
         )
 
     return {
         "success": True,
         "mrn": mrn,
-        "message": f"Patient with MRN {mrn} deleted from data pool"
+        "hospital": db_type or 'demo',
+        "message": f"Patient with MRN {mrn} deleted from {db_type or 'demo'} hospital data pool"
     }
 
 

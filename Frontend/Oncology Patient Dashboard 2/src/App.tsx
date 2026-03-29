@@ -6,6 +6,7 @@ import { TrialDetailView } from './components/TrialDetailView';
 import PatientReviewPage from './components/PatientReviewPage';
 import { PatientProvider } from './contexts/PatientContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { HospitalProvider } from './contexts/HospitalContext';
 import LoginPage from './components/LoginPage';
 import { Loader2 } from 'lucide-react';
 
@@ -126,7 +127,9 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <HospitalProvider>
+        <AppContent />
+      </HospitalProvider>
     </AuthProvider>
   );
 }

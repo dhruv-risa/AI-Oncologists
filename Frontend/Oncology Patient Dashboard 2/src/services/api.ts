@@ -599,10 +599,10 @@ class ApiService {
   }
 
   // Get complete patient data
-  async getPatientData(mrn: string): Promise<PatientData> {
+  async getPatientData(mrn: string, hospital?: string): Promise<PatientData> {
     return this.request<PatientData>('/api/patient/all', {
       method: 'POST',
-      body: JSON.stringify({ mrn }),
+      body: JSON.stringify({ mrn, db_type: hospital || 'demo' }),
     });
   }
 
@@ -704,21 +704,25 @@ class ApiService {
   }
 
   // Data pool endpoints (for cached data)
-  async getCachedPatient(mrn: string): Promise<PatientData> {
-    return this.request<PatientData>(`/api/pool/patient/${mrn}`);
+  async getCachedPatient(mrn: string, hospital?: string): Promise<PatientData> {
+    const url = hospital ? `/api/pool/patient/${mrn}?db_type=${hospital}` : `/api/pool/patient/${mrn}`;
+    return this.request<PatientData>(url);
   }
 
-  async getAllCachedPatients(): Promise<CachedPatient[]> {
-    const response = await this.request<{ success: boolean; count: number; patients: CachedPatient[] }>('/api/pool/patients');
+  async getAllCachedPatients(hospital?: string): Promise<CachedPatient[]> {
+    const url = hospital ? `/api/pool/patients?db_type=${hospital}` : '/api/pool/patients';
+    const response = await this.request<{ success: boolean; count: number; patients: CachedPatient[] }>(url);
     return response.patients || [];
   }
 
-  async checkPatientExists(mrn: string): Promise<{ exists: boolean }> {
-    return this.request<{ exists: boolean }>(`/api/pool/patient/${mrn}/exists`);
+  async checkPatientExists(mrn: string, hospital?: string): Promise<{ exists: boolean }> {
+    const url = hospital ? `/api/pool/patient/${mrn}/exists?db_type=${hospital}` : `/api/pool/patient/${mrn}/exists`;
+    return this.request<{ exists: boolean }>(url);
   }
 
-  async deleteCachedPatient(mrn: string): Promise<ApiResponse<any>> {
-    return this.request<ApiResponse<any>>(`/api/pool/patient/${mrn}`, {
+  async deleteCachedPatient(mrn: string, hospital?: string): Promise<ApiResponse<any>> {
+    const url = hospital ? `/api/pool/patient/${mrn}?db_type=${hospital}` : `/api/pool/patient/${mrn}`;
+    return this.request<ApiResponse<any>>(url, {
       method: 'DELETE',
     });
   }

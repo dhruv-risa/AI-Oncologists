@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { apiService, PatientData, CachedPatient } from '../services/api';
+import { useHospital } from './HospitalContext';
 
 // Context state interface
 interface PatientContextState {
@@ -9,7 +10,7 @@ interface PatientContextState {
   error: string | null;
   fetchPatientData: (mrn: string) => Promise<void>;
   fetchDemoPatientData: (mrn: string) => Promise<void>;
-  loadCachedPatients: () => Promise<void>;
+  loadCachedPatients: (hospital?: string) => Promise<void>;
   deletePatient: (mrn: string) => Promise<void>;
   clearError: () => void;
   clearCurrentPatient: () => void;
@@ -21,6 +22,7 @@ const PatientContext = createContext<PatientContextState | undefined>(undefined)
 
 // Provider component
 export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { selectedHospital } = useHospital();
   const [currentPatient, setCurrentPatient] = useState<PatientData | null>(null);
   const [cachedPatients, setCachedPatients] = useState<CachedPatient[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -32,27 +34,27 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setError(null);
 
     try {
-      // First check if patient exists in cache
-      const existsResponse = await apiService.checkPatientExists(mrn);
+      // First check if patient exists in cache for selected hospital
+      const existsResponse = await apiService.checkPatientExists(mrn, selectedHospital);
 
       let patientData: PatientData;
 
       if (existsResponse.exists) {
         // Fetch from cache
-        console.log(`Patient ${mrn} found in cache, fetching cached data...`);
-        patientData = await apiService.getCachedPatient(mrn);
+        console.log(`Patient ${mrn} found in ${selectedHospital} hospital cache, fetching cached data...`);
+        patientData = await apiService.getCachedPatient(mrn, selectedHospital);
       } else {
         // Trigger full data extraction pipeline
-        console.log(`Patient ${mrn} not in cache, triggering data pipeline...`);
-        patientData = await apiService.getPatientData(mrn);
+        console.log(`Patient ${mrn} not in ${selectedHospital} hospital cache, triggering data pipeline...`);
+        patientData = await apiService.getPatientData(mrn, selectedHospital);
       }
 
       console.log('Patient data loaded:', patientData);
       console.log('Demographics:', patientData.demographics);
       setCurrentPatient(patientData);
 
-      // Reload cached patients list
-      await loadCachedPatients();
+      // Reload cached patients list for selected hospital
+      await loadCachedPatients(selectedHospital);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch patient data';
       setError(errorMessage);
@@ -60,7 +62,7 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedHospital]);
 
   // Fetch demo patient data (bypasses FHIR API, uses demo_data.json)
   const fetchDemoPatientData = useCallback(async (mrn: string) => {
@@ -68,8 +70,8 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setError(null);
 
     try {
-      console.log(`Fetching demo data for MRN: ${mrn}...`);
-      const demoData = await apiService.getPatientData(mrn);
+      console.log(`Fetching demo data for MRN: ${mrn} from ${selectedHospital} hospital...`);
+      const demoData = await apiService.getPatientData(mrn, selectedHospital);
 
       console.log('Demo data loaded:', demoData);
 
@@ -149,18 +151,20 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedHospital]);
 
   // Load list of all cached patients
-  const loadCachedPatients = useCallback(async () => {
+  const loadCachedPatients = useCallback(async (hospital?: string) => {
     try {
-      const patients = await apiService.getAllCachedPatients();
+      const hospitalType = hospital || selectedHospital;
+      console.log(`Loading cached patients for ${hospitalType} hospital...`);
+      const patients = await apiService.getAllCachedPatients(hospitalType);
       setCachedPatients(patients);
     } catch (err) {
       console.error('Error loading cached patients:', err);
       // Don't set error state for this background operation
     }
-  }, []);
+  }, [selectedHospital]);
 
   // Clear error
   const clearError = useCallback(() => {
@@ -173,15 +177,15 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setError(null);
 
     try {
-      await apiService.deleteCachedPatient(mrn);
+      await apiService.deleteCachedPatient(mrn, selectedHospital);
 
       // If the deleted patient is currently selected, clear it
       if (currentPatient?.mrn === mrn) {
         setCurrentPatient(null);
       }
 
-      // Reload cached patients list
-      await loadCachedPatients();
+      // Reload cached patients list for selected hospital
+      await loadCachedPatients(selectedHospital);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete patient';
       setError(errorMessage);
@@ -190,7 +194,7 @@ export const PatientProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } finally {
       setLoading(false);
     }
-  }, [currentPatient, loadCachedPatients]);
+  }, [currentPatient, loadCachedPatients, selectedHospital]);
 
   // Clear current patient
   const clearCurrentPatient = useCallback(() => {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Users, Search, Filter, ArrowRight, AlertCircle, Activity, Plus, Loader2, Trash2, Beaker, LogOut } from 'lucide-react';
 import { usePatient } from '../contexts/PatientContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useHospital } from '../contexts/HospitalContext';
 import { apiService } from '../services/api';
 import { PatientListSkeleton } from './PatientCardSkeleton';
 import { LoadingModal } from './LoadingModal';
@@ -34,6 +35,7 @@ interface PatientListViewProps {
 export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListViewProps) {
   const { cachedPatients, loadCachedPatients, fetchPatientData, deletePatient, error, clearError, setCurrentPatient } = usePatient();
   const { signOut, user } = useAuth();
+  const { selectedHospital, setSelectedHospital, hospitalDisplayName } = useHospital();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientDataMap, setPatientDataMap] = useState<Map<string, any>>(new Map());
   const [searchMRN, setSearchMRN] = useState('');
@@ -42,16 +44,16 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [addingNewPatient, setAddingNewPatient] = useState(false);
 
-  // Load cached patients on mount
+  // Load cached patients on mount and when hospital changes
   useEffect(() => {
     const loadInitialData = async () => {
       setLoadingPatients(true);
-      await loadCachedPatients();
+      await loadCachedPatients(selectedHospital);
       setLoadingPatients(false);
     };
     loadInitialData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount
+  }, [selectedHospital]); // Reload when hospital selection changes
 
   // Load full patient details for display
   useEffect(() => {
@@ -285,6 +287,29 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
               <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm border border-blue-200">
                 {displayPatients.length} Active Patients
               </span>
+              {/* Hospital Dropdown */}
+              <div className="relative">
+                <select
+                  value={selectedHospital}
+                  onChange={(e) => setSelectedHospital(e.target.value as 'demo' | 'astera')}
+                  className="pr-10 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
+                  style={{
+                    appearance: 'none',
+                    WebkitAppearance: 'none',
+                    MozAppearance: 'none',
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23374151' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+                    backgroundPosition: 'right 0.75rem center',
+                    backgroundRepeat: 'no-repeat',
+                    backgroundSize: '1rem',
+                    fontSize: '14px',
+                    paddingLeft: '1.5rem',
+                    paddingRight: '2.75rem'
+                  }}
+                >
+                  <option value="demo">Demo Hospital</option>
+                  <option value="astera">Astera</option>
+                </select>
+              </div>
               {onGoToTrials && (
                 <button
                   onClick={onGoToTrials}
