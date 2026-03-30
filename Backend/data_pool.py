@@ -877,12 +877,13 @@ class DataPool:
             logger.error(f"[get_trial] Error retrieving trial {nct_id}: {e}")
             return None
 
-    def list_all_trials(self, status: str = None, limit: int = 100, offset: int = 0, db_type: str = None) -> List[Dict]:
+    def list_all_trials(self, status: str = None, condition: str = None, limit: int = 100, offset: int = 0, db_type: str = None) -> List[Dict]:
         """
         List all trials from Firestore with optional filtering.
 
         Args:
             status: Filter by trial status (e.g., "RECRUITING")
+            condition: Filter by condition/cancer type (case-insensitive substring match)
             limit: Maximum number of results
             offset: Offset for pagination
             db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
@@ -911,9 +912,35 @@ class DataPool:
             # Order by fetched_at descending (newest first)
             query = query.order_by("fetched_at", direction="DESCENDING")
 
-            # Get all matching documents (we'll handle pagination in memory)
-            # Note: Firestore doesn't have SQL-like OFFSET, so we fetch and slice
+            # Get all matching documents (we'll handle condition filtering and pagination in memory)
+            # Note: Firestore doesn't have SQL-like OFFSET or substring search in arrays
             docs = list(query.stream())
+
+            # Filter by condition if provided (case-insensitive substring match in conditions or cancer_types)
+            if condition:
+                condition_lower = condition.lower()
+                filtered_docs = []
+                for doc in docs:
+                    trial_dict = doc.to_dict()
+                    conditions = trial_dict.get("conditions", [])
+                    cancer_types = trial_dict.get("cancer_types", [])
+
+                    # Check if condition substring matches any condition or cancer type
+                    match_found = False
+                    for cond in conditions:
+                        if isinstance(cond, str) and condition_lower in cond.lower():
+                            match_found = True
+                            break
+                    if not match_found:
+                        for cancer in cancer_types:
+                            if isinstance(cancer, str) and condition_lower in cancer.lower():
+                                match_found = True
+                                break
+
+                    if match_found:
+                        filtered_docs.append(doc)
+
+                docs = filtered_docs
 
             # Apply pagination
             paginated_docs = docs[offset:offset + limit]
@@ -957,12 +984,13 @@ class DataPool:
             logger.error(f"[list_all_trials] Error listing trials: {e}")
             return []
 
-    def get_trials_count(self, status: str = None, db_type: str = None) -> int:
+    def get_trials_count(self, status: str = None, condition: str = None, db_type: str = None) -> int:
         """
         Get total count of trials in Firestore.
 
         Args:
             status: Filter by trial status (e.g., "RECRUITING")
+            condition: Filter by condition/cancer type (case-insensitive substring match)
             db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
@@ -979,12 +1007,40 @@ class DataPool:
             if status:
                 query = query.where("status", "==", status)
 
-            # Use Firestore count aggregation
-            count_query = query.count()
-            count_result = count_query.get()
+            # If condition filter is provided, we need to fetch and count in memory
+            # since Firestore doesn't support substring search in arrays
+            if condition:
+                condition_lower = condition.lower()
+                docs = list(query.stream())
+                count = 0
+                for doc in docs:
+                    trial_dict = doc.to_dict()
+                    conditions = trial_dict.get("conditions", [])
+                    cancer_types = trial_dict.get("cancer_types", [])
 
-            # count_result is a list of aggregation results
-            return count_result[0][0].value if count_result else 0
+                    # Check if condition substring matches any condition or cancer type
+                    match_found = False
+                    for cond in conditions:
+                        if isinstance(cond, str) and condition_lower in cond.lower():
+                            match_found = True
+                            break
+                    if not match_found:
+                        for cancer in cancer_types:
+                            if isinstance(cancer, str) and condition_lower in cancer.lower():
+                                match_found = True
+                                break
+
+                    if match_found:
+                        count += 1
+
+                return count
+            else:
+                # Use Firestore count aggregation for efficiency when no condition filter
+                count_query = query.count()
+                count_result = count_query.get()
+
+                # count_result is a list of aggregation results
+                return count_result[0][0].value if count_result else 0
 
         except Exception as e:
             logger.error(f"[get_trials_count] Error getting trials count: {e}")

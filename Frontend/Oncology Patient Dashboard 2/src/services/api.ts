@@ -736,9 +736,10 @@ class ApiService {
   // ==================== TRIAL-CENTRIC API METHODS ====================
 
   // List all cached clinical trials
-  async listTrials(options?: { status?: string; page?: number; limit?: number; hospital?: string }): Promise<TrialsListResponse> {
+  async listTrials(options?: { status?: string; condition?: string; page?: number; limit?: number; hospital?: string }): Promise<TrialsListResponse> {
     const params = new URLSearchParams();
     if (options?.status) params.append('status', options.status);
+    if (options?.condition) params.append('condition', options.condition);
     if (options?.page) params.append('page', options.page.toString());
     if (options?.limit) params.append('limit', options.limit.toString());
     if (options?.hospital) params.append('db_type', options.hospital);

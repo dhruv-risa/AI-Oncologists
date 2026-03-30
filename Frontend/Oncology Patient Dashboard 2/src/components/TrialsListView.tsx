@@ -25,6 +25,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -34,6 +35,16 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
   const [hasCachedData, setHasCachedData] = useState(false);
 
   const limit = 20;
+
+  // Debounce search query (500ms delay)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setPage(1); // Reset to page 1 when search changes
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Cache keys for localStorage
   const getCacheKeys = (filter: string, pageNum: number) => ({
@@ -50,31 +61,33 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
       const keys = getCacheKeys(statusFilter, page);
       let hasCache = false;
 
-      // Load from cache first
-      try {
-        // Load trials from cache
-        const cachedTrials = localStorage.getItem(keys.trials);
-        if (cachedTrials) {
-          const parsed = JSON.parse(cachedTrials);
-          setTrials(parsed);
-          hasCache = true;
-        }
+      // Load from cache first (only if no search query)
+      if (!debouncedSearchQuery) {
+        try {
+          // Load trials from cache
+          const cachedTrials = localStorage.getItem(keys.trials);
+          if (cachedTrials) {
+            const parsed = JSON.parse(cachedTrials);
+            setTrials(parsed);
+            hasCache = true;
+          }
 
-        // Load pagination from cache
-        const cachedPagination = localStorage.getItem(keys.pagination);
-        if (cachedPagination) {
-          const parsed = JSON.parse(cachedPagination);
-          setTotalPages(parsed.totalPages);
-          setTotal(parsed.total);
-        }
+          // Load pagination from cache
+          const cachedPagination = localStorage.getItem(keys.pagination);
+          if (cachedPagination) {
+            const parsed = JSON.parse(cachedPagination);
+            setTotalPages(parsed.totalPages);
+            setTotal(parsed.total);
+          }
 
-        // Load sync status from cache
-        const cachedSyncStatus = localStorage.getItem(keys.syncStatus);
-        if (cachedSyncStatus) {
-          setSyncStatus(JSON.parse(cachedSyncStatus));
+          // Load sync status from cache
+          const cachedSyncStatus = localStorage.getItem(keys.syncStatus);
+          if (cachedSyncStatus) {
+            setSyncStatus(JSON.parse(cachedSyncStatus));
+          }
+        } catch (err) {
+          console.error('Failed to load cached trials data:', err);
         }
-      } catch (err) {
-        console.error('Failed to load cached trials data:', err);
       }
 
       // Only show loading if we don't have cached data
@@ -82,10 +95,11 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
         setLoading(true);
       }
 
-      // Fetch fresh data in background
+      // Fetch fresh data with server-side filtering
       try {
         const response = await apiService.listTrials({
           status: statusFilter === 'all' ? undefined : statusFilter,
+          condition: debouncedSearchQuery || undefined,
           page,
           limit,
           hospital: selectedHospital,
@@ -94,12 +108,14 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
         setTotalPages(response.total_pages);
         setTotal(response.total);
 
-        // Cache the data
-        localStorage.setItem(keys.trials, JSON.stringify(response.trials));
-        localStorage.setItem(keys.pagination, JSON.stringify({
-          totalPages: response.total_pages,
-          total: response.total,
-        }));
+        // Cache the data (only if no search query)
+        if (!debouncedSearchQuery) {
+          localStorage.setItem(keys.trials, JSON.stringify(response.trials));
+          localStorage.setItem(keys.pagination, JSON.stringify({
+            totalPages: response.total_pages,
+            total: response.total,
+          }));
+        }
         setHasCachedData(true);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch trials');
@@ -118,7 +134,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
     };
 
     loadAndFetch();
-  }, [page, statusFilter, selectedHospital]);
+  }, [page, statusFilter, debouncedSearchQuery, selectedHospital]);
 
   const fetchTrials = async (forceLoading = false) => {
     if (forceLoading) {
@@ -128,6 +144,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
     try {
       const response = await apiService.listTrials({
         status: statusFilter === 'all' ? undefined : statusFilter,
+        condition: debouncedSearchQuery || undefined,
         page,
         limit,
         hospital: selectedHospital,
@@ -136,12 +153,14 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
       setTotalPages(response.total_pages);
       setTotal(response.total);
 
-      // Cache the data
-      localStorage.setItem(CACHE_KEYS.trials, JSON.stringify(response.trials));
-      localStorage.setItem(CACHE_KEYS.pagination, JSON.stringify({
-        totalPages: response.total_pages,
-        total: response.total,
-      }));
+      // Cache the data (only if no search query)
+      if (!debouncedSearchQuery) {
+        localStorage.setItem(CACHE_KEYS.trials, JSON.stringify(response.trials));
+        localStorage.setItem(CACHE_KEYS.pagination, JSON.stringify({
+          totalPages: response.total_pages,
+          total: response.total,
+        }));
+      }
       setHasCachedData(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch trials');
@@ -182,11 +201,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
     }
   };
 
-  const filteredTrials = trials.filter(trial =>
-    trial.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    trial.nct_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    trial.conditions?.some(c => c.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  // Server-side filtering is now used, so no client-side filtering needed
 
   const getPhaseColor = (phase: string) => {
     if (phase.includes('1')) return 'bg-amber-100 text-amber-800';
@@ -305,7 +320,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
               </Card>
             ))}
           </div>
-        ) : filteredTrials.length === 0 ? (
+        ) : trials.length === 0 ? (
           <Card className="text-center py-12">
             <CardContent>
               <Beaker className="h-12 w-12 mx-auto text-gray-400 mb-4" />
@@ -325,7 +340,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredTrials.map((trial) => (
+            {trials.map((trial) => (
               <Card
                 key={trial.nct_id}
                 className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer"

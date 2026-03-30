@@ -1867,6 +1867,7 @@ async def clear_data_pool():
 @app.get("/api/trials", tags=["Clinical Trials"])
 async def list_trials(
     status: str = None,
+    condition: str = None,
     page: int = 1,
     limit: int = 50,
     db_type: str = None
@@ -1879,6 +1880,7 @@ async def list_trials(
 
     Query parameters:
     - status: Filter by trial status (e.g., "RECRUITING")
+    - condition: Filter by condition/cancer type (e.g., "Lung Cancer", "lung")
     - page: Page number (default: 1)
     - limit: Items per page (default: 50, max: 100)
     - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
@@ -1889,12 +1891,13 @@ async def list_trials(
 
         trials = data_pool.list_all_trials(
             status=status,
+            condition=condition,
             limit=limit,
             offset=offset,
             db_type=db_type
         )
 
-        total = data_pool.get_trials_count(status=status, db_type=db_type)
+        total = data_pool.get_trials_count(status=status, condition=condition, db_type=db_type)
 
         return {
             "success": True,
@@ -2851,18 +2854,21 @@ async def full_sync_batch(
 
 
 @app.get("/api/admin/sync-status", tags=["Admin"])
-async def get_sync_status():
+async def get_sync_status(db_type: str = None):
     """
     Get the status of the last sync operations.
 
     Returns information about the most recent trials sync and eligibility computation.
+
+    Query parameters:
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     try:
         last_trials_sync = data_pool.get_last_sync("trials_fetch")
         last_eligibility_sync = data_pool.get_last_sync("eligibility_compute")
         last_full_sync = data_pool.get_last_sync("full_sync")
 
-        trials_count = data_pool.get_trials_count()
+        trials_count = data_pool.get_trials_count(db_type=db_type)
 
         # Check scheduler status
         scheduler_active = False
