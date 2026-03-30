@@ -3122,7 +3122,7 @@ def build_search_queries_from_patient(patient_data: Dict) -> List[str]:
     return unique_queries
 
 
-def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250, max_pages: int = 2) -> Dict:
+def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250, max_pages: int = 2, db_type: str = None) -> Dict:
     """
     Main entry point: Extract and match clinical trials for a patient.
 
@@ -3137,6 +3137,7 @@ def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250,
         patient_data: Complete patient data from data pool
         max_trials_per_query: Maximum trials per search query (default: 250)
         max_pages: Number of pages to fetch per query (default: 2)
+        db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
     Returns:
         Dictionary with matched trials and eligibility information
@@ -3266,7 +3267,7 @@ def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250,
                         "status": trial.get("status", ""),
                         "sponsor": trial.get("sponsor", "")
                     }
-                    if data_pool.store_eligibility(nct_id, patient_mrn, eligibility_data, trial_data):
+                    if data_pool.store_eligibility(nct_id, patient_mrn, eligibility_data, trial_data, db_type):
                         stored_count += 1
             print(f"Stored {stored_count}/{len(matched_trials)} eligibility results in Firestore")
     except Exception as e:

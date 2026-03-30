@@ -477,7 +477,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
         setSaving(true);
         try {
             const response = await apiService.resolveCriteria(
-                currentPatient.mrn, reviewModal.trialNctId, payloads
+                currentPatient.mrn, reviewModal.trialNctId, payloads, selectedHospital
             );
             if (response.success) {
                 setTrials(prev => prev.map(t => {
@@ -522,7 +522,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
         if (!currentPatient?.mrn) return;
         setSendingLink(true);
         try {
-            const response = await apiService.sendPatientReview(currentPatient.mrn, nctId);
+            const response = await apiService.sendPatientReview(currentPatient.mrn, nctId, selectedHospital);
             if (response.success && response.review_url) {
                 setLinkModal({ nctId, url: response.review_url });
                 setCopied(false);

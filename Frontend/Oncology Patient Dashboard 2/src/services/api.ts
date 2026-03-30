@@ -787,15 +787,18 @@ class ApiService {
   async resolveCriteria(
     mrn: string,
     nctId: string,
-    resolutions: CriterionResolutionPayload[]
+    resolutions: CriterionResolutionPayload[],
+    hospital?: string
   ): Promise<ResolveCriteriaResponse> {
-    return this.request<ResolveCriteriaResponse>(
-      `/api/patients/${mrn}/trials/${nctId}/resolve-criteria`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ resolutions }),
-      }
-    );
+    const params = new URLSearchParams();
+    if (hospital) params.append('db_type', hospital);
+
+    const queryString = params.toString();
+    const endpoint = `/api/patients/${mrn}/trials/${nctId}/resolve-criteria${queryString ? `?${queryString}` : ''}`;
+    return this.request<ResolveCriteriaResponse>(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({ resolutions }),
+    });
   }
 
   // Bucket 3: Refresh a single trial's eligibility (re-run LLM)
@@ -809,11 +812,13 @@ class ApiService {
   }
 
   // Patient Review: Generate a shareable review link
-  async sendPatientReview(mrn: string, nctId: string): Promise<SendPatientReviewResponse> {
-    return this.request<SendPatientReviewResponse>(
-      `/api/patients/${mrn}/trials/${nctId}/send-patient-review`,
-      { method: 'POST' }
-    );
+  async sendPatientReview(mrn: string, nctId: string, hospital?: string): Promise<SendPatientReviewResponse> {
+    const params = new URLSearchParams();
+    if (hospital) params.append('db_type', hospital);
+
+    const queryString = params.toString();
+    const endpoint = `/api/patients/${mrn}/trials/${nctId}/send-patient-review${queryString ? `?${queryString}` : ''}`;
+    return this.request<SendPatientReviewResponse>(endpoint, { method: 'POST' });
   }
 
   // Patient Review: Get review page data (public)

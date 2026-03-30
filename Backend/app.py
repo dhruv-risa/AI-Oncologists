@@ -1463,7 +1463,7 @@ async def get_clinical_trials(request: MRNRequest):
 
         # Extract clinical trials matches using smart multi-query strategy
         # max_trials_per_query=250, max_pages=2 -> ~500 trials per query
-        result = extract_clinical_trials(patient_data, max_trials_per_query=50, max_pages=1)
+        result = extract_clinical_trials(patient_data, max_trials_per_query=50, max_pages=1, db_type=request.db_type)
 
         return {
             "success": result.get("success", False),
@@ -2120,12 +2120,15 @@ class ResolveCriteriaRequest(BaseModel):
 
 
 @app.post("/api/patients/{mrn}/trials/{nct_id}/resolve-criteria", tags=["Clinical Trials"])
-async def resolve_criteria(mrn: str, nct_id: str, request: ResolveCriteriaRequest):
+async def resolve_criteria(mrn: str, nct_id: str, request: ResolveCriteriaRequest, db_type: str = None):
     """
     Manually resolve unknown eligibility criteria for a patient-trial pair.
 
     When a doctor or patient answers Yes/No for unknown criteria, this endpoint
     updates the stored criteria_results and recalculates the eligibility score.
+
+    Query parameters:
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     import json
     import sqlite3
@@ -2347,12 +2350,15 @@ async def refresh_single_trial_eligibility(mrn: str, nct_id: str, db_type: str =
 # ============================================================================
 
 @app.post("/api/patients/{mrn}/trials/{nct_id}/send-patient-review", tags=["Clinical Trials"])
-async def send_patient_review(mrn: str, nct_id: str):
+async def send_patient_review(mrn: str, nct_id: str, db_type: str = None):
     """
     Generate a shareable patient review link for a specific trial.
 
     Extracts patient-review criteria from the eligibility data,
     creates a token, and returns a URL that can be shared with the patient.
+
+    Query parameters:
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     import json
     import sqlite3
@@ -2373,7 +2379,7 @@ async def send_patient_review(mrn: str, nct_id: str):
         if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No eligibility data found for patient {mrn} and trial {nct_id}"
+                detail=f"No eligibility data found for patient {mrn} and trial {nct_id} in {db_type or 'demo'} hospital"
             )
 
         criteria_results = json.loads(row[0]) if row[0] else {}
