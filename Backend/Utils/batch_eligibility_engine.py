@@ -11,11 +11,19 @@ Can be run as a scheduled job or triggered manually.
 
 import json
 import time
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
 import os
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -82,6 +90,11 @@ class BatchEligibilityEngine:
                 "targeted therapy"
             ]
 
+        logger.info("="*60)
+        logger.info("BATCH TRIALS SYNC STARTED")
+        logger.info("="*60)
+        logger.info(f"Configuration: {len(search_queries)} queries, {max_per_query} trials per query, status={status}")
+
         print(f"\n{'='*60}")
         print("BATCH TRIALS SYNC")
         print(f"{'='*60}")
@@ -92,8 +105,11 @@ class BatchEligibilityEngine:
         all_trials = {}
         new_count = 0
         updated_count = 0
+        sync_start_time = time.time()
 
         for i, query in enumerate(search_queries, 1):
+            query_start_time = time.time()
+            logger.info(f"[Query {i}/{len(search_queries)}] Starting fetch for: '{query}'")
             print(f"\n[{i}/{len(search_queries)}] Fetching: '{query}'...")
 
             try:
@@ -109,20 +125,33 @@ class BatchEligibilityEngine:
                     if nct_id and nct_id not in all_trials:
                         all_trials[nct_id] = self._normalize_trial_data(trial)
 
+                query_elapsed = time.time() - query_start_time
+                logger.info(f"[Query {i}/{len(search_queries)}] Completed '{query}' in {query_elapsed:.2f}s: {len(trials)} trials retrieved, {len(all_trials)} total unique")
                 print(f"   Retrieved {len(trials)} trials, total unique: {len(all_trials)}")
 
             except Exception as e:
+                query_elapsed = time.time() - query_start_time
+                logger.error(f"[Query {i}/{len(search_queries)}] Error fetching '{query}' after {query_elapsed:.2f}s: {e}")
                 print(f"   Error fetching '{query}': {e}")
                 continue
 
         # Store trials in database
+        sync_fetch_elapsed = time.time() - sync_start_time
+        logger.info(f"Trial fetching completed in {sync_fetch_elapsed:.2f}s. Total unique trials: {len(all_trials)}")
+
         print(f"\n{'='*60}")
         print(f"Storing {len(all_trials)} trials in cache...")
+
+        store_start_time = time.time()
+        logger.info(f"Starting storage of {len(all_trials)} trials to database...")
 
         trials_list = list(all_trials.values())
         store_result = self.data_pool.bulk_store_trials(trials_list)
         stored = store_result["stored_count"]
         new_nct_ids = store_result["new_nct_ids"]
+
+        store_elapsed = time.time() - store_start_time
+        logger.info(f"Storage completed in {store_elapsed:.2f}s: {stored} trials stored, {len(new_nct_ids)} new trials")
 
         # Log the sync
         self.data_pool.log_sync(
@@ -131,15 +160,18 @@ class BatchEligibilityEngine:
             status="completed"
         )
 
+        total_elapsed = time.time() - sync_start_time
         summary = {
             "queries_processed": len(search_queries),
             "total_trials_fetched": len(all_trials),
             "trials_stored": stored,
             "new_trials": len(new_nct_ids),
             "new_nct_ids": new_nct_ids,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "elapsed_seconds": round(total_elapsed, 2)
         }
 
+        logger.info(f"BATCH TRIALS SYNC COMPLETED in {total_elapsed:.2f}s: {stored} trials stored ({len(new_nct_ids)} new)")
         print(f"\nSync complete: {stored} trials stored ({len(new_nct_ids)} new)")
         return summary
 
@@ -189,18 +221,26 @@ class BatchEligibilityEngine:
         Returns:
             Summary of computation
         """
+        logger.info("="*60)
+        logger.info("BATCH ELIGIBILITY COMPUTATION STARTED")
+        logger.info("="*60)
+        logger.info(f"Parameters: patient_mrns={len(patient_mrns) if patient_mrns else 'ALL'}, trial_nct_ids={len(trial_nct_ids) if trial_nct_ids else 'ALL'}, limit_trials={limit_trials}, db_type={db_type}")
+
         print(f"\n{'='*60}")
         print("BATCH ELIGIBILITY COMPUTATION")
         print(f"{'='*60}")
 
         # Get patients
+        patient_load_start = time.time()
         if patient_mrns:
+            logger.info(f"Loading {len(patient_mrns)} specific patients...")
             patients = []
             for mrn in patient_mrns:
                 data = self.data_pool.get_patient_data(mrn, db_type)
                 if data:
                     patients.append({"mrn": mrn, "data": data})
         else:
+            logger.info("Loading ALL patients from database...")
             all_patients = self.data_pool.list_all_patients(db_type)
             patients = []
             for p in all_patients:
@@ -208,22 +248,33 @@ class BatchEligibilityEngine:
                 if data:
                     patients.append({"mrn": p["mrn"], "data": data})
 
+        patient_load_elapsed = time.time() - patient_load_start
+        logger.info(f"Loaded {len(patients)} patients in {patient_load_elapsed:.2f}s")
         print(f"Patients to process: {len(patients)}")
 
         # Get trials
+        trial_load_start = time.time()
         if trial_nct_ids:
+            logger.info(f"Loading {len(trial_nct_ids)} specific trials...")
             trials = [self.data_pool.get_trial(nct_id) for nct_id in trial_nct_ids]
             trials = [t for t in trials if t]
         else:
+            logger.info(f"Loading trials from database (limit={limit_trials or 1000})...")
             trials = self.data_pool.list_all_trials(
                 status="RECRUITING",
                 limit=limit_trials or 1000
             )
 
+        trial_load_elapsed = time.time() - trial_load_start
+        logger.info(f"Loaded {len(trials)} trials in {trial_load_elapsed:.2f}s")
         print(f"Trials to process: {len(trials)}")
-        print(f"Total combinations: {len(patients) * len(trials)}")
+
+        total_combinations = len(patients) * len(trials)
+        logger.info(f"Total patient×trial combinations to compute: {total_combinations}")
+        print(f"Total combinations: {total_combinations}")
 
         if not patients or not trials:
+            logger.warning("No patients or trials to process - aborting")
             print("No patients or trials to process")
             return {"error": "No data to process"}
 
@@ -234,11 +285,14 @@ class BatchEligibilityEngine:
         errors = 0
 
         start_time = time.time()
+        logger.info(f"Starting eligibility computation at {datetime.now().isoformat()}")
 
-        for patient in patients:
+        for patient_idx, patient in enumerate(patients, 1):
             patient_data = patient["data"]
             patient_mrn = patient["mrn"]
 
+            patient_start_time = time.time()
+            logger.info(f"[Patient {patient_idx}/{len(patients)}] Starting processing for MRN: {patient_mrn}")
             print(f"\nProcessing patient {patient_mrn}...")
 
             # Start progress tracking
@@ -247,7 +301,7 @@ class BatchEligibilityEngine:
             try:
                 # Process trials in parallel — results stored incrementally per-trial
                 batch_results = self._process_patient_trials_batch(
-                    patient_mrn, patient_data, trials
+                    patient_mrn, patient_data, trials, db_type
                 )
 
                 results.extend(batch_results)
@@ -256,16 +310,41 @@ class BatchEligibilityEngine:
 
                 # Mark computation complete
                 self.data_pool.complete_computation_progress(patient_mrn)
+
+                patient_elapsed = time.time() - patient_start_time
+                avg_per_trial = patient_elapsed / len(trials) if len(trials) > 0 else 0
+                logger.info(f"[Patient {patient_idx}/{len(patients)}] Completed MRN {patient_mrn} in {patient_elapsed:.2f}s ({avg_per_trial:.2f}s per trial): {len(batch_results)}/{len(trials)} successful")
             except Exception as e:
+                patient_elapsed = time.time() - patient_start_time
+                logger.error(f"[Patient {patient_idx}/{len(patients)}] Error processing patient {patient_mrn} after {patient_elapsed:.2f}s: {e}")
                 print(f"   Error processing patient {patient_mrn}: {e}")
                 self.data_pool.complete_computation_progress(patient_mrn, error_message=str(e))
                 processed += len(trials)
                 errors += len(trials)
 
+            progress_pct = 100 * processed / total_combinations
+            elapsed_so_far = time.time() - start_time
+            avg_per_combo = elapsed_so_far / processed if processed > 0 else 0
+            remaining_combos = total_combinations - processed
+            estimated_remaining = avg_per_combo * remaining_combos
+
+            logger.info(f"Progress: {processed}/{total_combinations} ({progress_pct:.1f}%) | Elapsed: {elapsed_so_far:.1f}s | Est. remaining: {estimated_remaining:.1f}s")
             print(f"   Completed: {len(batch_results) if 'batch_results' in dir() else 0}/{len(trials)} trials")
-            print(f"   Progress: {processed}/{total_combinations} ({100*processed/total_combinations:.1f}%)")
+            print(f"   Progress: {processed}/{total_combinations} ({progress_pct:.1f}%)")
 
         elapsed = time.time() - start_time
+        avg_time_per_combo = elapsed / total_combinations if total_combinations > 0 else 0
+
+        logger.info("="*60)
+        logger.info("BATCH ELIGIBILITY COMPUTATION COMPLETED")
+        logger.info("="*60)
+        logger.info(f"Total time: {elapsed:.2f}s ({elapsed/60:.1f} minutes)")
+        logger.info(f"Patients processed: {len(patients)}")
+        logger.info(f"Trials processed: {len(trials)}")
+        logger.info(f"Total combinations: {total_combinations}")
+        logger.info(f"Successful eligibility records: {len(results)}")
+        logger.info(f"Errors: {errors}")
+        logger.info(f"Average time per combination: {avg_time_per_combo:.3f}s")
 
         # Log the computation
         self.data_pool.log_sync(
@@ -280,6 +359,7 @@ class BatchEligibilityEngine:
             "eligibility_computed": len(results),
             "errors": errors,
             "elapsed_seconds": round(elapsed, 2),
+            "avg_time_per_combination": round(avg_time_per_combo, 3),
             "timestamp": datetime.now().isoformat()
         }
 
@@ -292,7 +372,7 @@ class BatchEligibilityEngine:
         return summary
 
     def _process_patient_trials_batch(self, patient_mrn: str, patient_data: Dict,
-                                      trials: List[Dict]) -> List[Dict]:
+                                      trials: List[Dict], db_type: str = None) -> List[Dict]:
         """
         Process eligibility for a patient against multiple trials in parallel.
 
@@ -300,11 +380,16 @@ class BatchEligibilityEngine:
             patient_mrn: Patient MRN
             patient_data: Patient data dictionary
             trials: List of trial dictionaries
+            db_type: Hospital type ('demo' or 'astera'). Defaults to None.
 
         Returns:
             List of eligibility results
         """
         results = []
+        completed_count = 0
+        eligible_count = 0
+
+        logger.info(f"[MRN: {patient_mrn}] Starting parallel processing of {len(trials)} trials with {self.max_workers} workers")
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {}
@@ -317,6 +402,7 @@ class BatchEligibilityEngine:
 
             for future in as_completed(futures):
                 nct_id = futures[future]
+                completed_count += 1
                 try:
                     result = future.result()
                     if result:
@@ -360,19 +446,29 @@ class BatchEligibilityEngine:
                         is_eligible = eligibility_info.get("status") in (
                             "LIKELY_ELIGIBLE", "POTENTIALLY_ELIGIBLE"
                         )
+                        if is_eligible:
+                            eligible_count += 1
+                            logger.info(f"[MRN: {patient_mrn}] Trial {nct_id}: {eligibility_info.get('status')} ({eligibility_info.get('percentage', 0)}%)")
+
                         self.data_pool.increment_computation_progress(
                             patient_mrn, is_eligible=is_eligible
                         )
+
+                        # Log progress every 50 trials
+                        if completed_count % 50 == 0:
+                            logger.info(f"[MRN: {patient_mrn}] Progress: {completed_count}/{len(trials)} trials completed, {eligible_count} eligible so far")
                     else:
                         # Trial returned None (skipped by pre-filter)
                         self.data_pool.increment_computation_progress(patient_mrn)
                 except Exception as e:
+                    logger.error(f"[MRN: {patient_mrn}] Error processing trial {nct_id}: {e}")
                     print(f"      Error processing {nct_id}: {e}")
                     self.data_pool.increment_computation_progress(
                         patient_mrn, is_error=True
                     )
                     continue
 
+        logger.info(f"[MRN: {patient_mrn}] Completed all {len(trials)} trials: {len(results)} successful, {eligible_count} eligible")
         return results
 
     def _compute_single_eligibility(self, patient_data: Dict, trial: Dict) -> Optional[Dict]:
@@ -461,21 +557,38 @@ class BatchEligibilityEngine:
         Returns:
             Combined summary
         """
+        full_sync_start = time.time()
+
+        logger.info("#" * 60)
+        logger.info("### FULL SYNC OPERATION STARTED ###")
+        logger.info("#" * 60)
+        logger.info(f"Parameters: max_trials_per_query={max_trials_per_query}, limit_trials={limit_trials}")
+        logger.info(f"Start time: {datetime.now().isoformat()}")
+
         print("\n" + "="*60)
         print("FULL SYNC STARTING")
         print("="*60)
 
         # Step 1: Sync trials
+        logger.info("STEP 1: Starting trial synchronization from ClinicalTrials.gov...")
+        step1_start = time.time()
         trials_summary = self.sync_trials(max_per_query=max_trials_per_query)
+        step1_elapsed = time.time() - step1_start
+        logger.info(f"STEP 1 COMPLETE: Trial sync finished in {step1_elapsed:.2f}s")
 
         # Step 2: Compute eligibility ONLY for newly added trials
         new_nct_ids = trials_summary.get("new_nct_ids", [])
         if new_nct_ids:
+            logger.info(f"STEP 2: {len(new_nct_ids)} new trials found - starting eligibility computation for all patients")
             print(f"\n{len(new_nct_ids)} new trials found - computing eligibility for all patients")
+            step2_start = time.time()
             eligibility_summary = self.compute_eligibility_matrix(
                 trial_nct_ids=new_nct_ids
             )
+            step2_elapsed = time.time() - step2_start
+            logger.info(f"STEP 2 COMPLETE: Eligibility computation finished in {step2_elapsed:.2f}s")
         else:
+            logger.info("STEP 2 SKIPPED: No new trials found, skipping eligibility computation")
             print("\nNo new trials - skipping eligibility computation")
             eligibility_summary = {
                 "patients_processed": 0,
@@ -487,6 +600,8 @@ class BatchEligibilityEngine:
             }
 
         # Log full sync
+        full_sync_elapsed = time.time() - full_sync_start
+
         self.data_pool.log_sync(
             sync_type="full_sync",
             new_trials=len(new_nct_ids),
@@ -494,9 +609,20 @@ class BatchEligibilityEngine:
             status="completed"
         )
 
+        logger.info("#" * 60)
+        logger.info("### FULL SYNC OPERATION COMPLETED ###")
+        logger.info("#" * 60)
+        logger.info(f"Total elapsed time: {full_sync_elapsed:.2f}s ({full_sync_elapsed/60:.1f} minutes)")
+        logger.info(f"New trials fetched: {len(new_nct_ids)}")
+        logger.info(f"Eligibility records computed: {eligibility_summary.get('eligibility_computed', 0)}")
+        logger.info(f"Patients processed: {eligibility_summary.get('patients_processed', 0)}")
+        logger.info(f"Errors: {eligibility_summary.get('errors', 0)}")
+        logger.info(f"Completion time: {datetime.now().isoformat()}")
+
         return {
             "trials_sync": trials_summary,
             "eligibility_computation": eligibility_summary,
+            "total_elapsed_seconds": round(full_sync_elapsed, 2),
             "timestamp": datetime.now().isoformat()
         }
 
