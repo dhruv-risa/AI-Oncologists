@@ -696,10 +696,10 @@ class ApiService {
   }
 
   // Clinical Trials - Get matched trials with eligibility analysis
-  async getClinicalTrials(mrn: string): Promise<ClinicalTrialsResponse> {
+  async getClinicalTrials(mrn: string, hospital?: string): Promise<ClinicalTrialsResponse> {
     return this.request<ClinicalTrialsResponse>('/api/tabs/clinical-trials', {
       method: 'POST',
-      body: JSON.stringify({ mrn }),
+      body: JSON.stringify({ mrn, db_type: hospital }),
     });
   }
 

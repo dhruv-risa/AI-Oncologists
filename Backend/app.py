@@ -1453,12 +1453,12 @@ async def get_clinical_trials(request: MRNRequest):
     """
     try:
         # Get patient data from pool
-        patient_data = data_pool.get_patient_data(request.mrn)
+        patient_data = data_pool.get_patient_data(request.mrn, request.db_type)
 
         if not patient_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Patient with MRN {request.mrn} not found. Please load patient data first using /api/patient/all"
+                detail=f"Patient with MRN {request.mrn} not found in {request.db_type or 'demo'} hospital data pool. Please load patient data first using /api/patient/all"
             )
 
         # Extract clinical trials matches using smart multi-query strategy

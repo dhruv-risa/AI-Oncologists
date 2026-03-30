@@ -378,7 +378,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
         }
 
         try {
-            const response: ClinicalTrialsResponse = await apiService.getClinicalTrials(currentPatient.mrn);
+            const response: ClinicalTrialsResponse = await apiService.getClinicalTrials(currentPatient.mrn, selectedHospital);
             if (response.success) {
                 setTrials(response.trials || []);
                 setSearchQueries(response.search_queries || []);
