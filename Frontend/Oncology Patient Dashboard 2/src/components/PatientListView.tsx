@@ -71,7 +71,7 @@ export function PatientListView({ onSelectPatient, onGoToTrials }: PatientListVi
         const newDataMap = new Map();
         const patientPromises = cachedPatients.map(async (cached) => {
           try {
-            const fullData = await apiService.getCachedPatient(cached.mrn);
+            const fullData = await apiService.getCachedPatient(cached.mrn, selectedHospital);
 
             // Store full data in map for later use
             newDataMap.set(cached.mrn, fullData);
