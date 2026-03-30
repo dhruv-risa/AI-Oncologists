@@ -2070,10 +2070,15 @@ async def get_eligible_trials_for_patient_cached(
 
 
 @app.get("/api/patients/{mrn}/eligibility-progress", tags=["Clinical Trials"])
-async def get_eligibility_progress(mrn: str):
-    """Get the current computation progress for a patient's eligibility analysis."""
+async def get_eligibility_progress(mrn: str, db_type: str = None):
+    """
+    Get the current computation progress for a patient's eligibility analysis.
+
+    Query parameters:
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+    """
     try:
-        progress = data_pool.get_computation_progress(mrn)
+        progress = data_pool.get_computation_progress(mrn, db_type=db_type)
 
         if progress is None:
             return {

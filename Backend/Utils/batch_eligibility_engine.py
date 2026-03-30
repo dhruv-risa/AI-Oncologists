@@ -298,7 +298,7 @@ class BatchEligibilityEngine:
             print(f"\nProcessing patient {patient_mrn}...")
 
             # Start progress tracking
-            self.data_pool.start_computation_progress(patient_mrn, len(trials))
+            self.data_pool.start_computation_progress(patient_mrn, len(trials), db_type=db_type)
 
             try:
                 # Process trials in parallel — results stored incrementally per-trial
@@ -311,7 +311,7 @@ class BatchEligibilityEngine:
                 errors += len(trials) - len(batch_results)
 
                 # Mark computation complete
-                self.data_pool.complete_computation_progress(patient_mrn)
+                self.data_pool.complete_computation_progress(patient_mrn, db_type=db_type)
 
                 patient_elapsed = time.time() - patient_start_time
                 avg_per_trial = patient_elapsed / len(trials) if len(trials) > 0 else 0
@@ -320,7 +320,7 @@ class BatchEligibilityEngine:
                 patient_elapsed = time.time() - patient_start_time
                 logger.error(f"[Patient {patient_idx}/{len(patients)}] Error processing patient {patient_mrn} after {patient_elapsed:.2f}s: {e}")
                 print(f"   Error processing patient {patient_mrn}: {e}")
-                self.data_pool.complete_computation_progress(patient_mrn, error_message=str(e))
+                self.data_pool.complete_computation_progress(patient_mrn, error_message=str(e), db_type=db_type)
                 processed += len(trials)
                 errors += len(trials)
 
@@ -453,7 +453,7 @@ class BatchEligibilityEngine:
                             logger.info(f"[MRN: {patient_mrn}] Trial {nct_id}: {eligibility_info.get('status')} ({eligibility_info.get('percentage', 0)}%)")
 
                         self.data_pool.increment_computation_progress(
-                            patient_mrn, is_eligible=is_eligible
+                            patient_mrn, is_eligible=is_eligible, db_type=db_type
                         )
 
                         # Log progress every 50 trials
@@ -461,12 +461,12 @@ class BatchEligibilityEngine:
                             logger.info(f"[MRN: {patient_mrn}] Progress: {completed_count}/{len(trials)} trials completed, {eligible_count} eligible so far")
                     else:
                         # Trial returned None (skipped by pre-filter)
-                        self.data_pool.increment_computation_progress(patient_mrn)
+                        self.data_pool.increment_computation_progress(patient_mrn, db_type=db_type)
                 except Exception as e:
                     logger.error(f"[MRN: {patient_mrn}] Error processing trial {nct_id}: {e}")
                     print(f"      Error processing {nct_id}: {e}")
                     self.data_pool.increment_computation_progress(
-                        patient_mrn, is_error=True
+                        patient_mrn, is_error=True, db_type=db_type
                     )
                     continue
 
