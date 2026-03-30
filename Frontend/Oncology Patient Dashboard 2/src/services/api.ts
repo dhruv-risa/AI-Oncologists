@@ -799,11 +799,13 @@ class ApiService {
   }
 
   // Bucket 3: Refresh a single trial's eligibility (re-run LLM)
-  async refreshTrialEligibility(mrn: string, nctId: string): Promise<ResolveCriteriaResponse> {
-    return this.request<ResolveCriteriaResponse>(
-      `/api/patients/${mrn}/trials/${nctId}/refresh-eligibility`,
-      { method: 'POST' }
-    );
+  async refreshTrialEligibility(mrn: string, nctId: string, hospital?: string): Promise<ResolveCriteriaResponse> {
+    const params = new URLSearchParams();
+    if (hospital) params.append('db_type', hospital);
+
+    const queryString = params.toString();
+    const endpoint = `/api/patients/${mrn}/trials/${nctId}/refresh-eligibility${queryString ? `?${queryString}` : ''}`;
+    return this.request<ResolveCriteriaResponse>(endpoint, { method: 'POST' });
   }
 
   // Patient Review: Generate a shareable review link

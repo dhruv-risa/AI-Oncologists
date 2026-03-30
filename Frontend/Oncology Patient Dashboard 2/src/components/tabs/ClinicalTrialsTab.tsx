@@ -572,7 +572,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
         if (!currentPatient?.mrn) return;
         setRefreshingTrials(prev => new Set(prev).add(nctId));
         try {
-            const response = await apiService.refreshTrialEligibility(currentPatient.mrn, nctId);
+            const response = await apiService.refreshTrialEligibility(currentPatient.mrn, nctId, selectedHospital);
             if (response.success) {
                 setTrials(prev => prev.map(t => {
                     if (t.nct_id !== nctId) return t;

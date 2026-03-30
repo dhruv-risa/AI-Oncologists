@@ -2217,12 +2217,15 @@ async def resolve_criteria(mrn: str, nct_id: str, request: ResolveCriteriaReques
 # ── Bucket 3: Per-trial refresh (re-run LLM for one patient×trial pair) ───
 
 @app.post("/api/patients/{mrn}/trials/{nct_id}/refresh-eligibility", tags=["Clinical Trials"])
-async def refresh_single_trial_eligibility(mrn: str, nct_id: str):
+async def refresh_single_trial_eligibility(mrn: str, nct_id: str, db_type: str = None):
     """
     Re-run the LLM eligibility analysis for a single patient×trial pair.
 
     Use this after new test results enter the system so that previously-unknown
     criteria can be resolved with fresh data.  The call takes 1-3 min (LLM).
+
+    Query parameters:
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     import json
     import sqlite3
@@ -2231,11 +2234,11 @@ async def refresh_single_trial_eligibility(mrn: str, nct_id: str):
 
     try:
         # 1. Get patient data
-        patient_data = data_pool.get_patient_data(mrn)
+        patient_data = data_pool.get_patient_data(mrn, db_type)
         if patient_data is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Patient {mrn} not found in data pool"
+                detail=f"Patient {mrn} not found in {db_type or 'demo'} hospital data pool"
             )
 
         # 2. Get trial data
