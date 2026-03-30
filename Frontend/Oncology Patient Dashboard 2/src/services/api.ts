@@ -736,11 +736,12 @@ class ApiService {
   // ==================== TRIAL-CENTRIC API METHODS ====================
 
   // List all cached clinical trials
-  async listTrials(options?: { status?: string; page?: number; limit?: number }): Promise<TrialsListResponse> {
+  async listTrials(options?: { status?: string; page?: number; limit?: number; hospital?: string }): Promise<TrialsListResponse> {
     const params = new URLSearchParams();
     if (options?.status) params.append('status', options.status);
     if (options?.page) params.append('page', options.page.toString());
     if (options?.limit) params.append('limit', options.limit.toString());
+    if (options?.hospital) params.append('db_type', options.hospital);
 
     const queryString = params.toString();
     const endpoint = `/api/trials${queryString ? `?${queryString}` : ''}`;
@@ -748,8 +749,12 @@ class ApiService {
   }
 
   // Get detailed information about a specific trial
-  async getTrialDetails(nctId: string): Promise<TrialDetailResponse> {
-    return this.request<TrialDetailResponse>(`/api/trials/${nctId}`);
+  async getTrialDetails(nctId: string, hospital?: string): Promise<TrialDetailResponse> {
+    const params = new URLSearchParams();
+    if (hospital) params.append('db_type', hospital);
+    const queryString = params.toString();
+    const endpoint = `/api/trials/${nctId}${queryString ? `?${queryString}` : ''}`;
+    return this.request<TrialDetailResponse>(endpoint);
   }
 
   // Get all patients eligible for a specific trial

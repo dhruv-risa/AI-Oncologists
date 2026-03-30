@@ -12,6 +12,7 @@ import {
 } from './ui/select';
 import { apiService, CachedTrial, SyncStatusResponse } from '../services/api';
 import { Search, RefreshCw, ChevronLeft, ChevronRight, Beaker, Users, Building2, Calendar, AlertCircle } from 'lucide-react';
+import { useHospital } from '../contexts/HospitalContext';
 
 interface TrialsListViewProps {
   onSelectTrial: (nctId: string) => void;
@@ -19,6 +20,7 @@ interface TrialsListViewProps {
 }
 
 export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListViewProps) {
+  const { selectedHospital } = useHospital();
   const [trials, setTrials] = useState<CachedTrial[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +88,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
           status: statusFilter === 'all' ? undefined : statusFilter,
           page,
           limit,
+          hospital: selectedHospital,
         });
         setTrials(response.trials);
         setTotalPages(response.total_pages);
@@ -115,7 +118,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
     };
 
     loadAndFetch();
-  }, [page, statusFilter]);
+  }, [page, statusFilter, selectedHospital]);
 
   const fetchTrials = async (forceLoading = false) => {
     if (forceLoading) {
@@ -127,6 +130,7 @@ export function TrialsListView({ onSelectTrial, onBackToPatients }: TrialsListVi
         status: statusFilter === 'all' ? undefined : statusFilter,
         page,
         limit,
+        hospital: selectedHospital,
       });
       setTrials(response.trials);
       setTotalPages(response.total_pages);

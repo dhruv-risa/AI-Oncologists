@@ -36,6 +36,7 @@ import {
   AlertCircle,
   RefreshCw,
 } from 'lucide-react';
+import { useHospital } from '../contexts/HospitalContext';
 
 interface TrialDetailViewProps {
   nctId: string;
@@ -44,6 +45,7 @@ interface TrialDetailViewProps {
 }
 
 export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailViewProps) {
+  const { selectedHospital } = useHospital();
   const [trial, setTrial] = useState<CachedTrial | null>(null);
   const [patients, setPatients] = useState<PatientEligibility[]>([]);
   const [stats, setStats] = useState<EligibilityStats | null>(null);
@@ -60,7 +62,7 @@ export function TrialDetailView({ nctId, onBack, onSelectPatient }: TrialDetailV
     setLoading(true);
     setError(null);
     try {
-      const response = await apiService.getTrialDetails(nctId);
+      const response = await apiService.getTrialDetails(nctId, selectedHospital);
       setTrial(response.trial);
       setStats(response.eligibility_stats);
     } catch (err) {
