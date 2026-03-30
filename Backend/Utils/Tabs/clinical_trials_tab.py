@@ -3122,7 +3122,7 @@ def build_search_queries_from_patient(patient_data: Dict) -> List[str]:
     return unique_queries
 
 
-def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250, max_pages: int = 2, db_type: str = None) -> Dict:
+def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250, max_pages: int = 2, db_type: str = None, limit_total_trials: int = None) -> Dict:
     """
     Main entry point: Extract and match clinical trials for a patient.
 
@@ -3138,6 +3138,7 @@ def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250,
         max_trials_per_query: Maximum trials per search query (default: 250)
         max_pages: Number of pages to fetch per query (default: 2)
         db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+        limit_total_trials: Maximum total trials to analyze (default: None = no limit)
 
     Returns:
         Dictionary with matched trials and eligibility information
@@ -3187,6 +3188,11 @@ def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250,
     seen_nct_ids = set()
 
     for idx, query in enumerate(search_queries):
+        # Stop if we've reached the total limit
+        if limit_total_trials and len(all_trials) >= limit_total_trials:
+            print(f"Reached trial limit of {limit_total_trials}, stopping search...")
+            break
+
         print(f"Fetching trials for query {idx + 1}/{len(search_queries)}: '{query}'...")
         trials = fetch_trials_from_api(
             condition=query,
@@ -3200,6 +3206,10 @@ def extract_clinical_trials(patient_data: Dict, max_trials_per_query: int = 250,
         # Deduplicate by NCT ID
         new_count = 0
         for trial in trials:
+            # Stop if we've reached the total limit
+            if limit_total_trials and len(all_trials) >= limit_total_trials:
+                break
+
             nct_id = trial.get("nct_id")
             if nct_id and nct_id not in seen_nct_ids:
                 seen_nct_ids.add(nct_id)

@@ -1462,8 +1462,8 @@ async def get_clinical_trials(request: MRNRequest):
             )
 
         # Extract clinical trials matches using smart multi-query strategy
-        # max_trials_per_query=250, max_pages=2 -> ~500 trials per query
-        result = extract_clinical_trials(patient_data, max_trials_per_query=50, max_pages=1, db_type=request.db_type)
+        # Limit to 50 total trials to prevent timeouts (each trial takes ~1-2 seconds for LLM analysis)
+        result = extract_clinical_trials(patient_data, max_trials_per_query=50, max_pages=1, db_type=request.db_type, limit_total_trials=50)
 
         return {
             "success": result.get("success", False),
