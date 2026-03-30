@@ -53,7 +53,7 @@ class BatchEligibilityEngine:
         self.max_workers = max_workers
 
     def sync_trials(self, search_queries: List[str] = None, max_per_query: int = 100,
-                    status: str = "RECRUITING") -> Dict:
+                    status: str = "RECRUITING", db_type: str = None) -> Dict:
         """
         Fetch and cache trials from ClinicalTrials.gov.
 
@@ -61,6 +61,7 @@ class BatchEligibilityEngine:
             search_queries: List of search queries (e.g., cancer types)
             max_per_query: Maximum trials to fetch per query
             status: Trial status filter
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
             Summary of sync operation
@@ -146,7 +147,7 @@ class BatchEligibilityEngine:
         logger.info(f"Starting storage of {len(all_trials)} trials to database...")
 
         trials_list = list(all_trials.values())
-        store_result = self.data_pool.bulk_store_trials(trials_list)
+        store_result = self.data_pool.bulk_store_trials(trials_list, db_type=db_type)
         stored = store_result["stored_count"]
         new_nct_ids = store_result["new_nct_ids"]
 
@@ -256,13 +257,14 @@ class BatchEligibilityEngine:
         trial_load_start = time.time()
         if trial_nct_ids:
             logger.info(f"Loading {len(trial_nct_ids)} specific trials...")
-            trials = [self.data_pool.get_trial(nct_id) for nct_id in trial_nct_ids]
+            trials = [self.data_pool.get_trial(nct_id, db_type=db_type) for nct_id in trial_nct_ids]
             trials = [t for t in trials if t]
         else:
             logger.info(f"Loading trials from database (limit={limit_trials or 1000})...")
             trials = self.data_pool.list_all_trials(
                 status="RECRUITING",
-                limit=limit_trials or 1000
+                limit=limit_trials or 1000,
+                db_type=db_type
             )
 
         trial_load_elapsed = time.time() - trial_load_start
@@ -546,13 +548,14 @@ class BatchEligibilityEngine:
             trial_nct_ids=trial_nct_ids
         )
 
-    def full_sync(self, max_trials_per_query: int = 50, limit_trials: int = 200) -> Dict:
+    def full_sync(self, max_trials_per_query: int = 50, limit_trials: int = 200, db_type: str = None) -> Dict:
         """
         Perform a full sync: fetch trials and compute all eligibility.
 
         Args:
             max_trials_per_query: Max trials to fetch per search query
             limit_trials: Total limit on trials to process
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
             Combined summary
@@ -572,7 +575,7 @@ class BatchEligibilityEngine:
         # Step 1: Sync trials
         logger.info("STEP 1: Starting trial synchronization from ClinicalTrials.gov...")
         step1_start = time.time()
-        trials_summary = self.sync_trials(max_per_query=max_trials_per_query)
+        trials_summary = self.sync_trials(max_per_query=max_trials_per_query, db_type=db_type)
         step1_elapsed = time.time() - step1_start
         logger.info(f"STEP 1 COMPLETE: Trial sync finished in {step1_elapsed:.2f}s")
 
@@ -583,7 +586,8 @@ class BatchEligibilityEngine:
             print(f"\n{len(new_nct_ids)} new trials found - computing eligibility for all patients")
             step2_start = time.time()
             eligibility_summary = self.compute_eligibility_matrix(
-                trial_nct_ids=new_nct_ids
+                trial_nct_ids=new_nct_ids,
+                db_type=db_type
             )
             step2_elapsed = time.time() - step2_start
             logger.info(f"STEP 2 COMPLETE: Eligibility computation finished in {step2_elapsed:.2f}s")

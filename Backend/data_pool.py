@@ -700,253 +700,291 @@ class DataPool:
 
     # ==================== TRIALS CACHE METHODS ====================
 
-    def store_trial(self, trial_data: Dict) -> bool:
+    def store_trial(self, trial_data: Dict, db_type: str = None) -> bool:
         """
-        Store a clinical trial in the cache.
+        Store a clinical trial in Firestore.
 
         Args:
             trial_data: Dictionary containing trial information with nct_id as key
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
             True if successful, False otherwise
         """
+        if not self._firestore:
+            logger.warning("[store_trial] Firestore not available")
+            return False
+
         try:
             nct_id = trial_data.get("nct_id")
             if not nct_id:
-                print("Error storing trial: Missing nct_id")
+                logger.error("[store_trial] Missing nct_id")
                 return False
 
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            collection_name = self._get_trials_collection_name(db_type)
 
-            cursor.execute("""
-                INSERT OR REPLACE INTO trials_cache
-                (nct_id, title, phase, status, study_type, cancer_types, conditions,
-                 eligibility_criteria, eligibility_criteria_text, minimum_age, maximum_age,
-                 sex, healthy_volunteers, locations, contact, sponsor, start_date,
-                 completion_date, enrollment, brief_summary, detailed_description,
-                 last_updated_on_api, fetched_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                nct_id,
-                trial_data.get("title", ""),
-                trial_data.get("phase", ""),
-                trial_data.get("status", ""),
-                trial_data.get("study_type", ""),
-                json.dumps(trial_data.get("cancer_types", [])),
-                json.dumps(trial_data.get("conditions", [])),
-                trial_data.get("eligibility_criteria", trial_data.get("eligibility_criteria_text", "")),
-                trial_data.get("eligibility_criteria_text", trial_data.get("eligibility_criteria", "")),
-                trial_data.get("minimum_age", ""),
-                trial_data.get("maximum_age", ""),
-                trial_data.get("sex", "ALL"),
-                trial_data.get("healthy_volunteers", False),
-                json.dumps(trial_data.get("locations", [])),
-                json.dumps(trial_data.get("contact", {})),
-                trial_data.get("sponsor", ""),
-                trial_data.get("start_date", ""),
-                trial_data.get("completion_date", ""),
-                trial_data.get("enrollment", 0),
-                trial_data.get("brief_summary", ""),
-                trial_data.get("detailed_description", ""),
-                trial_data.get("last_updated_on_api", ""),
-                datetime.now().isoformat(),
-                trial_data.get("is_active", True)
-            ))
+            # Prepare trial document
+            trial_doc = {
+                "nct_id": nct_id,
+                "title": trial_data.get("title", ""),
+                "phase": trial_data.get("phase", ""),
+                "status": trial_data.get("status", ""),
+                "study_type": trial_data.get("study_type", ""),
+                "cancer_types": trial_data.get("cancer_types", []),
+                "conditions": trial_data.get("conditions", []),
+                "eligibility_criteria": trial_data.get("eligibility_criteria", trial_data.get("eligibility_criteria_text", "")),
+                "eligibility_criteria_text": trial_data.get("eligibility_criteria_text", trial_data.get("eligibility_criteria", "")),
+                "minimum_age": trial_data.get("minimum_age", ""),
+                "maximum_age": trial_data.get("maximum_age", ""),
+                "sex": trial_data.get("sex", "ALL"),
+                "healthy_volunteers": trial_data.get("healthy_volunteers", False),
+                "locations": trial_data.get("locations", []),
+                "contact": trial_data.get("contact", {}),
+                "sponsor": trial_data.get("sponsor", ""),
+                "start_date": trial_data.get("start_date", ""),
+                "completion_date": trial_data.get("completion_date", ""),
+                "enrollment": trial_data.get("enrollment", 0),
+                "brief_summary": trial_data.get("brief_summary", ""),
+                "detailed_description": trial_data.get("detailed_description", ""),
+                "last_updated_on_api": trial_data.get("last_updated_on_api", ""),
+                "fetched_at": datetime.now().isoformat(),
+                "is_active": trial_data.get("is_active", True)
+            }
 
-            conn.commit()
-            conn.close()
+            # Store in Firestore using nct_id as document ID
+            self._firestore.collection(collection_name).document(nct_id).set(trial_doc)
             return True
+
         except Exception as e:
-            print(f"Error storing trial: {e}")
+            logger.error(f"[store_trial] Error storing trial {trial_data.get('nct_id', 'unknown')}: {e}")
             return False
 
-    def bulk_store_trials(self, trials: List[Dict]) -> Dict:
+    def bulk_store_trials(self, trials: List[Dict], db_type: str = None) -> Dict:
         """
-        Store multiple trials in bulk.
+        Store multiple trials in bulk to Firestore.
 
         Args:
             trials: List of trial dictionaries
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
             Dict with 'stored_count' and 'new_nct_ids' (trials not previously in cache)
         """
         stored_count = 0
         new_nct_ids = []
+
+        if not self._firestore:
+            logger.warning("[bulk_store_trials] Firestore not available")
+            return {"stored_count": 0, "new_nct_ids": []}
+
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            collection_name = self._get_trials_collection_name(db_type)
+            collection = self._firestore.collection(collection_name)
 
             # Get existing NCT IDs to identify truly new trials
             incoming_ids = [t.get("nct_id") for t in trials if t.get("nct_id")]
             existing_ids = set()
-            if incoming_ids:
-                placeholders = ",".join("?" * len(incoming_ids))
-                cursor.execute(
-                    f"SELECT nct_id FROM trials_cache WHERE nct_id IN ({placeholders})",
-                    incoming_ids,
-                )
-                existing_ids = {row[0] for row in cursor.fetchall()}
 
+            if incoming_ids:
+                # Firestore has a limit of 10 items per 'in' query, so we batch it
+                batch_size = 10
+                for i in range(0, len(incoming_ids), batch_size):
+                    batch = incoming_ids[i:i + batch_size]
+                    docs = collection.where("nct_id", "in", batch).stream()
+                    for doc in docs:
+                        existing_ids.add(doc.id)  # Document ID is the nct_id
+
+            # Store trials in Firestore
             for trial in trials:
                 try:
                     nct_id = trial.get("nct_id")
                     if not nct_id:
                         continue
 
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO trials_cache
-                        (nct_id, title, phase, status, study_type, cancer_types, conditions,
-                         eligibility_criteria, eligibility_criteria_text, minimum_age, maximum_age,
-                         sex, healthy_volunteers, locations, contact, sponsor, start_date,
-                         completion_date, enrollment, brief_summary, detailed_description,
-                         last_updated_on_api, fetched_at, is_active)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        nct_id,
-                        trial.get("title", ""),
-                        trial.get("phase", ""),
-                        trial.get("status", ""),
-                        trial.get("study_type", ""),
-                        json.dumps(trial.get("cancer_types", [])),
-                        json.dumps(trial.get("conditions", [])),
-                        trial.get("eligibility_criteria", trial.get("eligibility_criteria_text", "")),
-                        trial.get("eligibility_criteria_text", trial.get("eligibility_criteria", "")),
-                        trial.get("minimum_age", ""),
-                        trial.get("maximum_age", ""),
-                        trial.get("sex", "ALL"),
-                        trial.get("healthy_volunteers", False),
-                        json.dumps(trial.get("locations", [])),
-                        json.dumps(trial.get("contact", {})),
-                        trial.get("sponsor", ""),
-                        trial.get("start_date", ""),
-                        trial.get("completion_date", ""),
-                        trial.get("enrollment", 0),
-                        trial.get("brief_summary", ""),
-                        trial.get("detailed_description", ""),
-                        trial.get("last_updated_on_api", ""),
-                        datetime.now().isoformat(),
-                        trial.get("is_active", True)
-                    ))
+                    # Prepare trial document
+                    trial_doc = {
+                        "nct_id": nct_id,
+                        "title": trial.get("title", ""),
+                        "phase": trial.get("phase", ""),
+                        "status": trial.get("status", ""),
+                        "study_type": trial.get("study_type", ""),
+                        "cancer_types": trial.get("cancer_types", []),
+                        "conditions": trial.get("conditions", []),
+                        "eligibility_criteria": trial.get("eligibility_criteria", trial.get("eligibility_criteria_text", "")),
+                        "eligibility_criteria_text": trial.get("eligibility_criteria_text", trial.get("eligibility_criteria", "")),
+                        "minimum_age": trial.get("minimum_age", ""),
+                        "maximum_age": trial.get("maximum_age", ""),
+                        "sex": trial.get("sex", "ALL"),
+                        "healthy_volunteers": trial.get("healthy_volunteers", False),
+                        "locations": trial.get("locations", []),
+                        "contact": trial.get("contact", {}),
+                        "sponsor": trial.get("sponsor", ""),
+                        "start_date": trial.get("start_date", ""),
+                        "completion_date": trial.get("completion_date", ""),
+                        "enrollment": trial.get("enrollment", 0),
+                        "brief_summary": trial.get("brief_summary", ""),
+                        "detailed_description": trial.get("detailed_description", ""),
+                        "last_updated_on_api": trial.get("last_updated_on_api", ""),
+                        "fetched_at": datetime.now().isoformat(),
+                        "is_active": trial.get("is_active", True)
+                    }
+
+                    # Use nct_id as document ID for easy retrieval
+                    collection.document(nct_id).set(trial_doc)
                     stored_count += 1
+
                     if nct_id not in existing_ids:
                         new_nct_ids.append(nct_id)
+
                 except Exception as e:
-                    print(f"Error storing trial {trial.get('nct_id', 'unknown')}: {e}")
+                    logger.error(f"[bulk_store_trials] Error storing trial {trial.get('nct_id', 'unknown')}: {e}")
                     continue
 
-            conn.commit()
-            conn.close()
+            logger.info(f"[bulk_store_trials] Stored {stored_count} trials to Firestore ({len(new_nct_ids)} new)")
+
         except Exception as e:
-            print(f"Error in bulk store trials: {e}")
+            logger.error(f"[bulk_store_trials] Error in bulk store trials: {e}")
 
         return {"stored_count": stored_count, "new_nct_ids": new_nct_ids}
 
-    def get_trial(self, nct_id: str) -> Optional[Dict]:
+    def get_trial(self, nct_id: str, db_type: str = None) -> Optional[Dict]:
         """
-        Retrieve a trial from the cache.
+        Retrieve a trial from Firestore.
 
         Args:
             nct_id: ClinicalTrials.gov NCT ID
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
             Trial dictionary if found, None otherwise
         """
+        if not self._firestore:
+            logger.warning("[get_trial] Firestore not available")
+            return None
+
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            collection_name = self._get_trials_collection_name(db_type)
+            doc_ref = self._firestore.collection(collection_name).document(nct_id)
+            doc = doc_ref.get()
 
-            cursor.execute("SELECT * FROM trials_cache WHERE nct_id = ?", (nct_id,))
-            row = cursor.fetchone()
-            conn.close()
-
-            if row:
-                return self._row_to_trial_dict(row, cursor.description)
+            if doc.exists:
+                return doc.to_dict()
             return None
         except Exception as e:
-            print(f"Error retrieving trial: {e}")
+            logger.error(f"[get_trial] Error retrieving trial {nct_id}: {e}")
             return None
 
-    def list_all_trials(self, status: str = None, limit: int = 100, offset: int = 0) -> List[Dict]:
+    def list_all_trials(self, status: str = None, limit: int = 100, offset: int = 0, db_type: str = None) -> List[Dict]:
         """
-        List all trials in the cache with optional filtering.
+        List all trials from Firestore with optional filtering.
 
         Args:
             status: Filter by trial status (e.g., "RECRUITING")
             limit: Maximum number of results
             offset: Offset for pagination
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
-            List of trial dictionaries
+            List of trial dictionaries with eligible patient counts
         """
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-
-            # Join with eligibility_matrix to get eligible patient counts and sort by them
-            if status:
-                cursor.execute("""
-                    SELECT t.*,
-                           COALESCE(e.eligible_count, 0) as eligible_patient_count,
-                           COALESCE(e.total_count, 0) as total_patient_count
-                    FROM trials_cache t
-                    LEFT JOIN (
-                        SELECT trial_nct_id,
-                               SUM(CASE WHEN eligibility_status IN ('LIKELY_ELIGIBLE', 'POTENTIALLY_ELIGIBLE') THEN 1 ELSE 0 END) as eligible_count,
-                               COUNT(*) as total_count
-                        FROM eligibility_matrix
-                        GROUP BY trial_nct_id
-                    ) e ON t.nct_id = e.trial_nct_id
-                    WHERE t.status = ? AND t.is_active = 1
-                    ORDER BY eligible_count DESC, t.fetched_at DESC
-                    LIMIT ? OFFSET ?
-                """, (status, limit, offset))
-            else:
-                cursor.execute("""
-                    SELECT t.*,
-                           COALESCE(e.eligible_count, 0) as eligible_patient_count,
-                           COALESCE(e.total_count, 0) as total_patient_count
-                    FROM trials_cache t
-                    LEFT JOIN (
-                        SELECT trial_nct_id,
-                               SUM(CASE WHEN eligibility_status IN ('LIKELY_ELIGIBLE', 'POTENTIALLY_ELIGIBLE') THEN 1 ELSE 0 END) as eligible_count,
-                               COUNT(*) as total_count
-                        FROM eligibility_matrix
-                        GROUP BY trial_nct_id
-                    ) e ON t.nct_id = e.trial_nct_id
-                    WHERE t.is_active = 1
-                    ORDER BY eligible_count DESC, t.fetched_at DESC
-                    LIMIT ? OFFSET ?
-                """, (limit, offset))
-
-            rows = cursor.fetchall()
-            description = cursor.description
-            conn.close()
-
-            return [self._row_to_trial_dict(row, description) for row in rows]
-        except Exception as e:
-            print(f"Error listing trials: {e}")
+        if not self._firestore:
+            logger.warning("[list_all_trials] Firestore not available")
             return []
 
-    def get_trials_count(self, status: str = None) -> int:
-        """Get total count of trials in cache."""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            collection_name = self._get_trials_collection_name(db_type)
+            eligibility_collection_name = self._get_eligibility_collection_name(db_type)
+
+            # Build query
+            query = self._firestore.collection(collection_name)
+
+            # Filter by is_active
+            query = query.where("is_active", "==", True)
+
+            # Filter by status if provided
+            if status:
+                query = query.where("status", "==", status)
+
+            # Order by fetched_at descending (newest first)
+            query = query.order_by("fetched_at", direction="DESCENDING")
+
+            # Get all matching documents (we'll handle pagination in memory)
+            # Note: Firestore doesn't have SQL-like OFFSET, so we fetch and slice
+            docs = list(query.stream())
+
+            # Apply pagination
+            paginated_docs = docs[offset:offset + limit]
+
+            # Convert to dictionaries and add eligible patient counts
+            trials = []
+            for doc in paginated_docs:
+                trial = doc.to_dict()
+                nct_id = trial.get("nct_id")
+
+                # Get eligible patient counts from eligibility collection
+                if nct_id:
+                    try:
+                        # Count total patients for this trial
+                        total_count = self._firestore.collection(eligibility_collection_name)\
+                            .where("trial_nct_id", "==", nct_id)\
+                            .count()\
+                            .get()
+
+                        # Count eligible patients (LIKELY_ELIGIBLE or POTENTIALLY_ELIGIBLE)
+                        eligible_query = self._firestore.collection(eligibility_collection_name)\
+                            .where("trial_nct_id", "==", nct_id)\
+                            .where("eligibility_status", "in", ["LIKELY_ELIGIBLE", "POTENTIALLY_ELIGIBLE"])
+                        eligible_count = eligible_query.count().get()
+
+                        trial["eligible_patient_count"] = eligible_count[0][0].value if eligible_count else 0
+                        trial["total_patient_count"] = total_count[0][0].value if total_count else 0
+                    except Exception as e:
+                        logger.warning(f"[list_all_trials] Error getting patient counts for {nct_id}: {e}")
+                        trial["eligible_patient_count"] = 0
+                        trial["total_patient_count"] = 0
+
+                trials.append(trial)
+
+            # Sort by eligible_patient_count descending, then by fetched_at
+            trials.sort(key=lambda t: (t.get("eligible_patient_count", 0), t.get("fetched_at", "")), reverse=True)
+
+            return trials
+
+        except Exception as e:
+            logger.error(f"[list_all_trials] Error listing trials: {e}")
+            return []
+
+    def get_trials_count(self, status: str = None, db_type: str = None) -> int:
+        """
+        Get total count of trials in Firestore.
+
+        Args:
+            status: Filter by trial status (e.g., "RECRUITING")
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
+
+        Returns:
+            Count of trials matching the filter
+        """
+        if not self._firestore:
+            logger.warning("[get_trials_count] Firestore not available")
+            return 0
+
+        try:
+            collection_name = self._get_trials_collection_name(db_type)
+            query = self._firestore.collection(collection_name).where("is_active", "==", True)
 
             if status:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM trials_cache WHERE status = ? AND is_active = 1",
-                    (status,)
-                )
-            else:
-                cursor.execute("SELECT COUNT(*) FROM trials_cache WHERE is_active = 1")
+                query = query.where("status", "==", status)
 
-            count = cursor.fetchone()[0]
-            conn.close()
-            return count
+            # Use Firestore count aggregation
+            count_query = query.count()
+            count_result = count_query.get()
+
+            # count_result is a list of aggregation results
+            return count_result[0][0].value if count_result else 0
+
         except Exception as e:
-            print(f"Error getting trials count: {e}")
+            logger.error(f"[get_trials_count] Error getting trials count: {e}")
             return 0
 
     def _row_to_trial_dict(self, row, description) -> Dict:

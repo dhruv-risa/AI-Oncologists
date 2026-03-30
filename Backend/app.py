@@ -1868,7 +1868,8 @@ async def clear_data_pool():
 async def list_trials(
     status: str = None,
     page: int = 1,
-    limit: int = 50
+    limit: int = 50,
+    db_type: str = None
 ):
     """
     List all cached clinical trials with pagination.
@@ -1880,6 +1881,7 @@ async def list_trials(
     - status: Filter by trial status (e.g., "RECRUITING")
     - page: Page number (default: 1)
     - limit: Items per page (default: 50, max: 100)
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     try:
         limit = min(limit, 100)
@@ -1888,10 +1890,11 @@ async def list_trials(
         trials = data_pool.list_all_trials(
             status=status,
             limit=limit,
-            offset=offset
+            offset=offset,
+            db_type=db_type
         )
 
-        total = data_pool.get_trials_count(status=status)
+        total = data_pool.get_trials_count(status=status, db_type=db_type)
 
         return {
             "success": True,
@@ -1909,15 +1912,18 @@ async def list_trials(
 
 
 @app.get("/api/trials/{nct_id}", tags=["Clinical Trials"])
-async def get_trial_details(nct_id: str):
+async def get_trial_details(nct_id: str, db_type: str = None):
     """
     Get detailed information about a specific clinical trial.
 
     Returns the cached trial data including eligibility criteria,
     locations, contacts, and eligibility statistics.
+
+    Query parameters:
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     try:
-        trial = data_pool.get_trial(nct_id)
+        trial = data_pool.get_trial(nct_id, db_type=db_type)
 
         if not trial:
             raise HTTPException(
@@ -2245,7 +2251,7 @@ async def refresh_single_trial_eligibility(mrn: str, nct_id: str, db_type: str =
             )
 
         # 2. Get trial data
-        trial = data_pool.get_trial(nct_id)
+        trial = data_pool.get_trial(nct_id, db_type=db_type)
         if trial is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2454,11 +2460,13 @@ async def get_patient_review(token: str):
             }
 
         # Get trial title
-        trial = data_pool.get_trial(token_data["trial_nct_id"])
+        # Note: db_type should ideally be stored in token_data, defaulting to None (demo) for now
+        db_type_for_review = token_data.get("db_type") if isinstance(token_data, dict) else None
+        trial = data_pool.get_trial(token_data["trial_nct_id"], db_type=db_type_for_review)
         trial_title = trial.get("title", "Clinical Trial") if trial else "Clinical Trial"
 
         # Get patient first name for greeting (stored in demographics.Patient Name)
-        patient_data = data_pool.get_patient_data(token_data["patient_mrn"])
+        patient_data = data_pool.get_patient_data(token_data["patient_mrn"], db_type_for_review)
         patient_first_name = ""
         if patient_data:
             demographics = patient_data.get("demographics", {})
@@ -2617,7 +2625,8 @@ async def submit_patient_review(token: str, request: PatientReviewSubmission):
 async def sync_trials_batch(
     max_per_query: int = 50,
     background: bool = False,
-    auto_compute_eligibility: bool = True
+    auto_compute_eligibility: bool = True,
+    db_type: str = None
 ):
     """
     Sync clinical trials from ClinicalTrials.gov API to local cache.
@@ -2630,6 +2639,7 @@ async def sync_trials_batch(
     - max_per_query: Maximum trials to fetch per search query (default: 50)
     - background: Run in background (default: False)
     - auto_compute_eligibility: Auto-compute eligibility for all patients after sync (default: True)
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     try:
         from Utils.batch_eligibility_engine import get_batch_engine
@@ -2638,17 +2648,17 @@ async def sync_trials_batch(
 
         def sync_and_compute():
             # First sync trials
-            sync_result = engine.sync_trials(max_per_query=max_per_query)
+            sync_result = engine.sync_trials(max_per_query=max_per_query, db_type=db_type)
 
             # Then auto-compute eligibility ONLY for newly added trials
             new_nct_ids = sync_result.get("new_nct_ids", [])
             if auto_compute_eligibility and new_nct_ids:
-                patients = data_pool.list_all_patients()
+                patients = data_pool.list_all_patients(db_type)
                 if patients:
                     print(f"\n{'='*60}")
                     print(f"AUTO-COMPUTING ELIGIBILITY for {len(patients)} patients against {len(new_nct_ids)} NEW trials")
                     print(f"{'='*60}")
-                    engine.compute_eligibility_matrix(trial_nct_ids=new_nct_ids)
+                    engine.compute_eligibility_matrix(trial_nct_ids=new_nct_ids, db_type=db_type)
             elif not new_nct_ids:
                 print("No new trials added - skipping eligibility computation")
 
@@ -2776,7 +2786,8 @@ async def compute_eligibility_batch(
 async def full_sync_batch(
     max_trials_per_query: int = 50,
     limit_trials: int = 50,
-    background: bool = True
+    background: bool = True,
+    db_type: str = None
 ):
     """
     Perform a full sync: fetch trials and compute all eligibility.
@@ -2788,6 +2799,7 @@ async def full_sync_batch(
     - max_trials_per_query: Max trials to fetch per search query (default: 50)
     - limit_trials: Total limit on trials to process for eligibility (default: 100)
     - background: Run in background (default: True)
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     try:
         from Utils.batch_eligibility_engine import get_batch_engine
@@ -2795,25 +2807,30 @@ async def full_sync_batch(
         engine = get_batch_engine()
 
         if background:
+            # Create a wrapper function that includes db_type
+            def run_full_sync():
+                return engine.full_sync(
+                    max_trials_per_query=max_trials_per_query,
+                    limit_trials=limit_trials,
+                    db_type=db_type
+                )
+
             loop = asyncio.get_event_loop()
             with ThreadPoolExecutor(max_workers=1) as executor:
-                loop.run_in_executor(
-                    executor,
-                    engine.full_sync,
-                    max_trials_per_query,
-                    limit_trials
-                )
+                loop.run_in_executor(executor, run_full_sync)
 
             return {
                 "success": True,
                 "message": "Full sync started in background",
                 "max_trials_per_query": max_trials_per_query,
-                "limit_trials": limit_trials
+                "limit_trials": limit_trials,
+                "db_type": db_type or "demo"
             }
         else:
             result = engine.full_sync(
                 max_trials_per_query=max_trials_per_query,
-                limit_trials=limit_trials
+                limit_trials=limit_trials,
+                db_type=db_type
             )
             return {
                 "success": True,
