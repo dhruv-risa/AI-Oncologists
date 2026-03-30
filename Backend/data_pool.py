@@ -42,12 +42,14 @@ class DataPool:
     """
 
     # Collection names for different hospitals
-    FIRESTORE_DEMO_COLLECTION = "Demo_hospital_patients"
-    FIRESTORE_ASTERA_COLLECTION = "Astera_hospital_patients"
-    FIRESTORE_DEMO_ELIGIBILITY_COLLECTION = "Demo_hospital_patient_trial_eligibility"
-    FIRESTORE_ASTERA_ELIGIBILITY_COLLECTION = "Astera_hospital_patient_trial_eligibility"
-    FIRESTORE_DEMO_REVIEW_TOKENS_COLLECTION = "Demo_hospital_patient_review_tokens"
-    FIRESTORE_ASTERA_REVIEW_TOKENS_COLLECTION = "Astera_hospital_patient_review_tokens"
+    FIRESTORE_DEMO_COLLECTION = "demo_patients"
+    FIRESTORE_ASTERA_COLLECTION = "astera_patients"
+    FIRESTORE_DEMO_ELIGIBILITY_COLLECTION = "demo_patient_trial_eligibility"
+    FIRESTORE_ASTERA_ELIGIBILITY_COLLECTION = "astera_patient_trial_eligibility"
+    FIRESTORE_DEMO_REVIEW_TOKENS_COLLECTION = "demo_patient_review_tokens"
+    FIRESTORE_ASTERA_REVIEW_TOKENS_COLLECTION = "astera_patient_review_tokens"
+    FIRESTORE_DEMO_TRIALS_COLLECTION = "demo_clinical_trials"
+    FIRESTORE_ASTERA_TRIALS_COLLECTION = "astera_clinical_trials"
 
     def __init__(self, db_path: str = None):
         """
@@ -104,6 +106,13 @@ class DataPool:
             return self.FIRESTORE_ASTERA_REVIEW_TOKENS_COLLECTION
         else:
             return self.FIRESTORE_DEMO_REVIEW_TOKENS_COLLECTION
+
+    def _get_trials_collection_name(self, db_type: str = None) -> str:
+        """Get the Firestore trials collection name based on db_type."""
+        if db_type == 'astera':
+            return self.FIRESTORE_ASTERA_TRIALS_COLLECTION
+        else:
+            return self.FIRESTORE_DEMO_TRIALS_COLLECTION
 
     def _migrate_sqlite_to_firestore(self):
         """One-time migration: if Firestore has 0 patients but SQLite has data, copy over to Demo collection."""
@@ -1276,14 +1285,15 @@ class DataPool:
             logger.error(f"Error getting review token: {e}", exc_info=True)
             return None
 
-    def complete_review_token(self, token: str, responses: str) -> bool:
+    def complete_review_token(self, token: str, responses: str, db_type: str = None) -> bool:
         """Mark a review token as completed with patient responses. Uses Firestore if available."""
         try:
             current_time = datetime.now().isoformat()
 
             if self._firestore:
                 # Update in Firestore
-                doc_ref = self._firestore.collection(self.FIRESTORE_REVIEW_TOKENS_COLLECTION).document(token)
+                review_tokens_collection = self._get_review_tokens_collection_name(db_type)
+                doc_ref = self._firestore.collection(review_tokens_collection).document(token)
                 doc = doc_ref.get()
 
                 if doc.exists and doc.to_dict().get("status") == "pending":

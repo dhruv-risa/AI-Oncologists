@@ -175,7 +175,8 @@ class BatchEligibilityEngine:
 
     def compute_eligibility_matrix(self, patient_mrns: List[str] = None,
                                    trial_nct_ids: List[str] = None,
-                                   limit_trials: int = None) -> Dict:
+                                   limit_trials: int = None,
+                                   db_type: str = None) -> Dict:
         """
         Compute eligibility for patient×trial combinations.
 
@@ -183,6 +184,7 @@ class BatchEligibilityEngine:
             patient_mrns: List of patient MRNs (None = all patients)
             trial_nct_ids: List of trial NCT IDs (None = all cached trials)
             limit_trials: Limit number of trials to process
+            db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
 
         Returns:
             Summary of computation
@@ -195,14 +197,14 @@ class BatchEligibilityEngine:
         if patient_mrns:
             patients = []
             for mrn in patient_mrns:
-                data = self.data_pool.get_patient_data(mrn)
+                data = self.data_pool.get_patient_data(mrn, db_type)
                 if data:
                     patients.append({"mrn": mrn, "data": data})
         else:
-            all_patients = self.data_pool.list_all_patients()
+            all_patients = self.data_pool.list_all_patients(db_type)
             patients = []
             for p in all_patients:
-                data = self.data_pool.get_patient_data(p["mrn"])
+                data = self.data_pool.get_patient_data(p["mrn"], db_type)
                 if data:
                     patients.append({"mrn": p["mrn"], "data": data})
 
@@ -352,7 +354,7 @@ class BatchEligibilityEngine:
                         results.append(result_dict)
 
                         # Store immediately to DB (progressive loading)
-                        self.data_pool.store_eligibility(nct_id, patient_mrn, result_dict)
+                        self.data_pool.store_eligibility(nct_id, patient_mrn, result_dict, trial_data=trial, db_type=db_type)
 
                         # Update progress counter
                         is_eligible = eligibility_info.get("status") in (

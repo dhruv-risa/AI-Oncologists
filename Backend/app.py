@@ -834,13 +834,14 @@ async def get_patient_data(request: MRNRequest):
                 print(f"{'='*60}")
 
                 # Run in background thread so it doesn't block the response
-                def compute_eligibility_background(mrn: str, patient_data: dict):
+                def compute_eligibility_background(mrn: str, patient_data: dict, db_type: str = None):
                     try:
                         from Utils.batch_eligibility_engine import get_batch_engine
                         engine = get_batch_engine()
                         engine.compute_eligibility_matrix(
                             patient_mrns=[mrn],
-                            limit_trials=100  # Limit for performance
+                            limit_trials=100,  # Limit for performance
+                            db_type=db_type
                         )
                         print(f"Eligibility computation complete for patient {mrn}")
                     except Exception as e:
@@ -856,7 +857,7 @@ async def get_patient_data(request: MRNRequest):
                 import threading
                 thread = threading.Thread(
                     target=compute_eligibility_background,
-                    args=(request.mrn, result)
+                    args=(request.mrn, result, request.db_type)
                 )
                 thread.daemon = True
 
@@ -2672,7 +2673,8 @@ async def compute_eligibility_batch(
     limit_trials: int = 100,
     patient_mrn: str = None,
     trial_nct_id: str = None,
-    background: bool = False
+    background: bool = False,
+    db_type: str = None
 ):
     """
     Compute eligibility matrix for patient×trial combinations.
@@ -2685,6 +2687,7 @@ async def compute_eligibility_batch(
     - patient_mrn: Compute only for specific patient (optional)
     - trial_nct_id: Compute only for specific trial (optional)
     - background: Run in background (default: False)
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo' (optional)
     """
     try:
         from Utils.batch_eligibility_engine import get_batch_engine
@@ -2715,7 +2718,8 @@ async def compute_eligibility_batch(
                     engine.compute_eligibility_matrix(
                         patient_mrns=patient_mrns,
                         trial_nct_ids=trial_nct_ids,
-                        limit_trials=limit_trials
+                        limit_trials=limit_trials,
+                        db_type=db_type
                     )
                 except Exception as e:
                     print(f"Background eligibility computation failed: {e}")
@@ -2740,7 +2744,8 @@ async def compute_eligibility_batch(
             result = engine.compute_eligibility_matrix(
                 patient_mrns=patient_mrns,
                 trial_nct_ids=trial_nct_ids,
-                limit_trials=limit_trials
+                limit_trials=limit_trials,
+                db_type=db_type
             )
             return {
                 "success": True,
