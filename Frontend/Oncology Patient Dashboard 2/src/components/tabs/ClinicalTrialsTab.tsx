@@ -277,21 +277,9 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
                     if (aOrder !== bOrder) return aOrder - bOrder;
                     return (b.eligibility.percentage || 0) - (a.eligibility.percentage || 0);
                 });
-                // Merge new trials into existing list to avoid flash/jump on re-render
-                setTrials(prev => {
-                    if (prev.length === 0) return transformedTrials;
-                    const existingMap = new Map(prev.map(t => [t.nct_id, t]));
-                    const merged = transformedTrials.map((t: any) => {
-                        const existing = existingMap.get(t.nct_id);
-                        // Update data but preserve identity if unchanged
-                        if (existing && existing.eligibility.percentage === t.eligibility.percentage
-                            && existing.eligibility.status === t.eligibility.status) {
-                            return existing;
-                        }
-                        return t;
-                    });
-                    return merged;
-                });
+                // Always use fresh data to ensure criteria_results are complete
+                // The merge optimization was causing criteria to disappear when switching tabs
+                setTrials(transformedTrials);
                 setCachedCount(response.total);
                 setSearchQueries(['Saved eligibility analysis']);
                 return true;

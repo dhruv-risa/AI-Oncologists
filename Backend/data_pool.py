@@ -36,8 +36,8 @@ class DataPool:
     Patient data → Firestore (permanent, survives deploys)
     Eligibility results → Firestore (permanent, survives deploys)
     Patient review tokens → Firestore (permanent, survives deploys)
-    Trials cache → SQLite (ephemeral, re-syncs nightly)
-    Computation progress → SQLite (ephemeral, operational)
+    Trials cache → Firestore (permanent, survives deploys)
+    Computation progress → In-memory cache (ephemeral, per-instance)
     Sync logs → SQLite (ephemeral, operational)
     """
 
@@ -81,6 +81,9 @@ class DataPool:
 
         self.db_path = str(db_path)
         self.init_database()
+
+        # In-memory computation progress tracking (ephemeral)
+        self._computation_progress: Dict[str, Dict] = {}
 
         # One-time migration: copy patients from SQLite → Firestore
         if self._firestore:
@@ -1636,6 +1639,124 @@ class DataPool:
             return None
         except Exception as e:
             print(f"Error getting last sync: {e}")
+            return None
+
+    # ==================== COMPUTATION PROGRESS METHODS (IN-MEMORY) ====================
+
+    def start_computation_progress(self, patient_mrn: str, trials_total: int, db_type: str = None) -> bool:
+        """
+        Record that eligibility computation has started for a patient (in-memory).
+
+        Args:
+            patient_mrn: Patient MRN
+            trials_total: Total number of trials to process
+            db_type: Hospital type for namespacing
+
+        Returns:
+            True if successful
+        """
+        try:
+            key = f"{db_type or 'demo'}:{patient_mrn}"
+            self._computation_progress[key] = {
+                "patient_mrn": patient_mrn,
+                "db_type": db_type,
+                "status": "computing",
+                "trials_total": trials_total,
+                "trials_completed": 0,
+                "trials_eligible": 0,
+                "trials_error": 0,
+                "started_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "completed_at": None,
+                "error_message": None
+            }
+            logger.info(f"[start_computation_progress] Started tracking for {key}: {trials_total} trials")
+            return True
+        except Exception as e:
+            logger.error(f"[start_computation_progress] Error: {e}")
+            return False
+
+    def increment_computation_progress(self, patient_mrn: str, is_eligible: bool = False,
+                                        is_error: bool = False, db_type: str = None) -> bool:
+        """
+        Increment progress counter after a single trial completes (in-memory).
+
+        Args:
+            patient_mrn: Patient MRN
+            is_eligible: Whether the trial result was eligible
+            is_error: Whether there was an error processing this trial
+            db_type: Hospital type for namespacing
+
+        Returns:
+            True if successful
+        """
+        try:
+            key = f"{db_type or 'demo'}:{patient_mrn}"
+            if key not in self._computation_progress:
+                logger.warning(f"[increment_computation_progress] No progress record for {key}")
+                return False
+
+            progress = self._computation_progress[key]
+            progress["trials_completed"] += 1
+            if is_eligible:
+                progress["trials_eligible"] += 1
+            if is_error:
+                progress["trials_error"] += 1
+            progress["updated_at"] = datetime.now().isoformat()
+
+            return True
+        except Exception as e:
+            logger.error(f"[increment_computation_progress] Error: {e}")
+            return False
+
+    def complete_computation_progress(self, patient_mrn: str, error_message: str = None,
+                                       db_type: str = None) -> bool:
+        """
+        Mark computation as completed or errored (in-memory).
+
+        Args:
+            patient_mrn: Patient MRN
+            error_message: Optional error message if computation failed
+            db_type: Hospital type for namespacing
+
+        Returns:
+            True if successful
+        """
+        try:
+            key = f"{db_type or 'demo'}:{patient_mrn}"
+            if key not in self._computation_progress:
+                logger.warning(f"[complete_computation_progress] No progress record for {key}")
+                return False
+
+            progress = self._computation_progress[key]
+            progress["status"] = "error" if error_message else "completed"
+            progress["completed_at"] = datetime.now().isoformat()
+            progress["updated_at"] = datetime.now().isoformat()
+            if error_message:
+                progress["error_message"] = error_message
+
+            logger.info(f"[complete_computation_progress] Completed tracking for {key}: {progress['status']}")
+            return True
+        except Exception as e:
+            logger.error(f"[complete_computation_progress] Error: {e}")
+            return False
+
+    def get_computation_progress(self, patient_mrn: str, db_type: str = None) -> Optional[Dict]:
+        """
+        Get current computation progress for a patient (in-memory).
+
+        Args:
+            patient_mrn: Patient MRN
+            db_type: Hospital type for namespacing
+
+        Returns:
+            Progress dictionary or None if not found
+        """
+        try:
+            key = f"{db_type or 'demo'}:{patient_mrn}"
+            return self._computation_progress.get(key)
+        except Exception as e:
+            logger.error(f"[get_computation_progress] Error: {e}")
             return None
 
 
