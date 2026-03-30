@@ -1993,7 +1993,8 @@ async def get_eligible_patients_for_trial(
 @app.get("/api/patients/{mrn}/eligible-trials", tags=["Clinical Trials"])
 async def get_eligible_trials_for_patient_cached(
     mrn: str,
-    eligibility_status: str = None
+    eligibility_status: str = None,
+    db_type: str = None
 ):
     """
     Get all trials a patient is eligible for from the pre-computed cache.
@@ -2003,18 +2004,20 @@ async def get_eligible_trials_for_patient_cached(
 
     Query parameters:
     - eligibility_status: Filter by status ("Likely Eligible", "Potentially Eligible", "Not Eligible")
+    - db_type: Hospital type ('demo' or 'astera'). Defaults to 'demo'.
     """
     try:
         # Check if patient exists
-        if not data_pool.patient_exists(mrn):
+        if not data_pool.patient_exists(mrn, db_type):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Patient {mrn} not found in data pool"
+                detail=f"Patient {mrn} not found in {db_type or 'demo'} hospital data pool"
             )
 
         trials = data_pool.get_eligible_trials_for_patient(
             mrn=mrn,
-            status_filter=eligibility_status
+            status_filter=eligibility_status,
+            db_type=db_type
         )
 
         # Classify unknown criteria on the fly for old data missing review_type

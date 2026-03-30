@@ -768,9 +768,10 @@ class ApiService {
   }
 
   // Get cached eligible trials for a patient (instant)
-  async getCachedEligibleTrialsForPatient(mrn: string, eligibilityStatus?: string): Promise<CachedEligibleTrialsResponse> {
+  async getCachedEligibleTrialsForPatient(mrn: string, eligibilityStatus?: string, hospital?: string): Promise<CachedEligibleTrialsResponse> {
     const params = new URLSearchParams();
     if (eligibilityStatus) params.append('eligibility_status', eligibilityStatus);
+    if (hospital) params.append('db_type', hospital);
 
     const queryString = params.toString();
     const endpoint = `/api/patients/${mrn}/eligible-trials${queryString ? `?${queryString}` : ''}`;

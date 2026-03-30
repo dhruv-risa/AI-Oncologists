@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { FlaskConical, CheckCircle, XCircle, HelpCircle, Phone, Mail, MapPin, ExternalLink, RefreshCw, AlertCircle, Database, Search, ClipboardCheck, User, Stethoscope, X, Loader2, Send, Copy, Check } from 'lucide-react';
 import { usePatient } from '../../contexts/PatientContext';
+import { useHospital } from '../../contexts/HospitalContext';
 import { apiService, ClinicalTrial, CriterionResult, ClinicalTrialsResponse, CriterionResolutionPayload } from '../../services/api';
 
 // ── Review Modal ──────────────────────────────────────────────────────────
@@ -175,6 +176,7 @@ function TestingModal({
 // ── Main Component ────────────────────────────────────────────────────────
 export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = {}) {
     const { currentPatient } = usePatient();
+    const { selectedHospital } = useHospital();
     const [trials, setTrials] = useState<ClinicalTrial[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -220,7 +222,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
         if (!currentPatient?.mrn) return false;
 
         try {
-            const response = await apiService.getCachedEligibleTrialsForPatient(currentPatient.mrn);
+            const response = await apiService.getCachedEligibleTrialsForPatient(currentPatient.mrn, undefined, selectedHospital);
             if (response.success && response.trials && response.trials.length > 0) {
                 const transformedTrials = response.trials.map((t: any) => {
                     const inclusion = t.criteria_results?.inclusion ||
@@ -393,7 +395,7 @@ export function ClinicalTrialsTab({ focusTrialId }: { focusTrialId?: string } = 
     useEffect(() => {
         if (currentPatient?.mrn) fetchTrials();
         return () => stopPolling();
-    }, [currentPatient?.mrn]);
+    }, [currentPatient?.mrn, selectedHospital]);
 
     // Auto-expand and scroll to a specific trial when navigated from trial detail view
     useEffect(() => {
