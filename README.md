@@ -13,6 +13,10 @@ A comprehensive system for extracting and managing oncology patient data from El
 - [Prerequisites](#prerequisites)
 - [Setup Instructions](#setup-instructions)
 - [Running the Application](#running-the-application)
+  - [Start Backend Server](#start-backend-server)
+  - [Start Frontend](#start-frontend-optional)
+  - [Test the Main Pipeline](#test-the-main-pipeline)
+  - [Batch Patient Processing](#batch-patient-processing)
 - [How It Works](#how-it-works)
 - [Testing Individual Workflows](#testing-individual-workflows)
 - [API Documentation](#api-documentation)
@@ -349,6 +353,90 @@ python main.py
 ```
 
 This will run the complete extraction pipeline for the demo patient (MRN: A2451440).
+
+### Batch Patient Processing
+
+To process multiple patients and export eligibility results to CSV:
+
+#### Prerequisites
+1. Ensure the backend server is running:
+   ```bash
+   python -m uvicorn Backend.app:app --reload
+   ```
+
+2. Create a `patients.txt` file in the `Backend` directory with one MRN per line:
+   ```
+   A2451440
+   A2451441
+   A2451442
+   ```
+
+#### Running the Batch Processor
+
+```bash
+cd Backend
+python batch_patient_processor.py
+```
+
+**What it does:**
+- Reads MRNs from `patients.txt`
+- Automatically skips patients already in the database (use `--force` to reprocess)
+- Processes each patient through the complete pipeline via API
+- Waits for all 9 clinical trials to be analyzed per patient
+- Exports results to CSV after each patient completes
+- Timeout: 1 hour per patient (default)
+
+#### CSV Output Location
+
+The batch processor saves results to:
+```
+Backend/patient_ct_results.csv
+```
+
+This file is **overwritten** on each run and contains:
+- Patient MRN
+- Trial NCT codes
+- Inclusion/Exclusion criteria details
+- LLM decisions and explanations
+- Confidence scores
+- Overall eligibility status and percentages
+- Computed timestamps
+
+#### Batch Processor Options
+
+```bash
+# Use a custom MRN file
+python batch_patient_processor.py --mrn-file my_patients.txt
+
+# Provide MRNs directly
+python batch_patient_processor.py --mrns MRN001 MRN002 MRN003
+
+# Custom output file
+python batch_patient_processor.py --output results/my_output.csv
+
+# See what will be processed without running
+python batch_patient_processor.py --dry-run
+
+# Force reprocess existing patients (WARNING: overwrites data)
+python batch_patient_processor.py --force
+
+# Adjust delay between patients (default: 5 seconds)
+python batch_patient_processor.py --delay 10
+
+# Use demo database instead of astera
+python batch_patient_processor.py --db-type demo
+
+# Enable verbose logging for debugging
+python batch_patient_processor.py --verbose
+```
+
+#### Important Notes
+
+- **Only NEW patients** are processed by default (already-processed patients are skipped)
+- Output logs to console only (no log files created)
+- Each patient takes approximately 2-3 minutes to process
+- The CSV file updates incrementally after each patient completes
+- If interrupted, rerun the script - it will skip already-processed patients
 
 ## How It Works
 
@@ -693,6 +781,9 @@ AI Oncologist/
 ├── Backend/
 │   ├── app.py                    # FastAPI application (main server)
 │   ├── main.py                   # Data extraction pipelines
+│   ├── batch_patient_processor.py # Batch processing tool for multiple patients
+│   ├── patients.txt              # MRN list for batch processing (you create this)
+│   ├── patient_ct_results.csv    # Batch processing output (auto-generated)
 │   ├── bytes_extractor.py        # FHIR document fetching
 │   ├── drive_uploader.py         # Google Drive integration
 │   ├── documents_reference.py    # FHIR authentication

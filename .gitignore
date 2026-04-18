@@ -45,6 +45,8 @@ node_modules/
 
 # Output files
 patient_extraction_results_*.json
+patient_ct_results.csv
+patients.txt
 *.log
 
 # Lab test result files (should not be committed)
